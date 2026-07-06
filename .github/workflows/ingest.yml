@@ -1,0 +1,50 @@
+﻿name: Ingest & Score
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: "Season year to ingest"
+        required: false
+        default: "2023"
+      max_fixtures:
+        description: "Recent matches per league to pull (costs 1 API request each)"
+        required: false
+        default: "5"
+  schedule:
+    - cron: "10 0 * * *"
+
+jobs:
+  ingest-and-score:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Ingest players/clubs/leagues
+        env:
+          FOOTBALL_API_KEY: ${{ secrets.FOOTBALL_API_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python ingest.py --all-leagues --season ${{ github.event.inputs.season || '2023' }}
+
+      - name: Ingest recent match stats
+        env:
+          FOOTBALL_API_KEY: ${{ secrets.FOOTBALL_API_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python fixtures_ingest.py --all-leagues --season ${{ github.event.inputs.season || '2023' }} --max-fixtures ${{ github.event.inputs.max_fixtures || '5' }}
+
+      - name: Recompute potential scores
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python scoring_model.py --season ${{ github.event.inputs.season || '2023' }}
