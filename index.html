@@ -67,6 +67,20 @@ function potentialColor(v) {
   return "#8A9A8E";
 }
 
+// Metrics can be plain numbers (seed/demo players, already 0-100 skill scores)
+// or {raw, scaled} objects (live players, real per-90 stats with a chart-only
+// scaled value). These helpers read whichever shape is present.
+function metricScaled(v) {
+  return typeof v === "object" && v !== null ? v.scaled : v;
+}
+function metricRaw(v) {
+  return typeof v === "object" && v !== null ? v.raw : v;
+}
+function metricLabel(v) {
+  const raw = metricRaw(v);
+  return Number.isInteger(raw) ? raw : Math.round(raw * 10) / 10;
+}
+
 // ---------------------------------------------------------------------------
 // Hand-rolled SVG charts (no chart library dependency)
 // ---------------------------------------------------------------------------
@@ -87,7 +101,7 @@ function RadarChart({ metrics }) {
       fill="none" stroke="#2C4A3B" strokeWidth="1" />;
   });
 
-  const dataPts = entries.map(([, v], i) => polar(cx, cy, maxR * (Math.min(v, 100) / 100), i * angleStep));
+  const dataPts = entries.map(([, v], i) => polar(cx, cy, maxR * (Math.min(metricScaled(v), 100) / 100), i * angleStep));
   const dataPolygon = dataPts.map(p => `${p.x},${p.y}`).join(" ");
 
   const labels = entries.map(([k], i) => {
@@ -117,13 +131,13 @@ function BarChart({ metrics }) {
     <svg viewBox={`0 0 300 ${height}`} width="100%" height="100%">
       {entries.map(([k, v], i) => {
         const y = i * rowH + 8;
-        const w = Math.max(0, Math.min(100, v)) * 1.6;
+        const w = Math.max(0, Math.min(100, metricScaled(v))) * 1.6;
         return (
           <g key={k}>
             <text x="0" y={y + 14} fill="#9AAA9E" fontSize="11">{k}</text>
             <rect x="90" y={y} width="170" height="16" fill="#152922" />
             <rect x="90" y={y} width={w} height="16" fill="#E3A857" />
-            <text x={90 + w + 6} y={y + 13} fill="#EDEDE3" fontSize="10">{Math.round(v)}</text>
+            <text x={90 + w + 6} y={y + 13} fill="#EDEDE3" fontSize="10">{metricLabel(v)}</text>
           </g>
         );
       })}
@@ -132,10 +146,36 @@ function BarChart({ metrics }) {
 }
 
 // ---------------------------------------------------------------------------
+// Scaling reference points for chart display only (raw numbers are always
+// shown as the actual label/text — these maxes just set what counts as
+// "full bar" for visual comparison, roughly a very good per-90 rate).
+const STAT_SCALE = {
+  "Goals/90": 0.8,
+  "Assists/90": 0.5,
+  "Key Passes/90": 3,
+  "Tackles/90": 4,
+  "Take-ons/90": 3,
+  "Pass Acc %": 100,
+  "Rating": 10,
+};
+
+function scaledMetrics(raw) {
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const max = STAT_SCALE[k] || 100;
+    out[k] = { raw: v, scaled: Math.min(100, Math.max(0, (v / max) * 100)) };
+  }
+  return out;
+}
+
 function normalizeLivePlayer(row) {
   const age = row.date_of_birth
     ? Math.floor((Date.now() - new Date(row.date_of_birth)) / 3.15576e10)
     : null;
+  const minutes = row.minutes_played || 0;
+  const p90 = (total) => minutes > 0 ? (total || 0) * 90 / minutes : 0;
+  const hasStats = minutes > 0;
+
   return {
     id: `live-${row.id}`,
     name: row.full_name,
@@ -147,15 +187,22 @@ function normalizeLivePlayer(row) {
     flag: "",
     potential: row.potential_index != null ? Math.round(row.potential_index) : null,
     marketValue: "—",
-    metrics: {
-      "Stat Percentile": row.stat_component ?? 0,
-      "Age Curve": row.age_adjustment ?? 0,
-      "Scout Input": row.qualitative_component ?? 0,
-    },
-    note: row.potential_index != null
-      ? "Live record. The chart shows the three ingredients behind the potential score — not football skill ratings: Stat Percentile (how their per-90 output ranks against peers), Age Curve (younger = higher weight), and Scout Input (defaults to neutral until a scout adds a note)."
-      : "Live record — no potential score yet. This player needs more ingested match minutes before scoring.",
-    tags: row.potential_index != null ? ["Live data"] : ["Live data", "Unscored"],
+    minutesPlayed: minutes,
+    metrics: hasStats ? scaledMetrics({
+      "Goals/90": p90(row.goals),
+      "Assists/90": p90(row.assists),
+      "Key Passes/90": p90(row.key_passes),
+      "Tackles/90": p90(row.tackles),
+      "Take-ons/90": p90(row.take_ons_completed),
+      "Pass Acc %": row.pass_accuracy_pct ?? 0,
+      "Rating": row.avg_rating ?? 0,
+    }) : scaledMetrics({ "Goals/90": 0, "Assists/90": 0, "Key Passes/90": 0, "Tackles/90": 0 }),
+    note: !hasStats
+      ? "Live record — no match data ingested yet for this player, so no real stats to show."
+      : row.potential_index != null
+        ? `Live record, ${Math.round(minutes)} minutes across ingested matches.`
+        : "Live record — has match stats, but not enough minutes yet for a potential score.",
+    tags: !hasStats ? ["Live data", "No match data"] : row.potential_index != null ? ["Live data"] : ["Live data", "Unscored"],
   };
 }
 
@@ -214,8 +261,12 @@ function PlayerDossier({ p, onClose }) {
             </div>
           </div>
           <div>
-            <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">Est. Value</div>
-            <div className="text-xl font-mono text-[#EDEDE3]">{p.marketValue}</div>
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">
+              {p.minutesPlayed != null ? "Minutes (ingested)" : "Est. Value"}
+            </div>
+            <div className="text-xl font-mono text-[#EDEDE3]">
+              {p.minutesPlayed != null ? p.minutesPlayed : p.marketValue}
+            </div>
           </div>
         </div>
         <div className="mt-6"><BarChart metrics={p.metrics} /></div>
@@ -280,15 +331,15 @@ function ComparePanel({ players, onClose }) {
         </div>
         <div className="mt-6 space-y-2">
           {allMetrics.map(m => {
-            const av = a.metrics[m] ?? 0;
-            const bv = b.metrics[m] ?? 0;
+            const av = metricScaled(a.metrics[m] ?? 0);
+            const bv = metricScaled(b.metrics[m] ?? 0);
             const total = av + bv || 1;
             return (
               <div key={m}>
                 <div className="flex justify-between text-[11px] text-[#9AAA9E] mb-1">
-                  <span>{Math.round(av)}</span>
+                  <span>{metricLabel(a.metrics[m] ?? 0)}</span>
                   <span className="uppercase tracking-wide text-[#6B8570]">{m}</span>
-                  <span>{Math.round(bv)}</span>
+                  <span>{metricLabel(b.metrics[m] ?? 0)}</span>
                 </div>
                 <div className="flex h-2 bg-[#152922] overflow-hidden">
                   <div style={{ width: `${(av / total) * 100}%` }} className="bg-[#E3A857]" />
