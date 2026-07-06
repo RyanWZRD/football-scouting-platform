@@ -366,6 +366,7 @@ function buildPercentilePlayers(rows) {
       minutesPlayed: minutes,
       metrics,
       radarMetrics,
+      watchLevel: row.watch_level ?? null,
       note: !hasStats
         ? "Live record — no match data ingested yet for this player, so no real stats to show."
         : `Live record, ${Math.round(minutes)} minutes across ingested matches. Chart shows percentile rank ${usedPositionPeers ? `vs other ${pos}s` : "vs the full ingested player pool (not enough same-position peers yet)"}.`,
@@ -374,13 +375,21 @@ function buildPercentilePlayers(rows) {
   });
 }
 
-function PlayerCard({ p, onOpen, onToggleCompare, isComparing, compareDisabled, isTopProspect }) {
+function PlayerCard({ p, onOpen, onToggleCompare, isComparing, compareDisabled, isTopProspect, onToggleShortlist }) {
+  const shortlisted = p.watchLevel === "shortlist";
   return (
     <div className={`bg-[#152922] border ${isTopProspect ? "border-[#E3A857]" : "border-[#2C4A3B]"} hover:border-[#E3A857] transition-colors duration-200 p-5 flex flex-col gap-3 w-full relative`}>
       {isTopProspect && (
         <div className="absolute -top-2.5 left-4 bg-[#E3A857] text-[#0E1A15] text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 z-10">
           🏆 Top Prospect
         </div>
+      )}
+      {onToggleShortlist && (
+        <button onClick={(e) => { e.stopPropagation(); onToggleShortlist(p); }}
+          title={shortlisted ? "Remove from shortlist" : "Add to shortlist"}
+          className={`absolute top-4 left-4 text-lg z-10 ${shortlisted ? "text-[#E3A857]" : "text-[#4A5C52] hover:text-[#9AAA9E]"}`}>
+          {shortlisted ? "★" : "☆"}
+        </button>
       )}
       <label className="absolute top-4 right-4 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[#6B8570] cursor-pointer z-10">
         <input type="checkbox" checked={isComparing} disabled={compareDisabled && !isComparing}
@@ -415,14 +424,24 @@ function PlayerCard({ p, onOpen, onToggleCompare, isComparing, compareDisabled, 
   );
 }
 
-function PlayerDossier({ p, onClose }) {
+function PlayerDossier({ p, onClose, onToggleShortlist }) {
+  const shortlisted = p.watchLevel === "shortlist";
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50" onClick={onClose}>
       <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[90vh] overflow-y-auto p-8 relative"
         onClick={e => e.stopPropagation()}>
         <button onClick={onClose} className="absolute top-5 right-5 text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
         <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">Scouting Dossier</div>
-        <h2 className="text-3xl text-[#EDEDE3] font-display mt-2">{p.name}</h2>
+        <div className="flex items-center justify-between mt-2">
+          <h2 className="text-3xl text-[#EDEDE3] font-display">{p.name}</h2>
+          {onToggleShortlist && (
+            <button onClick={() => onToggleShortlist(p)}
+              className={`flex items-center gap-1.5 text-xs uppercase tracking-wide px-3 py-1.5 border ${shortlisted ? "border-[#E3A857] text-[#E3A857]" : "border-[#2C4A3B] text-[#9AAA9E] hover:border-[#6B8570]"}`}>
+              <span className="text-base">{shortlisted ? "★" : "☆"}</span>
+              {shortlisted ? "Shortlisted" : "Add to shortlist"}
+            </button>
+          )}
+        </div>
         <div className="text-[#9AAA9E] mt-1">{p.flag} {p.club} · {p.league} · Age {p.age ?? "—"} · {p.posLabel}</div>
         <div className="grid grid-cols-2 gap-4 mt-6 border-t border-b border-[#2C4A3B] py-4">
           <div>
@@ -606,6 +625,7 @@ function ScoutDashboard() {
   const [sortDesc, setSortDesc] = useState(true);
   const [sortBy, setSortBy] = useState("potential");
   const [hideUnscored, setHideUnscored] = useState(false);
+  const [shortlistOnly, setShortlistOnly] = useState(false);
   const [view, setView] = useState("cards");
   const [scatterX, setScatterX] = useState("Goals/90");
   const [scatterY, setScatterY] = useState("Key Passes/90");
@@ -621,6 +641,27 @@ function ScoutDashboard() {
       if (list.length >= 2) return list;
       return [...list, p];
     });
+  };
+
+  const toggleShortlist = async (p) => {
+    if (!API_BASE_URL || !String(p.id).startsWith("live-")) return; // seed/demo players aren't real DB rows
+    const realId = String(p.id).replace("live-", "");
+    const newLevel = p.watchLevel === "shortlist" ? null : "shortlist";
+    try {
+      const res = await fetch(`${API_BASE_URL}/players/${realId}/watch`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(API_KEY ? { "X-API-Key": API_KEY } : {}),
+        },
+        body: JSON.stringify({ watch_level: newLevel, author: "dashboard" }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setLivePlayers(prev => prev ? prev.map(pl => pl.id === p.id ? { ...pl, watchLevel: newLevel } : pl) : prev);
+      setSelected(sel => sel && sel.id === p.id ? { ...sel, watchLevel: newLevel } : sel);
+    } catch (e) {
+      console.error("Failed to update shortlist status:", e);
+    }
   };
 
   useEffect(() => {
@@ -652,6 +693,7 @@ function ScoutDashboard() {
       if (league !== "All leagues" && p.league !== league) return false;
       if (position !== "All positions" && p.position !== position) return false;
       if (hideUnscored && p.potential == null) return false;
+      if (shortlistOnly && p.watchLevel !== "shortlist") return false;
       if (query && !p.name.toLowerCase().includes(query.toLowerCase()) &&
           !p.club.toLowerCase().includes(query.toLowerCase())) return false;
       return true;
@@ -673,7 +715,7 @@ function ScoutDashboard() {
       return sortDesc ? bv - av : av - bv;
     });
     return list;
-  }, [dataSource, league, position, query, sortDesc, sortBy, hideUnscored]);
+  }, [dataSource, league, position, query, sortDesc, sortBy, hideUnscored, shortlistOnly]);
 
   const sortOptions = [
     { value: "potential", label: "Potential" },
@@ -751,8 +793,15 @@ function ScoutDashboard() {
             Hide unscored
           </label>
         )}
-        {(league !== "All leagues" || position !== "All positions" || query || hideUnscored) && (
-          <button onClick={() => { setLeague("All leagues"); setPosition("All positions"); setQuery(""); setHideUnscored(false); }}
+        {connectionStatus === "live" && (
+          <label className="flex items-center gap-2 text-xs text-[#9AAA9E] cursor-pointer px-1">
+            <input type="checkbox" checked={shortlistOnly} onChange={e => setShortlistOnly(e.target.checked)}
+              className="accent-[#E3A857]" />
+            ★ Shortlist only
+          </label>
+        )}
+        {(league !== "All leagues" || position !== "All positions" || query || hideUnscored || shortlistOnly) && (
+          <button onClick={() => { setLeague("All leagues"); setPosition("All positions"); setQuery(""); setHideUnscored(false); setShortlistOnly(false); }}
             className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] px-2">
             Reset
           </button>
@@ -801,7 +850,8 @@ function ScoutDashboard() {
               onToggleCompare={toggleCompare}
               isComparing={!!compareList.find(x => x.id === p.id)}
               compareDisabled={compareList.length >= 2}
-              isTopProspect={topProspectIds.has(p.id)} />
+              isTopProspect={topProspectIds.has(p.id)}
+              onToggleShortlist={connectionStatus === "live" ? toggleShortlist : null} />
           ))}
           {connectionStatus !== "connecting" && filtered.length === 0 && (
             <div className="text-[#6B8570] text-sm">No players match those filters.</div>
@@ -830,10 +880,13 @@ function ScoutDashboard() {
         show each stat as a percentile rank against real peers (same position where enough data
         exists, otherwise the whole ingested pool) — not a fixed scale. The axes shown adapt to
         position (attackers see goals/take-ons, defenders see tackles/interceptions, etc).
-        "Unscored" players need more ingested match minutes before a potential score can be computed.
+        Click the ★ on any live player to add them to your shortlist — it's saved to the database,
+        not just this browser. "Unscored" players need more ingested match minutes before a
+        potential score can be computed.
       </div>
 
-      {selected && <PlayerDossier p={selected} onClose={() => setSelected(null)} />}
+      {selected && <PlayerDossier p={selected} onClose={() => setSelected(null)}
+        onToggleShortlist={connectionStatus === "live" ? toggleShortlist : null} />}
       <CompareBar selected={compareList} onClear={() => setCompareList([])} onCompare={() => setComparing(true)} />
       {comparing && compareList.length === 2 && (
         <ComparePanel players={compareList} onClose={() => setComparing(false)} />
