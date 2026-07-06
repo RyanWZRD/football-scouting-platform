@@ -181,6 +181,67 @@ function OverlayRadarChart({ series }) {
   );
 }
 
+// Reads an axis value for a player: "Potential"/"Age" are direct fields,
+// anything else is looked up in metrics (raw value, e.g. real Goals/90).
+function getAxisValue(p, key) {
+  if (key === "Potential") return p.potential;
+  if (key === "Age") return p.age;
+  return metricRaw(p.metrics[key] ?? null);
+}
+
+function ScatterPlot({ players, xKey, yKey, onSelect, topProspectIds, compareIds }) {
+  const width = 640, height = 440, pad = 55;
+  const pts = players
+    .map(p => ({ p, x: getAxisValue(p, xKey), y: getAxisValue(p, yKey) }))
+    .filter(d => d.x != null && d.y != null && !isNaN(d.x) && !isNaN(d.y));
+
+  if (pts.length === 0) {
+    return (
+      <div className="text-[#6B8570] text-sm p-10 text-center">
+        No players have real data for both "{xKey}" and "{yKey}" yet. Try different axes or connect to live data.
+      </div>
+    );
+  }
+
+  const xs = pts.map(d => d.x), ys = pts.map(d => d.y);
+  const xMin = Math.min(...xs), xMax = Math.max(...xs);
+  const yMin = Math.min(...ys), yMax = Math.max(...ys);
+  // Pad the range a bit so points don't sit right on the axis edges.
+  const xPad = (xMax - xMin) * 0.1 || 1, yPad = (yMax - yMin) * 0.1 || 1;
+  const xLo = xMin - xPad, xHi = xMax + xPad;
+  const yLo = yMin - yPad, yHi = yMax + yPad;
+  const sx = (v) => pad + ((v - xLo) / (xHi - xLo || 1)) * (width - pad - 20);
+  const sy = (v) => height - pad - ((v - yLo) / (yHi - yLo || 1)) * (height - pad - 20);
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="100%">
+      {[0.25, 0.5, 0.75].map(f => (
+        <line key={`h${f}`} x1={pad} x2={width - 20} y1={pad + f * (height - pad - 20)} y2={pad + f * (height - pad - 20)}
+          stroke="#1C332A" strokeWidth="1" />
+      ))}
+      {[0.25, 0.5, 0.75].map(f => (
+        <line key={`v${f}`} y1={pad} y2={height - pad} x1={pad + f * (width - pad - 20)} x2={pad + f * (width - pad - 20)}
+          stroke="#1C332A" strokeWidth="1" />
+      ))}
+      <line x1={pad} y1={height - pad} x2={width - 20} y2={height - pad} stroke="#2C4A3B" strokeWidth="1.5" />
+      <line x1={pad} y1={pad} x2={pad} y2={height - pad} stroke="#2C4A3B" strokeWidth="1.5" />
+      <text x={(width + pad) / 2} y={height - 15} fill="#9AAA9E" fontSize="12" textAnchor="middle">{xKey}</text>
+      <text x={16} y={(height - pad + pad) / 2} fill="#9AAA9E" fontSize="12" textAnchor="middle"
+        transform={`rotate(-90 16 ${(height - pad + pad) / 2})`}>{yKey}</text>
+      {pts.map(({ p, x, y }) => {
+        const color = topProspectIds.has(p.id) ? "#E3A857" : compareIds.has(p.id) ? "#7FB3D5" : "#8A9A8E";
+        return (
+          <circle key={p.id} cx={sx(x)} cy={sy(y)} r={topProspectIds.has(p.id) ? 6 : 5}
+            fill={color} fillOpacity="0.85" stroke="#0E1A15" strokeWidth="1"
+            style={{ cursor: "pointer" }} onClick={() => onSelect(p)}>
+            <title>{`${p.name} · ${p.club}\n${xKey}: ${Math.round(x * 100) / 100}\n${yKey}: ${Math.round(y * 100) / 100}`}</title>
+          </circle>
+        );
+      })}
+    </svg>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Percentile-based scaling: each player's stat is ranked against real peers
 // (same position where there's enough sample size, otherwise the whole
@@ -460,6 +521,9 @@ function ScoutDashboard() {
   const [sortDesc, setSortDesc] = useState(true);
   const [sortBy, setSortBy] = useState("potential");
   const [hideUnscored, setHideUnscored] = useState(false);
+  const [view, setView] = useState("cards");
+  const [scatterX, setScatterX] = useState("Goals/90");
+  const [scatterY, setScatterY] = useState("Key Passes/90");
   const [selected, setSelected] = useState(null);
   const [livePlayers, setLivePlayers] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState(API_BASE_URL ? "connecting" : "offline");
@@ -544,6 +608,12 @@ function ScoutDashboard() {
     return new Set(scored.slice(0, 3).map(p => p.id));
   }, [dataSource, connectionStatus]);
 
+  const axisOptions = useMemo(() => {
+    const keys = new Set();
+    dataSource.forEach(p => Object.keys(p.metrics).forEach(k => keys.add(k)));
+    return ["Potential", "Age", ...Array.from(keys)];
+  }, [dataSource]);
+
   return (
     <div className="min-h-screen bg-[#0E1A15] text-[#EDEDE3]">
       <div className="border-b border-[#2C4A3B] px-6 py-10 md:px-10">
@@ -600,25 +670,61 @@ function ScoutDashboard() {
             Reset
           </button>
         )}
+        <div className="flex border border-[#2C4A3B] ml-auto">
+          <button onClick={() => setView("cards")}
+            className={`px-3 py-2 text-xs uppercase tracking-wide ${view === "cards" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+            Cards
+          </button>
+          <button onClick={() => setView("scatter")}
+            className={`px-3 py-2 text-xs uppercase tracking-wide ${view === "scatter" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+            Scatter
+          </button>
+        </div>
       </div>
 
-      <div className="px-6 md:px-10 py-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 pb-24">
-        {connectionStatus === "connecting" && (
-          [...Array(6)].map((_, i) => (
-            <div key={i} className="bg-[#152922] border border-[#2C4A3B] p-5 h-64 animate-pulse" />
-          ))
-        )}
-        {connectionStatus !== "connecting" && filtered.map(p => (
-          <PlayerCard key={p.id} p={p} onOpen={setSelected}
-            onToggleCompare={toggleCompare}
-            isComparing={!!compareList.find(x => x.id === p.id)}
-            compareDisabled={compareList.length >= 2}
-            isTopProspect={topProspectIds.has(p.id)} />
-        ))}
-        {connectionStatus !== "connecting" && filtered.length === 0 && (
-          <div className="text-[#6B8570] text-sm">No players match those filters.</div>
-        )}
-      </div>
+      {view === "scatter" && (
+        <div className="px-6 md:px-10 py-4 flex flex-wrap gap-3 items-center border-b border-[#2C4A3B]">
+          <span className="text-xs uppercase tracking-wide text-[#6B8570]">X axis</span>
+          <select value={scatterX} onChange={e => setScatterX(e.target.value)}
+            className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none">
+            {axisOptions.map(k => <option key={k}>{k}</option>)}
+          </select>
+          <span className="text-xs uppercase tracking-wide text-[#6B8570]">Y axis</span>
+          <select value={scatterY} onChange={e => setScatterY(e.target.value)}
+            className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none">
+            {axisOptions.map(k => <option key={k}>{k}</option>)}
+          </select>
+          <span className="text-xs text-[#6B8570] ml-auto">Click a point to open its dossier</span>
+        </div>
+      )}
+
+      {view === "cards" && (
+        <div className="px-6 md:px-10 py-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 pb-24">
+          {connectionStatus === "connecting" && (
+            [...Array(6)].map((_, i) => (
+              <div key={i} className="bg-[#152922] border border-[#2C4A3B] p-5 h-64 animate-pulse" />
+            ))
+          )}
+          {connectionStatus !== "connecting" && filtered.map(p => (
+            <PlayerCard key={p.id} p={p} onOpen={setSelected}
+              onToggleCompare={toggleCompare}
+              isComparing={!!compareList.find(x => x.id === p.id)}
+              compareDisabled={compareList.length >= 2}
+              isTopProspect={topProspectIds.has(p.id)} />
+          ))}
+          {connectionStatus !== "connecting" && filtered.length === 0 && (
+            <div className="text-[#6B8570] text-sm">No players match those filters.</div>
+          )}
+        </div>
+      )}
+
+      {view === "scatter" && connectionStatus !== "connecting" && (
+        <div className="px-6 md:px-10 py-8 pb-24">
+          <ScatterPlot players={filtered} xKey={scatterX} yKey={scatterY} onSelect={setSelected}
+            topProspectIds={topProspectIds}
+            compareIds={new Set(compareList.map(x => x.id))} />
+        </div>
+      )}
 
       <div className="px-6 md:px-10 py-6 border-t border-[#2C4A3B] text-xs text-[#6B8570]">
         ℹ When "Live API" shows above, you're looking at real ingested data. Radar/octagon charts
