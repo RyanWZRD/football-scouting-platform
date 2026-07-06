@@ -147,6 +147,25 @@ def upsert_player_stats_for_match(conn, db_match_id, fixture_external_id):
             dribbles = stats.get("dribbles", {})
             goals = stats.get("goals", {})
 
+            # API-Football gives pass "total" and an "accuracy" percentage,
+            # not a raw completed count — derive completed from the two.
+            passes_total = passes.get("total") or 0
+            accuracy_raw = passes.get("accuracy")
+            accuracy_pct = None
+            if accuracy_raw is not None:
+                try:
+                    accuracy_pct = float(str(accuracy_raw).replace("%", ""))
+                except ValueError:
+                    accuracy_pct = None
+
+            if accuracy_pct is not None and passes_total > 0:
+                passes_completed = round(passes_total * accuracy_pct / 100)
+                passes_attempted = passes_total
+            else:
+                # Unknown accuracy — store as no data rather than guessing 100%.
+                passes_completed = 0
+                passes_attempted = 0
+
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -157,14 +176,29 @@ def upsert_player_stats_for_match(conn, db_match_id, fixture_external_id):
                          take_ons_completed, tackles, interceptions, duels_won,
                          duels_attempted, rating)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (player_id, match_id) DO NOTHING
+                    ON CONFLICT (player_id, match_id) DO UPDATE SET
+                        minutes_played = EXCLUDED.minutes_played,
+                        goals = EXCLUDED.goals,
+                        assists = EXCLUDED.assists,
+                        shots = EXCLUDED.shots,
+                        shots_on_target = EXCLUDED.shots_on_target,
+                        key_passes = EXCLUDED.key_passes,
+                        passes_completed = EXCLUDED.passes_completed,
+                        passes_attempted = EXCLUDED.passes_attempted,
+                        take_ons_attempted = EXCLUDED.take_ons_attempted,
+                        take_ons_completed = EXCLUDED.take_ons_completed,
+                        tackles = EXCLUDED.tackles,
+                        interceptions = EXCLUDED.interceptions,
+                        duels_won = EXCLUDED.duels_won,
+                        duels_attempted = EXCLUDED.duels_attempted,
+                        rating = EXCLUDED.rating
                     """,
                     (
                         db_player_id, db_match_id, club_id, minutes, games.get("position"),
                         goals.get("total") or 0, goals.get("assists") or 0,
                         shots.get("total") or 0, shots.get("on") or 0,
-                        passes.get("key") or 0, passes.get("total") or 0,
-                        passes.get("total") or 0,
+                        passes.get("key") or 0, passes_completed,
+                        passes_attempted,
                         dribbles.get("attempts") or 0, dribbles.get("success") or 0,
                         tackles.get("total") or 0, tackles.get("interceptions") or 0,
                         duels.get("won") or 0, duels.get("total") or 0,
