@@ -182,64 +182,109 @@ function OverlayRadarChart({ series }) {
 }
 
 // ---------------------------------------------------------------------------
-// Scaling reference points for chart display only (raw numbers are always
-// shown as the actual label/text — these maxes just set what counts as
-// "full bar" for visual comparison, roughly a very good per-90 rate).
-const STAT_SCALE = {
-  "Goals/90": 0.8,
-  "Assists/90": 0.5,
-  "Key Passes/90": 3,
-  "Tackles/90": 4,
-  "Take-ons/90": 3,
-  "Pass Acc %": 100,
-  "Rating": 10,
-};
+// Percentile-based scaling: each player's stat is ranked against real peers
+// (same position where there's enough sample size, otherwise the whole
+// ingested pool) rather than an arbitrary fixed scale. This is computed
+// once per fetch across the full player list — see buildPercentileMetrics.
+// ---------------------------------------------------------------------------
 
-function scaledMetrics(raw) {
-  const out = {};
-  for (const [k, v] of Object.entries(raw)) {
-    const max = STAT_SCALE[k] || 100;
-    out[k] = { raw: v, scaled: Math.min(100, Math.max(0, (v / max) * 100)) };
+const RAW_STAT_KEYS = ["Goals/90", "Assists/90", "Key Passes/90", "Tackles/90", "Take-ons/90", "Pass Acc %", "Rating"];
+const MIN_PEERS_FOR_POSITION_GROUP = 5;
+
+function rawStatsForRow(row) {
+  const minutes = row.minutes_played || 0;
+  const hasStats = minutes > 0;
+  const p90 = (total) => hasStats ? (total || 0) * 90 / minutes : null;
+  if (!hasStats) {
+    return { "Goals/90": null, "Assists/90": null, "Key Passes/90": null, "Tackles/90": null,
+             "Take-ons/90": null, "Pass Acc %": null, "Rating": null };
   }
-  return out;
+  return {
+    "Goals/90": p90(row.goals),
+    "Assists/90": p90(row.assists),
+    "Key Passes/90": p90(row.key_passes),
+    "Tackles/90": p90(row.tackles),
+    "Take-ons/90": p90(row.take_ons_completed),
+    "Pass Acc %": row.pass_accuracy_pct ?? null,
+    "Rating": row.avg_rating ?? null,
+  };
 }
 
-function normalizeLivePlayer(row) {
-  const age = row.date_of_birth
-    ? Math.floor((Date.now() - new Date(row.date_of_birth)) / 3.15576e10)
-    : null;
-  const minutes = row.minutes_played || 0;
-  const p90 = (total) => minutes > 0 ? (total || 0) * 90 / minutes : 0;
-  const hasStats = minutes > 0;
+// Percentile rank of `value` within `pool` (array of numbers, no nulls).
+// Ties split the difference, matching standard percentile-rank convention.
+function percentileRank(value, pool) {
+  if (value == null || pool.length === 0) return null;
+  let below = 0, equal = 0;
+  for (const v of pool) {
+    if (v < value) below++;
+    else if (v === value) equal++;
+  }
+  return ((below + 0.5 * equal) / pool.length) * 100;
+}
 
-  return {
-    id: `live-${row.id}`,
-    name: row.full_name,
-    age,
-    position: row.primary_position,
-    posLabel: row.primary_position,
-    club: row.club || "Unattached",
-    league: row.league || "Unknown league",
-    flag: "",
-    potential: row.potential_index != null ? Math.round(row.potential_index) : null,
-    marketValue: "—",
-    minutesPlayed: minutes,
-    metrics: hasStats ? scaledMetrics({
-      "Goals/90": p90(row.goals),
-      "Assists/90": p90(row.assists),
-      "Key Passes/90": p90(row.key_passes),
-      "Tackles/90": p90(row.tackles),
-      "Take-ons/90": p90(row.take_ons_completed),
-      "Pass Acc %": row.pass_accuracy_pct ?? 0,
-      "Rating": row.avg_rating ?? 0,
-    }) : scaledMetrics({ "Goals/90": 0, "Assists/90": 0, "Key Passes/90": 0, "Tackles/90": 0 }),
-    note: !hasStats
-      ? "Live record — no match data ingested yet for this player, so no real stats to show."
-      : row.potential_index != null
-        ? `Live record, ${Math.round(minutes)} minutes across ingested matches.`
-        : "Live record — has match stats, but not enough minutes yet for a potential score.",
-    tags: !hasStats ? ["Live data", "No match data"] : row.potential_index != null ? ["Live data"] : ["Live data", "Unscored"],
-  };
+// Takes raw /players rows, returns fully-formed player objects with
+// percentile-scaled metrics computed against the real ingested pool.
+function buildPercentilePlayers(rows) {
+  const rawStats = rows.map(rawStatsForRow);
+
+  // Pools per position group, and an overall fallback pool, per metric.
+  const positionPools = {};
+  const overallPools = {};
+  RAW_STAT_KEYS.forEach(k => { overallPools[k] = []; });
+
+  rows.forEach((row, i) => {
+    const pos = row.primary_position || "Unknown";
+    if (!positionPools[pos]) {
+      positionPools[pos] = {};
+      RAW_STAT_KEYS.forEach(k => { positionPools[pos][k] = []; });
+    }
+    RAW_STAT_KEYS.forEach(k => {
+      const v = rawStats[i][k];
+      if (v != null) {
+        positionPools[pos][k].push(v);
+        overallPools[k].push(v);
+      }
+    });
+  });
+
+  return rows.map((row, i) => {
+    const age = row.date_of_birth
+      ? Math.floor((Date.now() - new Date(row.date_of_birth)) / 3.15576e10)
+      : null;
+    const minutes = row.minutes_played || 0;
+    const hasStats = minutes > 0;
+    const pos = row.primary_position || "Unknown";
+    const raw = rawStats[i];
+
+    const metrics = {};
+    RAW_STAT_KEYS.forEach(k => {
+      const posPool = positionPools[pos][k];
+      const pool = posPool.length >= MIN_PEERS_FOR_POSITION_GROUP ? posPool : overallPools[k];
+      const pct = percentileRank(raw[k], pool);
+      metrics[k] = { raw: raw[k] ?? 0, scaled: pct ?? 0 };
+    });
+
+    const usedPositionPeers = positionPools[pos]?.["Goals/90"]?.length >= MIN_PEERS_FOR_POSITION_GROUP;
+
+    return {
+      id: `live-${row.id}`,
+      name: row.full_name,
+      age,
+      position: row.primary_position,
+      posLabel: row.primary_position,
+      club: row.club || "Unattached",
+      league: row.league || "Unknown league",
+      flag: "",
+      potential: row.potential_index != null ? Math.round(row.potential_index) : null,
+      marketValue: "—",
+      minutesPlayed: minutes,
+      metrics,
+      note: !hasStats
+        ? "Live record — no match data ingested yet for this player, so no real stats to show."
+        : `Live record, ${Math.round(minutes)} minutes across ingested matches. Chart shows percentile rank ${usedPositionPeers ? `vs other ${pos}s` : "vs the full ingested player pool (not enough same-position peers yet)"}.`,
+      tags: !hasStats ? ["Live data", "No match data"] : row.potential_index != null ? ["Live data"] : ["Live data", "Unscored"],
+    };
+  });
 }
 
 function PlayerCard({ p, onOpen, onToggleCompare, isComparing, compareDisabled, isTopProspect }) {
@@ -439,7 +484,7 @@ function ScoutDashboard() {
       .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
       .then(rows => {
         if (cancelled) return;
-        setLivePlayers(rows.map(normalizeLivePlayer));
+        setLivePlayers(buildPercentilePlayers(rows));
         setConnectionStatus("live");
       })
       .catch(() => { if (!cancelled) setConnectionStatus("offline"); });
@@ -576,7 +621,9 @@ function ScoutDashboard() {
       </div>
 
       <div className="px-6 md:px-10 py-6 border-t border-[#2C4A3B] text-xs text-[#6B8570]">
-        ℹ When "Live API" shows above, you're looking at real ingested data. "Unscored" players
+        ℹ When "Live API" shows above, you're looking at real ingested data. Radar/octagon charts
+        show each stat as a percentile rank against real peers (same position where enough data
+        exists, otherwise the whole ingested pool) — not a fixed scale. "Unscored" players
         need more ingested match minutes before a potential score can be computed.
       </div>
 
