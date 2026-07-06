@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cross-League Scouting Index</title>
+<script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background:#0E1A15; margin:0; font-family: Inter, sans-serif; }
+  @font-face { font-family: 'Archivo Black'; src: local('Archivo Black'); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useEffect } = React;
+
+// Point this at your deployed api.py once it's live, e.g.
+// "https://your-scouting-api.onrender.com". Leave blank to run on
+// seed data only.
+const API_BASE_URL = "https://football-scouting-api-so8h.onrender.com";
+// Only needed if you set API_ACCESS_KEY on the Render side (see api.py).
+// This value is visible to anyone who views this page's source — fine for
+// a lightweight shared secret that just deters casual scraping, but don't
+// treat it as a real security boundary for sensitive data.
+const API_KEY = "scout9x7k2mQpL4vRt8";
+
+// ---------------------------------------------------------------------------
+// SEED DATA (fallback if the live API can't be reached)
+// ---------------------------------------------------------------------------
+const PLAYERS = [
+  { id:"read", name:"Givairo Read", age:19, position:"RWB", posLabel:"Wing-Back",
+    club:"Feyenoord", league:"Eredivisie", flag:"🇳🇱", potential:84, marketValue:"€12M",
+    metrics:{ Finishing:52, Progression:81, Defense:68, Physical:79, Creativity:63, Composure:71 },
+    note:"Modern inverted wing-back. Comfortable stepping into midfield to overload the half-space — profile echoes early Frimpong.",
+    tags:["Athletic profile","Positional versatility","U21 international"] },
+  { id:"adewumi", name:"Oluwaseun Adewumi", age:20, position:"AM", posLabel:"Attacking Mid",
+    club:"Dundee (loan, parent: Burnley)", league:"Scottish Championship", flag:"🏴", potential:76, marketValue:"€3.5M",
+    metrics:{ Finishing:66, Progression:58, Defense:41, Physical:60, Creativity:74, Composure:62 },
+    note:"Won Dundee's Young Player of the Season on loan — an eye for the killer pass in a league most databases don't track.",
+    tags:["Hidden on loan","Underscouted league","Goal threat from AM"] },
+  { id:"estevao", name:"Estêvão (pre-move case study)", age:18, position:"RW", posLabel:"Winger",
+    club:"Palmeiras (pre-Chelsea)", league:"Brasileirão Série A", flag:"🇧🇷", potential:93, marketValue:"€35M (at time)",
+    metrics:{ Finishing:78, Progression:85, Defense:38, Physical:55, Creativity:91, Composure:74 },
+    note:"Validation case: led Série A in shots on target, big chances created and take-ons as a teenager — before the €35M move.",
+    tags:["Model validation case","Elite creativity","Confirmed breakout"] },
+  { id:"gen1", name:"Marcos Ferreira*", age:20, position:"CB", posLabel:"Centre-Back",
+    club:"Vitória SC", league:"Liga Portugal", flag:"🇵🇹", potential:71, marketValue:"€6M",
+    metrics:{ Finishing:12, Progression:55, Defense:82, Physical:74, Creativity:34, Composure:69 },
+    note:"*Illustrative — stands in for the ball-playing centre-back archetype Portuguese academies reliably produce.",
+    tags:["Ball-playing CB","Academy pedigree","Sample profile"] },
+  { id:"gen2", name:"Kenji Iwasaki*", age:19, position:"CM", posLabel:"Central Mid",
+    club:"Shonan Bellmare", league:"J1 League", flag:"🇯🇵", potential:74, marketValue:"€4M",
+    metrics:{ Finishing:45, Progression:79, Defense:61, Physical:58, Creativity:68, Composure:77 },
+    note:"*Illustrative — J-League academies produce composed midfielders that rarely surface in European databases.",
+    tags:["Underscouted market","High composure","Sample profile"] },
+];
+
+function potentialColor(v) {
+  if (v >= 85) return "#E3A857";
+  if (v >= 70) return "#C9C08A";
+  return "#8A9A8E";
+}
+
+// ---------------------------------------------------------------------------
+// Hand-rolled SVG charts (no chart library dependency)
+// ---------------------------------------------------------------------------
+function polar(cx, cy, r, angleDeg) {
+  const rad = (Math.PI / 180) * (angleDeg - 90);
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+}
+
+function RadarChart({ metrics }) {
+  const entries = Object.entries(metrics);
+  const n = entries.length;
+  const cx = 100, cy = 85, maxR = 60;
+  const angleStep = 360 / n;
+
+  const gridRings = [0.33, 0.66, 1].map((scale, ri) => {
+    const pts = entries.map((_, i) => polar(cx, cy, maxR * scale, i * angleStep));
+    return <polygon key={ri} points={pts.map(p => `${p.x},${p.y}`).join(" ")}
+      fill="none" stroke="#2C4A3B" strokeWidth="1" />;
+  });
+
+  const dataPts = entries.map(([, v], i) => polar(cx, cy, maxR * (Math.min(v, 100) / 100), i * angleStep));
+  const dataPolygon = dataPts.map(p => `${p.x},${p.y}`).join(" ");
+
+  const labels = entries.map(([k], i) => {
+    const p = polar(cx, cy, maxR + 14, i * angleStep);
+    return <text key={k} x={p.x} y={p.y} fill="#6B8570" fontSize="9"
+      textAnchor="middle" dominantBaseline="middle">{k}</text>;
+  });
+
+  return (
+    <svg viewBox="0 0 200 160" width="100%" height="100%">
+      {gridRings}
+      {entries.map((_, i) => {
+        const p = polar(cx, cy, maxR, i * angleStep);
+        return <line key={i} x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="#2C4A3B" strokeWidth="1" />;
+      })}
+      <polygon points={dataPolygon} fill="#E3A857" fillOpacity="0.25" stroke="#E3A857" strokeWidth="1.5" />
+      {labels}
+    </svg>
+  );
+}
+
+function BarChart({ metrics }) {
+  const entries = Object.entries(metrics);
+  const rowH = 28;
+  const height = entries.length * rowH + 10;
+  return (
+    <svg viewBox={`0 0 300 ${height}`} width="100%" height="100%">
+      {entries.map(([k, v], i) => {
+        const y = i * rowH + 8;
+        const w = Math.max(0, Math.min(100, v)) * 1.6;
+        return (
+          <g key={k}>
+            <text x="0" y={y + 14} fill="#9AAA9E" fontSize="11">{k}</text>
+            <rect x="90" y={y} width="170" height="16" fill="#152922" />
+            <rect x="90" y={y} width={w} height="16" fill="#E3A857" />
+            <text x={90 + w + 6} y={y + 13} fill="#EDEDE3" fontSize="10">{Math.round(v)}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// ---------------------------------------------------------------------------
+function normalizeLivePlayer(row) {
+  const age = row.date_of_birth
+    ? Math.floor((Date.now() - new Date(row.date_of_birth)) / 3.15576e10)
+    : null;
+  return {
+    id: `live-${row.id}`,
+    name: row.full_name,
+    age,
+    position: row.primary_position,
+    posLabel: row.primary_position,
+    club: row.club || "Unattached",
+    league: row.league || "Unknown league",
+    flag: "",
+    potential: row.potential_index != null ? Math.round(row.potential_index) : 0,
+    marketValue: "—",
+    metrics: {
+      Stats: row.stat_component ?? 0,
+      Age: row.age_adjustment ?? 0,
+      Scouting: row.qualitative_component ?? 0,
+    },
+    note: "Live record from the database — scores populate once match-level stats are ingested.",
+    tags: ["Live data"],
+  };
+}
+
+function PlayerCard({ p, onOpen }) {
+  return (
+    <button onClick={() => onOpen(p)}
+      className="text-left bg-[#152922] border border-[#2C4A3B] hover:border-[#E3A857] transition-colors duration-200 p-5 flex flex-col gap-3 w-full">
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="text-[11px] tracking-[0.18em] uppercase text-[#6B8570] font-mono">{p.league}</div>
+          <h3 className="text-xl text-[#EDEDE3] font-bold leading-tight mt-1">{p.name}</h3>
+          <div className="text-sm text-[#9AAA9E] mt-0.5">{p.flag} {p.club} · Age {p.age ?? "—"} · {p.posLabel}</div>
+        </div>
+        <div className="text-right shrink-0 pl-3">
+          <div className="text-3xl font-bold" style={{ color: potentialColor(p.potential) }}>{p.potential}</div>
+          <div className="text-[10px] tracking-[0.15em] uppercase text-[#6B8570]">Potential</div>
+        </div>
+      </div>
+      <div className="h-32 -mx-2"><RadarChart metrics={p.metrics} /></div>
+      <div className="flex flex-wrap gap-1.5">
+        {p.tags.map(t => (
+          <span key={t} className="text-[10px] uppercase tracking-wide px-2 py-1 border border-[#2C4A3B] text-[#9AAA9E]">{t}</span>
+        ))}
+      </div>
+    </button>
+  );
+}
+
+function PlayerDossier({ p, onClose }) {
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[90vh] overflow-y-auto p-8 relative"
+        onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute top-5 right-5 text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-mono">Scouting Dossier</div>
+        <h2 className="text-3xl text-[#EDEDE3] font-bold mt-2">{p.name}</h2>
+        <div className="text-[#9AAA9E] mt-1">{p.flag} {p.club} · {p.league} · Age {p.age ?? "—"} · {p.posLabel}</div>
+        <div className="grid grid-cols-2 gap-4 mt-6 border-t border-b border-[#2C4A3B] py-4">
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">Potential Index</div>
+            <div className="text-2xl font-bold" style={{ color: potentialColor(p.potential) }}>{p.potential}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">Est. Value</div>
+            <div className="text-xl font-mono text-[#EDEDE3]">{p.marketValue}</div>
+          </div>
+        </div>
+        <div className="mt-6"><BarChart metrics={p.metrics} /></div>
+        <div className="mt-6">
+          <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Scout note</div>
+          <p className="text-[#C9C08A] leading-relaxed text-sm">{p.note}</p>
+        </div>
+        <div className="flex flex-wrap gap-1.5 mt-4">
+          {p.tags.map(t => (
+            <span key={t} className="text-[10px] uppercase tracking-wide px-2 py-1 border border-[#2C4A3B] text-[#9AAA9E]">{t}</span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ScoutDashboard() {
+  const [league, setLeague] = useState("All leagues");
+  const [position, setPosition] = useState("All positions");
+  const [query, setQuery] = useState("");
+  const [sortDesc, setSortDesc] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [livePlayers, setLivePlayers] = useState(null);
+  const [connectionStatus, setConnectionStatus] = useState(API_BASE_URL ? "connecting" : "offline");
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    let cancelled = false;
+    fetch(`${API_BASE_URL}/players?limit=200`, {
+      headers: API_KEY ? { "X-API-Key": API_KEY } : {}
+    })
+      .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
+      .then(rows => {
+        if (cancelled) return;
+        setLivePlayers(rows.map(normalizeLivePlayer));
+        setConnectionStatus("live");
+      })
+      .catch(() => { if (!cancelled) setConnectionStatus("offline"); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const dataSource = livePlayers && connectionStatus === "live" ? livePlayers : PLAYERS;
+
+  const availableLeagues = useMemo(() =>
+    ["All leagues", ...Array.from(new Set(dataSource.map(p => p.league)))], [dataSource]);
+  const availablePositions = useMemo(() =>
+    ["All positions", ...Array.from(new Set(dataSource.map(p => p.position)))], [dataSource]);
+
+  const filtered = useMemo(() => {
+    let list = dataSource.filter(p => {
+      if (league !== "All leagues" && p.league !== league) return false;
+      if (position !== "All positions" && p.position !== position) return false;
+      if (query && !p.name.toLowerCase().includes(query.toLowerCase()) &&
+          !p.club.toLowerCase().includes(query.toLowerCase())) return false;
+      return true;
+    });
+    list.sort((a, b) => sortDesc ? b.potential - a.potential : a.potential - b.potential);
+    return list;
+  }, [dataSource, league, position, query, sortDesc]);
+
+  return (
+    <div className="min-h-screen bg-[#0E1A15] text-[#EDEDE3]">
+      <div className="border-b border-[#2C4A3B] px-6 py-10 md:px-10">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-[11px] tracking-[0.25em] uppercase text-[#E3A857] font-mono">Cross-League Scouting Index</div>
+          <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-[#6B8570]">
+            {connectionStatus === "live" ? <>📡 Live API</> : <>⚠ Seed data</>}
+          </div>
+        </div>
+        <h1 className="text-3xl md:text-5xl leading-[1.05] max-w-3xl font-bold">
+          Find the player before the big five leagues do.
+        </h1>
+        <p className="text-[#9AAA9E] mt-4 max-w-2xl text-sm md:text-base">
+          A scouting index spanning leagues most databases ignore. Filter, sort, and open any
+          dossier for the full statistical + qualitative profile.
+        </p>
+      </div>
+
+      <div className="px-6 md:px-10 py-5 flex flex-col md:flex-row gap-3 md:items-center border-b border-[#2C4A3B]">
+        <div className="flex items-center gap-2 bg-[#152922] border border-[#2C4A3B] px-3 py-2 flex-1">
+          🔍
+          <input value={query} onChange={e => setQuery(e.target.value)}
+            placeholder="Search player or club..."
+            className="bg-transparent outline-none text-sm w-full placeholder:text-[#6B8570]" />
+        </div>
+        <select value={league} onChange={e => setLeague(e.target.value)}
+          className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none">
+          {availableLeagues.map(l => <option key={l}>{l}</option>)}
+        </select>
+        <select value={position} onChange={e => setPosition(e.target.value)}
+          className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none">
+          {availablePositions.map(p => <option key={p}>{p}</option>)}
+        </select>
+        <button onClick={() => setSortDesc(s => !s)}
+          className="flex items-center gap-2 bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm hover:border-[#E3A857]">
+          ↕ Potential {sortDesc ? "↓" : "↑"}
+        </button>
+      </div>
+
+      <div className="px-6 md:px-10 py-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        {filtered.map(p => <PlayerCard key={p.id} p={p} onOpen={setSelected} />)}
+        {filtered.length === 0 && <div className="text-[#6B8570] text-sm">No players match those filters.</div>}
+      </div>
+
+      <div className="px-6 md:px-10 py-6 border-t border-[#2C4A3B] text-xs text-[#6B8570]">
+        ℹ When "Live API" shows above, you're looking at real ingested data. Potential scores show
+        0 until match-level stats are ingested and the scoring model has run.
+      </div>
+
+      {selected && <PlayerDossier p={selected} onClose={() => setSelected(null)} />}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<ScoutDashboard />);
+</script>
+</body>
+</html>
