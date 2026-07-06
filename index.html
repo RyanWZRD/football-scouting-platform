@@ -129,24 +129,54 @@ function RadarChart({ metrics }) {
   );
 }
 
-function BarChart({ metrics }) {
-  const entries = Object.entries(metrics);
-  const rowH = 28;
-  const height = entries.length * rowH + 10;
+// Overlays one or more players' stat shapes on the same axes — the "octagon"
+// comparison view. series: [{ label, color, metrics }, ...]
+function OverlayRadarChart({ series }) {
+  // Union of all metric keys across every series, preserving first-seen order.
+  const axes = [];
+  series.forEach(s => Object.keys(s.metrics).forEach(k => { if (!axes.includes(k)) axes.push(k); }));
+  const n = axes.length;
+  if (n === 0) return null;
+  const cx = 150, cy = 135, maxR = 95;
+  const angleStep = 360 / n;
+
+  const gridRings = [0.33, 0.66, 1].map((scale, ri) => {
+    const pts = axes.map((_, i) => polar(cx, cy, maxR * scale, i * angleStep));
+    return <polygon key={ri} points={pts.map(p => `${p.x},${p.y}`).join(" ")}
+      fill="none" stroke="#2C4A3B" strokeWidth="1" />;
+  });
+
+  const axisLines = axes.map((_, i) => {
+    const p = polar(cx, cy, maxR, i * angleStep);
+    return <line key={i} x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="#2C4A3B" strokeWidth="1" />;
+  });
+
+  const labels = axes.map((k, i) => {
+    const p = polar(cx, cy, maxR + 20, i * angleStep);
+    return <text key={k} x={p.x} y={p.y} fill="#9AAA9E" fontSize="10"
+      textAnchor="middle" dominantBaseline="middle">{k}</text>;
+  });
+
+  const shapes = series.map((s, si) => {
+    const pts = axes.map((k, i) => {
+      const v = metricScaled(s.metrics[k] ?? 0);
+      return polar(cx, cy, maxR * (Math.min(v, 100) / 100), i * angleStep);
+    });
+    const poly = pts.map(p => `${p.x},${p.y}`).join(" ");
+    return (
+      <g key={si}>
+        <polygon points={poly} fill={s.color} fillOpacity="0.22" stroke={s.color} strokeWidth="2" />
+        {pts.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r="3" fill={s.color} />)}
+      </g>
+    );
+  });
+
   return (
-    <svg viewBox={`0 0 300 ${height}`} width="100%" height="100%">
-      {entries.map(([k, v], i) => {
-        const y = i * rowH + 8;
-        const w = Math.max(0, Math.min(100, metricScaled(v))) * 1.6;
-        return (
-          <g key={k}>
-            <text x="0" y={y + 14} fill="#9AAA9E" fontSize="11">{k}</text>
-            <rect x="90" y={y} width="170" height="16" fill="#152922" />
-            <rect x="90" y={y} width={w} height="16" fill="#E3A857" />
-            <text x={90 + w + 6} y={y + 13} fill="#EDEDE3" fontSize="10">{metricLabel(v)}</text>
-          </g>
-        );
-      })}
+    <svg viewBox="0 0 300 300" width="100%" height="100%">
+      {gridRings}
+      {axisLines}
+      {shapes}
+      {labels}
     </svg>
   );
 }
@@ -280,7 +310,17 @@ function PlayerDossier({ p, onClose }) {
             </div>
           </div>
         </div>
-        <div className="mt-6"><BarChart metrics={p.metrics} /></div>
+        <div className="mt-6 h-72">
+          <OverlayRadarChart series={[{ label: p.name, color: "#E3A857", metrics: p.metrics }]} />
+        </div>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-2 text-sm">
+          {Object.entries(p.metrics).map(([k, v]) => (
+            <div key={k} className="flex justify-between border-b border-[#2C4A3B] py-1">
+              <span className="text-[#6B8570]">{k}</span>
+              <span className="text-[#EDEDE3] font-plexmono">{metricLabel(v)}</span>
+            </div>
+          ))}
+        </div>
         <div className="mt-6">
           <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Scout note</div>
           <p className="text-[#C9C08A] leading-relaxed text-sm">{p.note}</p>
@@ -319,6 +359,8 @@ function CompareBar({ selected, onClear, onCompare }) {
 
 function ComparePanel({ players, onClose }) {
   const [a, b] = players;
+  const colorA = "#E3A857";
+  const colorB = "#7FB3D5";
   const allMetrics = Array.from(new Set([...Object.keys(a.metrics), ...Object.keys(b.metrics)]));
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" onClick={onClose}>
@@ -326,39 +368,40 @@ function ComparePanel({ players, onClose }) {
         onClick={e => e.stopPropagation()}>
         <button onClick={onClose} className="absolute top-5 right-5 text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
         <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono mb-4">Head to Head</div>
+
         <div className="grid grid-cols-2 gap-6">
-          {[a, b].map(p => (
+          {[[a, colorA], [b, colorB]].map(([p, color]) => (
             <div key={p.id}>
-              <h3 className="text-xl text-[#EDEDE3] font-display">{p.name}</h3>
-              <div className="text-xs text-[#9AAA9E] mb-2">{p.club} · {p.league} · Age {p.age ?? "—"}</div>
-              <div className="text-3xl font-bold" style={{ color: potentialColor(p.potential) }}>
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 inline-block rounded-full" style={{ background: color }} />
+                <h3 className="text-lg text-[#EDEDE3] font-display">{p.name}</h3>
+              </div>
+              <div className="text-xs text-[#9AAA9E] mb-1 ml-5">{p.club} · {p.league} · Age {p.age ?? "—"}</div>
+              <div className="text-2xl font-bold ml-5" style={{ color: potentialColor(p.potential) }}>
                 {p.potential ?? "—"}
               </div>
-              <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-3">
+              <div className="text-[10px] uppercase tracking-wide text-[#6B8570] ml-5">
                 {p.potential == null ? "Unscored" : "Potential Index"}
               </div>
             </div>
           ))}
         </div>
-        <div className="mt-6 space-y-2">
-          {allMetrics.map(m => {
-            const av = metricScaled(a.metrics[m] ?? 0);
-            const bv = metricScaled(b.metrics[m] ?? 0);
-            const total = av + bv || 1;
-            return (
-              <div key={m}>
-                <div className="flex justify-between text-[11px] text-[#9AAA9E] mb-1">
-                  <span>{metricLabel(a.metrics[m] ?? 0)}</span>
-                  <span className="uppercase tracking-wide text-[#6B8570]">{m}</span>
-                  <span>{metricLabel(b.metrics[m] ?? 0)}</span>
-                </div>
-                <div className="flex h-2 bg-[#152922] overflow-hidden">
-                  <div style={{ width: `${(av / total) * 100}%` }} className="bg-[#E3A857]" />
-                  <div style={{ width: `${(bv / total) * 100}%` }} className="bg-[#8A9A8E]" />
-                </div>
-              </div>
-            );
-          })}
+
+        <div className="h-80 mt-4">
+          <OverlayRadarChart series={[
+            { label: a.name, color: colorA, metrics: a.metrics },
+            { label: b.name, color: colorB, metrics: b.metrics },
+          ]} />
+        </div>
+
+        <div className="mt-4 space-y-1.5">
+          {allMetrics.map(m => (
+            <div key={m} className="flex items-center justify-between text-sm border-b border-[#2C4A3B] py-1.5">
+              <span className="font-plexmono w-16 text-left" style={{ color: colorA }}>{metricLabel(a.metrics[m] ?? 0)}</span>
+              <span className="text-[#9AAA9E] text-xs uppercase tracking-wide text-center flex-1">{m}</span>
+              <span className="font-plexmono w-16 text-right" style={{ color: colorB }}>{metricLabel(b.metrics[m] ?? 0)}</span>
+            </div>
+          ))}
         </div>
       </div>
     </div>
