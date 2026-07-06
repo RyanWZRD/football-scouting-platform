@@ -103,11 +103,35 @@ def list_players(
             p.id, p.full_name, p.date_of_birth, p.primary_position,
             cl.name AS club, l.name AS league, l.season,
             pps.potential_index, pps.stat_component, pps.age_adjustment,
-            pps.qualitative_component
+            pps.qualitative_component,
+            stats.minutes_played, stats.goals, stats.assists,
+            stats.shots_on_target, stats.key_passes, stats.tackles,
+            stats.interceptions, stats.take_ons_completed,
+            CASE WHEN stats.passes_attempted > 0
+                 THEN ROUND(100.0 * stats.passes_completed / stats.passes_attempted, 1)
+                 ELSE NULL END AS pass_accuracy_pct,
+            stats.avg_rating
         FROM players p
         LEFT JOIN clubs cl ON cl.id = p.current_club_id
         LEFT JOIN leagues l ON l.id = cl.league_id
         LEFT JOIN player_potential_scores pps ON pps.player_id = p.id
+        LEFT JOIN (
+            SELECT
+                player_id,
+                SUM(minutes_played) AS minutes_played,
+                SUM(goals) AS goals,
+                SUM(assists) AS assists,
+                SUM(shots_on_target) AS shots_on_target,
+                SUM(key_passes) AS key_passes,
+                SUM(tackles) AS tackles,
+                SUM(interceptions) AS interceptions,
+                SUM(take_ons_completed) AS take_ons_completed,
+                SUM(passes_completed) AS passes_completed,
+                SUM(passes_attempted) AS passes_attempted,
+                ROUND(AVG(rating), 1) AS avg_rating
+            FROM player_match_stats
+            GROUP BY player_id
+        ) stats ON stats.player_id = p.id
     """
 
     if season:
