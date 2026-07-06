@@ -148,12 +148,12 @@ function normalizeLivePlayer(row) {
     potential: row.potential_index != null ? Math.round(row.potential_index) : null,
     marketValue: "—",
     metrics: {
-      Stats: row.stat_component ?? 0,
-      Age: row.age_adjustment ?? 0,
-      Scouting: row.qualitative_component ?? 0,
+      "Stat Percentile": row.stat_component ?? 0,
+      "Age Curve": row.age_adjustment ?? 0,
+      "Scout Input": row.qualitative_component ?? 0,
     },
     note: row.potential_index != null
-      ? "Live record from the database."
+      ? "Live record. The chart shows the three ingredients behind the potential score — not football skill ratings: Stat Percentile (how their per-90 output ranks against peers), Age Curve (younger = higher weight), and Scout Input (defaults to neutral until a scout adds a note)."
       : "Live record — no potential score yet. This player needs more ingested match minutes before scoring.",
     tags: row.potential_index != null ? ["Live data"] : ["Live data", "Unscored"],
   };
