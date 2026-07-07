@@ -25,7 +25,8 @@ API_BASE = "https://v3.football.api-sports.io"
 API_KEY = os.environ.get("FOOTBALL_API_KEY")
 DATABASE_URL = os.environ.get("DATABASE_URL")
 HEADERS = {"x-apisports-key": API_KEY}
-REQUEST_DELAY_SECONDS = 7  # same free-tier pacing as ingest.py
+# Pro plan: 7,500/day, 300 requests/minute — much faster pacing is safe now.
+REQUEST_DELAY_SECONDS = 0.25
 
 
 class RateLimitError(Exception):
@@ -238,11 +239,16 @@ if __name__ == "__main__":
     parser.add_argument("--league", type=int, action="append")
     parser.add_argument("--season", type=int, required=True)
     parser.add_argument("--all-leagues", action="store_true")
-    parser.add_argument("--max-fixtures", type=int, default=5,
-                         help="Recent finished matches to pull PER LEAGUE. Each costs 1 API request. Keep low on free tier.")
+    parser.add_argument("--max-fixtures", type=int, default=15,
+                         help="Recent finished matches to pull PER LEAGUE. Each costs 1 API request. Pro tier (7,500/day) can afford much more than the free-tier default of 5.")
     args = parser.parse_args()
 
-    LEAGUE_IDS = [88, 94, 203, 71, 98, 253, 179, 62]
+    # Same expanded set as ingest.py — keep these two lists in sync.
+    LEAGUE_IDS = [
+        39, 140, 78, 135, 61,        # Top 5
+        88, 94, 203, 71, 98, 253, 179, 62,   # Original non-top5 set
+        40, 144, 262, 128,           # Additional talent-pipeline leagues
+    ]
 
     ids = args.league if args.league else (LEAGUE_IDS if args.all_leagues else [])
     if not ids:

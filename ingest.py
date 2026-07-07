@@ -28,10 +28,9 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 HEADERS = {"x-apisports-key": API_KEY}
 
-# Free plan: 100/day AND 10 requests/minute — the per-minute cap is the one
-# that actually bites first. 7 seconds between calls keeps us under it with
-# a small safety margin (≈8.5 req/min).
-REQUEST_DELAY_SECONDS = 7
+# Pro plan: 7,500/day, 300 requests/minute. 0.25s between calls keeps us
+# comfortably under that (~4 req/sec = 240/min) with headroom to spare.
+REQUEST_DELAY_SECONDS = 0.25
 
 
 def api_get(path, params=None):
@@ -186,13 +185,21 @@ if __name__ == "__main__":
     parser.add_argument("--league", type=int, action="append", help="API-Football league id, repeatable")
     parser.add_argument("--season", type=int, required=True)
     parser.add_argument("--all-leagues", action="store_true",
-                         help="Use the curated non-top5 league list in LEAGUE_IDS below")
+                         help="Use the curated league list in LEAGUE_IDS below (top 5 + talent-pipeline leagues)")
     args = parser.parse_args()
 
-    # A starter set of non-top-5 league IDs worth tracking (API-Football ids).
-    # Expand this list as you decide which leagues matter to you.
-    LEAGUE_IDS = [88, 94, 203, 71, 98, 253, 179, 62]  # Eredivisie, Liga Portugal, Turkish Super Lig,
-                                                       # Brasileirão, J1 League, MLS, Scottish Prem, Belgian Pro League
+    # Now on Pro tier (7,500 req/day) — expanded to include the top 5 plus
+    # a wider set of leagues known for developing talent that moves up to
+    # bigger leagues. Add/remove IDs freely as priorities change.
+    LEAGUE_IDS = [
+        # Top 5
+        39, 140, 78, 135, 61,        # Premier League, La Liga, Bundesliga, Serie A, Ligue 1
+        # Original non-top5 set
+        88, 94, 203, 71, 98, 253, 179, 62,
+        # Eredivisie, Liga Portugal, Süper Lig, Brasileirão, J1 League, MLS, Scottish Prem, Ligue 2
+        # Additional talent-pipeline leagues
+        40, 144, 262, 128,           # Championship (ENG 2nd tier), Belgian Pro League, Liga MX, Argentine Liga Profesional
+    ]
 
     ids = args.league if args.league else (LEAGUE_IDS if args.all_leagues else [])
     if not ids:
