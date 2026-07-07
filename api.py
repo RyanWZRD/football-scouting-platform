@@ -75,7 +75,9 @@ def list_leagues(authorized: bool = Depends(check_api_key)):
     conn = get_conn()
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT l.id, l.name, l.season, l.is_top5, c.name AS country
+            SELECT l.id, l.name,
+                   l.name || ' (' || COALESCE(c.name, 'Unknown') || ')' AS league_display,
+                   l.season, l.is_top5, c.name AS country
             FROM leagues l
             LEFT JOIN countries c ON c.id = l.country_id
             ORDER BY l.name
@@ -103,7 +105,10 @@ def list_players(
     base_query = """
         SELECT
             p.id, p.full_name, p.date_of_birth, p.primary_position,
-            cl.name AS club, l.name AS league, l.season,
+            cl.name AS club,
+            l.name AS league,
+            l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display,
+            l.season,
             pps.potential_index, pps.stat_component, pps.age_adjustment,
             pps.qualitative_component,
             stats.minutes_played, stats.goals, stats.assists,
@@ -120,6 +125,7 @@ def list_players(
         FROM players p
         LEFT JOIN clubs cl ON cl.id = p.current_club_id
         LEFT JOIN leagues l ON l.id = cl.league_id
+        LEFT JOIN countries co ON co.id = l.country_id
         LEFT JOIN player_potential_scores pps ON pps.player_id = p.id
         LEFT JOIN (
             SELECT
@@ -151,7 +157,9 @@ def list_players(
         filters.append("pps.season = %s")
         params.append(season)
     if league:
-        filters.append("l.name = %s")
+        # Filter by the disambiguated display value (e.g. "Serie A (Brazil)"),
+        # not plain name — multiple countries can share a league name.
+        filters.append("(l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s")
         params.append(league)
     if position:
         filters.append("p.primary_position = %s")
