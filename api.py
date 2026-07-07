@@ -111,7 +111,7 @@ def list_players(
             l.season,
             pps.potential_index, pps.stat_component, pps.age_adjustment,
             pps.qualitative_component,
-            stats.minutes_played, stats.goals, stats.assists,
+            stats.appearances, stats.minutes_played, stats.goals, stats.assists,
             stats.shots_on_target, stats.key_passes, stats.tackles,
             stats.interceptions, stats.take_ons_completed,
             CASE WHEN stats.passes_attempted > 0
@@ -130,6 +130,7 @@ def list_players(
         LEFT JOIN (
             SELECT
                 player_id,
+                COUNT(*) AS appearances,
                 SUM(minutes_played) AS minutes_played,
                 SUM(goals) AS goals,
                 SUM(assists) AS assists,
