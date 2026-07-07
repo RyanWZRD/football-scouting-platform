@@ -252,8 +252,14 @@ function ScatterPlot({ players, xKey, yKey, onSelect, topProspectIds, compareIds
 // Full pool of stats we can compute percentiles for. Not every position's
 // radar shows all of these — see POSITION_METRIC_SETS below.
 const RAW_STAT_KEYS = ["Goals/90", "Assists/90", "Shots on Target/90", "Key Passes/90",
-  "Tackles/90", "Interceptions/90", "Take-ons/90", "Pass Acc %", "Duel Win %", "Rating"];
+  "Tackles/90", "Interceptions/90", "Take-ons/90", "Pass Acc %", "Duel Win %", "Rating",
+  "Saves/90", "Save %", "Goals Conceded/90"];
 const MIN_PEERS_FOR_POSITION_GROUP = 5;
+
+// Stats where a LOWER raw number is actually better (e.g. conceding fewer
+// goals). Percentiles for these get inverted so "further out on the radar"
+// still consistently means "better" across every axis.
+const LOWER_IS_BETTER = new Set(["Goals Conceded/90"]);
 
 // Which axes actually show on a player's radar/octagon, by position — a
 // centre-back's radar shouldn't be judged on goals, a striker's shouldn't
@@ -265,7 +271,7 @@ const POSITION_METRIC_SETS = {
   "Attacker": ["Goals/90", "Shots on Target/90", "Assists/90", "Take-ons/90", "Pass Acc %"],
   "Midfielder": ["Key Passes/90", "Assists/90", "Take-ons/90", "Tackles/90", "Pass Acc %"],
   "Defender": ["Tackles/90", "Interceptions/90", "Duel Win %", "Pass Acc %", "Take-ons/90"],
-  "Goalkeeper": ["Pass Acc %", "Rating"],
+  "Goalkeeper": ["Saves/90", "Save %", "Goals Conceded/90", "Pass Acc %", "Rating"],
 };
 const DEFAULT_METRIC_SET = ["Goals/90", "Key Passes/90", "Tackles/90", "Pass Acc %", "Rating"];
 
@@ -289,6 +295,9 @@ function rawStatsForRow(row) {
     "Pass Acc %": row.pass_accuracy_pct ?? null,
     "Duel Win %": row.duel_win_pct ?? null,
     "Rating": row.avg_rating ?? null,
+    "Saves/90": p90(row.saves),
+    "Save %": row.save_pct ?? null,
+    "Goals Conceded/90": p90(row.goals_conceded),
   };
 }
 
@@ -342,7 +351,8 @@ function buildPercentilePlayers(rows) {
     RAW_STAT_KEYS.forEach(k => {
       const posPool = positionPools[pos][k];
       const pool = posPool.length >= MIN_PEERS_FOR_POSITION_GROUP ? posPool : overallPools[k];
-      const pct = percentileRank(raw[k], pool);
+      let pct = percentileRank(raw[k], pool);
+      if (pct != null && LOWER_IS_BETTER.has(k)) pct = 100 - pct;
       metrics[k] = { raw: raw[k] ?? 0, scaled: pct ?? 0 };
     });
 
@@ -379,6 +389,17 @@ function buildPercentilePlayers(rows) {
         "Interceptions": row.interceptions ?? 0,
         "Take-ons (Completed/Attempted)": `${row.take_ons_completed ?? 0}/${row.take_ons_attempted ?? 0}`,
         "Duels (Won/Attempted)": `${row.duels_won ?? 0}/${row.duels_attempted ?? 0}`,
+        ...(row.primary_position === "Goalkeeper" ? {
+          "Saves": row.saves ?? 0,
+          "Goals Conceded": row.goals_conceded ?? 0,
+        } : {}),
+        "Yellow Cards": row.yellow_cards ?? 0,
+        "Red Cards": row.red_cards ?? 0,
+        "Fouls (Committed/Drawn)": `${row.fouls_committed ?? 0}/${row.fouls_drawn ?? 0}`,
+        "Offsides": row.offsides ?? 0,
+        ...((row.penalties_won || row.penalties_scored || row.penalties_missed || row.penalties_committed) ? {
+          "Penalties (Scored/Missed)": `${row.penalties_scored ?? 0}/${row.penalties_missed ?? 0}`,
+        } : {}),
       } : null,
       metrics,
       radarMetrics,

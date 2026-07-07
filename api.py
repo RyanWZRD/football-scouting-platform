@@ -39,6 +39,7 @@ app = FastAPI(title="Cross-League Scouting API")
 # Add more origins to this list as you deploy the dashboard elsewhere.
 ALLOWED_ORIGINS = [
     "https://scoutindex.netlify.app",
+    "https://ryanwzrd.github.io",
     "http://localhost:3000",  # local testing
 ]
 
@@ -123,6 +124,15 @@ def list_players(
             CASE WHEN stats.duels_attempted > 0
                  THEN ROUND(100.0 * stats.duels_won / stats.duels_attempted, 1)
                  ELSE NULL END AS duel_win_pct,
+            stats.saves, stats.goals_conceded,
+            CASE WHEN (stats.saves + stats.goals_conceded) > 0
+                 THEN ROUND(100.0 * stats.saves / (stats.saves + stats.goals_conceded), 1)
+                 ELSE NULL END AS save_pct,
+            stats.fouls_committed, stats.fouls_drawn,
+            stats.yellow_cards, stats.red_cards,
+            stats.penalties_won, stats.penalties_committed,
+            stats.penalties_scored, stats.penalties_missed,
+            stats.offsides,
             latest_note.watch_level
         FROM players p
         LEFT JOIN clubs cl ON cl.id = p.current_club_id
@@ -147,6 +157,17 @@ def list_players(
                 SUM(passes_attempted) AS passes_attempted,
                 SUM(duels_won) AS duels_won,
                 SUM(duels_attempted) AS duels_attempted,
+                SUM(saves) AS saves,
+                SUM(goals_conceded) AS goals_conceded,
+                SUM(fouls_committed) AS fouls_committed,
+                SUM(fouls_drawn) AS fouls_drawn,
+                SUM(yellow_cards) AS yellow_cards,
+                SUM(red_cards) AS red_cards,
+                SUM(penalties_won) AS penalties_won,
+                SUM(penalties_committed) AS penalties_committed,
+                SUM(penalties_scored) AS penalties_scored,
+                SUM(penalties_missed) AS penalties_missed,
+                SUM(offsides) AS offsides,
                 ROUND(AVG(rating), 1) AS avg_rating
             FROM player_match_stats
             GROUP BY player_id

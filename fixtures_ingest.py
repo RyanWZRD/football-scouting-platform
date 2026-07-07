@@ -3,16 +3,11 @@ Match-level ingestion: pulls recent finished fixtures per league, then
 per-player stats for each of those fixtures. This is what populates
 player_match_stats — the table scoring_model.py actually depends on.
 
-COST WARNING: /fixtures/players costs one API request PER MATCH. A full
-season is 200-380 matches per league. On the free tier (100 req/day),
-this script deliberately caps how many recent matches it pulls per
-league via --max-fixtures, rather than trying to backfill a full season.
-
 Usage:
     export FOOTBALL_API_KEY=...
     export DATABASE_URL=...
-    python fixtures_ingest.py --league 88 --season 2023 --max-fixtures 5
-    python fixtures_ingest.py --all-leagues --season 2023 --max-fixtures 5
+    python fixtures_ingest.py --league 88 --season 2025 --max-fixtures 600
+    python fixtures_ingest.py --all-leagues --season 2025 --max-fixtures 600
 """
 
 import os
@@ -76,8 +71,10 @@ def get_db_club_id(conn, club_external_id, cache=None):
 
 def upsert_player_stats_for_match(conn, db_match_id, fixture_external_id, club_cache):
     """Batched version: resolves all players in one match with a handful of
-    round-trips total instead of ~3 per player. This is the change that took
-    a 380-match league from 45+ minutes down to a couple of minutes."""
+    round-trips total instead of ~3 per player. Also de-duplicates — some
+    fixtures contain repeated/placeholder player entries (seen as external_id
+    "0" in a couple of Argentine-league matches), which would otherwise crash
+    the batched INSERT with a Postgres "affect row a second time" error."""
     data = api_get("fixtures/players", {"fixture": fixture_external_id})
     if not data:
         return
@@ -108,10 +105,14 @@ def upsert_player_stats_for_match(conn, db_match_id, fixture_external_id, club_c
         cur.execute("SELECT external_id, id FROM players WHERE external_id = ANY(%s)", (ext_ids,))
         id_map = {row[0]: row[1] for row in cur.fetchall()}
 
-    missing = [e for e in player_entries if e["external_id"] not in id_map]
+    seen_players = set()
+    missing = []
+    for e in player_entries:
+        if e["external_id"] not in id_map and e["external_id"] not in seen_players:
+            missing.append(e)
+            seen_players.add(e["external_id"])
+
     if missing:
-        # One batched insert for every new player in this match at once,
-        # instead of one INSERT per player.
         values = [(e["external_id"], e["name"], e["club_id"]) for e in missing]
         with conn.cursor() as cur:
             execute_values(cur, """
@@ -126,10 +127,18 @@ def upsert_player_stats_for_match(conn, db_match_id, fixture_external_id, club_c
 
     # Build one batched INSERT covering every player's match stats.
     stat_rows = []
+    seen_stat_keys = set()
     for e in player_entries:
         db_player_id = id_map.get(e["external_id"])
         if db_player_id is None:
             continue
+
+        stat_key = (db_player_id, db_match_id)
+        if stat_key in seen_stat_keys:
+            print(f"    duplicate stats skipped for player {e['external_id']} in fixture {fixture_external_id}")
+            continue
+        seen_stat_keys.add(stat_key)
+
         stats = e["stats"]
         games = e["games"]
         minutes = games.get("minutes") or 0
@@ -139,6 +148,9 @@ def upsert_player_stats_for_match(conn, db_match_id, fixture_external_id, club_c
         duels = stats.get("duels", {})
         dribbles = stats.get("dribbles", {})
         goals = stats.get("goals", {})
+        fouls = stats.get("fouls", {})
+        cards = stats.get("cards", {})
+        penalty = stats.get("penalty", {})
 
         # API-Football gives pass "total" and an "accuracy" percentage,
         # not a raw completed count — derive completed from the two.
@@ -167,6 +179,12 @@ def upsert_player_stats_for_match(conn, db_match_id, fixture_external_id, club_c
             tackles.get("total") or 0, tackles.get("interceptions") or 0,
             duels.get("won") or 0, duels.get("total") or 0,
             float(stats.get("games", {}).get("rating") or 0) or None,
+            goals.get("saves") or 0, goals.get("conceded") or 0,
+            fouls.get("committed") or 0, fouls.get("drawn") or 0,
+            cards.get("yellow") or 0, cards.get("red") or 0,
+            penalty.get("won") or 0, penalty.get("committed") or 0,
+            penalty.get("scored") or 0, penalty.get("missed") or 0,
+            stats.get("offsides") or 0,
         ))
 
     if stat_rows:
@@ -177,7 +195,10 @@ def upsert_player_stats_for_match(conn, db_match_id, fixture_external_id, club_c
                      goals, assists, shots, shots_on_target, key_passes,
                      passes_completed, passes_attempted, take_ons_attempted,
                      take_ons_completed, tackles, interceptions, duels_won,
-                     duels_attempted, rating)
+                     duels_attempted, rating,
+                     saves, goals_conceded, fouls_committed, fouls_drawn,
+                     yellow_cards, red_cards, penalties_won, penalties_committed,
+                     penalties_scored, penalties_missed, offsides)
                 VALUES %s
                 ON CONFLICT (player_id, match_id) DO UPDATE SET
                     minutes_played = EXCLUDED.minutes_played,
@@ -194,7 +215,18 @@ def upsert_player_stats_for_match(conn, db_match_id, fixture_external_id, club_c
                     interceptions = EXCLUDED.interceptions,
                     duels_won = EXCLUDED.duels_won,
                     duels_attempted = EXCLUDED.duels_attempted,
-                    rating = EXCLUDED.rating
+                    rating = EXCLUDED.rating,
+                    saves = EXCLUDED.saves,
+                    goals_conceded = EXCLUDED.goals_conceded,
+                    fouls_committed = EXCLUDED.fouls_committed,
+                    fouls_drawn = EXCLUDED.fouls_drawn,
+                    yellow_cards = EXCLUDED.yellow_cards,
+                    red_cards = EXCLUDED.red_cards,
+                    penalties_won = EXCLUDED.penalties_won,
+                    penalties_committed = EXCLUDED.penalties_committed,
+                    penalties_scored = EXCLUDED.penalties_scored,
+                    penalties_missed = EXCLUDED.penalties_missed,
+                    offsides = EXCLUDED.offsides
             """, stat_rows)
 
     conn.commit()  # once per match, not once (or twice) per player
@@ -208,7 +240,6 @@ def upsert_matches_for_league(conn, league_external_id, season, db_league_id, ma
         print(f"    no finished fixtures found for league {league_external_id}")
         return []
 
-    # Most recent first, capped to the budget.
     fixtures = sorted(fixtures, key=lambda f: f["fixture"]["date"], reverse=True)[:max_fixtures]
 
     db_match_ids = []
@@ -241,7 +272,7 @@ def upsert_matches_for_league(conn, league_external_id, season, db_league_id, ma
 def run(league_ids, season, max_fixtures):
     conn = get_conn()
     completed = []
-    club_cache = {}  # shared across the whole run — clubs don't change mid-run
+    club_cache = {}
     for league_id in league_ids:
         print(f"Fetching fixtures for league {league_id} / season {season} ...")
         try:
@@ -251,8 +282,6 @@ def run(league_ids, season, max_fixtures):
                 continue
             matches = upsert_matches_for_league(conn, league_id, season, db_league_id, max_fixtures, club_cache)
 
-            # Skip matches we've already fully ingested — no API call needed
-            # for those, which is what makes re-running this command cheap.
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT DISTINCT match_id FROM player_match_stats WHERE match_id = ANY(%s)",
@@ -285,15 +314,14 @@ if __name__ == "__main__":
     parser.add_argument("--league", type=int, action="append")
     parser.add_argument("--season", type=int, required=True)
     parser.add_argument("--all-leagues", action="store_true")
-    parser.add_argument("--max-fixtures", type=int, default=15,
-                         help="Recent finished matches to pull PER LEAGUE. Each costs 1 API request. Pro tier (7,500/day) can afford much more than the free-tier default of 5.")
+    parser.add_argument("--max-fixtures", type=int, default=600,
+                         help="Recent finished matches to pull PER LEAGUE. Each costs 1 API request.")
     args = parser.parse_args()
 
-    # Same expanded set as ingest.py — keep these two lists in sync.
     LEAGUE_IDS = [
-        39, 140, 78, 135, 61,        # Top 5
-        88, 94, 203, 71, 98, 253, 179, 62,   # Original non-top5 set
-        40, 144, 262, 128,           # Additional talent-pipeline leagues
+        39, 140, 78, 135, 61,
+        88, 94, 203, 71, 98, 253, 179, 62,
+        40, 144, 262, 128,
     ]
 
     ids = args.league if args.league else (LEAGUE_IDS if args.all_leagues else [])
