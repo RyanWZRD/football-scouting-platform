@@ -95,7 +95,7 @@ def list_players(
     min_potential: Optional[float] = Query(None),
     sort: str = Query("potential", enum=["potential", "age", "name"]),
     season: Optional[str] = None,
-    limit: int = Query(50, le=200),
+    limit: int = Query(50, le=5000),
     authorized: bool = Depends(check_api_key),
 ):
     conn = get_conn()
