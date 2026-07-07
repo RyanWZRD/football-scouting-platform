@@ -641,6 +641,22 @@ function ScoutDashboard() {
   const [connectionStatus, setConnectionStatus] = useState(API_BASE_URL ? "connecting" : "offline");
   const [compareList, setCompareList] = useState([]);
   const [comparing, setComparing] = useState(false);
+  const [allLeagueOptions, setAllLeagueOptions] = useState([]);
+
+  // Fixed set of positions the API actually uses — cheaper than a dedicated
+  // endpoint, and this genuinely doesn't change often.
+  const POSITION_OPTIONS = ["Attacker", "Forward", "Midfielder", "Defender", "Goalkeeper"];
+
+  // Fetch the full list of leagues ONCE, independent of whatever players are
+  // currently filtered — otherwise the league dropdown would only ever show
+  // whichever league you're already viewing.
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/leagues`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
+      .then(rows => setAllLeagueOptions(rows.map(r => r.league_display).sort()))
+      .catch(() => {});
+  }, []);
 
   const toggleCompare = (p) => {
     setCompareList(list => {
@@ -675,7 +691,17 @@ function ScoutDashboard() {
     if (!API_BASE_URL) return;
     let cancelled = false;
     setConnectionStatus("connecting");
-    fetch(`${API_BASE_URL}/players?limit=200`, {
+
+    const params = new URLSearchParams();
+    const filtersActive = league !== "All leagues" || position !== "All positions";
+    // No filters at all = a curated "top prospects" landing view, capped at
+    // 200. Any filter active = a much higher cap, since a single league or
+    // position can genuinely have 500-1500+ real players.
+    params.set("limit", filtersActive ? "3000" : "200");
+    if (league !== "All leagues") params.set("league", league);
+    if (position !== "All positions") params.set("position", position);
+
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, {
       headers: API_KEY ? { "X-API-Key": API_KEY } : {}
     })
       .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
@@ -686,14 +712,16 @@ function ScoutDashboard() {
       })
       .catch(() => { if (!cancelled) setConnectionStatus("offline"); });
     return () => { cancelled = true; };
-  }, []);
+  }, [league, position]);
 
   const dataSource = livePlayers && connectionStatus === "live" ? livePlayers : PLAYERS;
 
-  const availableLeagues = useMemo(() =>
-    ["All leagues", ...Array.from(new Set(dataSource.map(p => p.league)))], [dataSource]);
-  const availablePositions = useMemo(() =>
-    ["All positions", ...Array.from(new Set(dataSource.map(p => p.position)))], [dataSource]);
+  const availableLeagues = connectionStatus === "live" || allLeagueOptions.length > 0
+    ? ["All leagues", ...allLeagueOptions]
+    : ["All leagues", ...Array.from(new Set(dataSource.map(p => p.league)))];
+  const availablePositions = connectionStatus === "live"
+    ? ["All positions", ...POSITION_OPTIONS]
+    : ["All positions", ...Array.from(new Set(dataSource.map(p => p.position)))];
 
   const filtered = useMemo(() => {
     let list = dataSource.filter(p => {
