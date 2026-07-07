@@ -462,7 +462,18 @@ function PlayerCard({ p, onOpen, onToggleCompare, isComparing, compareDisabled, 
 }
 
 function PlayerDossier({ p, onClose, onToggleShortlist }) {
+  const [tab, setTab] = useState("overview");
   const shortlisted = p.watchLevel === "shortlist";
+
+  const TabButton = ({ id, label }) => (
+    <button onClick={() => setTab(id)}
+      className={`px-4 py-2 text-xs uppercase tracking-wide border-b-2 ${
+        tab === id ? "border-[#E3A857] text-[#E3A857]" : "border-transparent text-[#6B8570] hover:text-[#9AAA9E]"
+      }`}>
+      {label}
+    </button>
+  );
+
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50" onClick={onClose}>
       <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[90vh] overflow-y-auto p-8 relative"
@@ -480,64 +491,86 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
           )}
         </div>
         <div className="text-[#9AAA9E] mt-1">{p.flag} {p.club} · {p.league} · Age {p.age ?? "—"} · {p.posLabel}</div>
-        <div className="grid grid-cols-2 gap-4 mt-6 border-t border-b border-[#2C4A3B] py-4">
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">
-              {p.potential == null ? "Status" : "Potential Index"}
-            </div>
-            <div className="text-2xl font-bold" style={{ color: potentialColor(p.potential) }}>
-              {p.potential ?? "Unscored"}
-            </div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">
-              {p.minutesPlayed != null ? "Minutes (ingested)" : "Est. Value"}
-            </div>
-            <div className="text-xl font-plexmono text-[#EDEDE3]">
-              {p.minutesPlayed != null ? p.minutesPlayed : p.marketValue}
-            </div>
-          </div>
-        </div>
-        <div className="mt-6 h-72">
-          <OverlayRadarChart series={[{ label: p.name, color: "#E3A857", metrics: p.radarMetrics || p.metrics }]} />
+
+        <div className="flex gap-1 border-b border-[#2C4A3B] mt-5">
+          <TabButton id="overview" label="Overview" />
+          <TabButton id="stats" label="Stats" />
+          <TabButton id="notes" label="Notes" />
         </div>
 
-        {p.seasonTotals && (
+        {tab === "overview" && (
           <>
-            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mt-4 mb-1">
-              Season Totals ({p.appearances ?? "?"} appearances, {p.league})
+            <div className="grid grid-cols-2 gap-4 mt-6 border-b border-[#2C4A3B] pb-4">
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">
+                  {p.potential == null ? "Status" : "Potential Index"}
+                </div>
+                <div className="text-2xl font-bold" style={{ color: potentialColor(p.potential) }}>
+                  {p.potential ?? "Unscored"}
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">
+                  {p.minutesPlayed != null ? "Minutes (ingested)" : "Est. Value"}
+                </div>
+                <div className="text-xl font-plexmono text-[#EDEDE3]">
+                  {p.minutesPlayed != null ? p.minutesPlayed : p.marketValue}
+                </div>
+              </div>
+            </div>
+            <div className="mt-6 h-72">
+              <OverlayRadarChart series={[{ label: p.name, color: "#E3A857", metrics: p.radarMetrics || p.metrics }]} />
+            </div>
+            <div className="flex flex-wrap gap-1.5 mt-4">
+              {p.tags.map(t => (
+                <span key={t} className="text-[10px] uppercase tracking-wide px-2 py-1 border border-[#2C4A3B] text-[#9AAA9E]">{t}</span>
+              ))}
+            </div>
+          </>
+        )}
+
+        {tab === "stats" && (
+          <>
+            {p.seasonTotals && (
+              <>
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mt-5 mb-1">
+                  Season Totals ({p.appearances ?? "?"} appearances, {p.league})
+                </div>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-1 text-sm">
+                  {Object.entries(p.seasonTotals).map(([k, v]) => (
+                    <div key={k} className="flex justify-between border-b border-[#2C4A3B] py-1">
+                      <span className="text-[#6B8570]">{k}</span>
+                      <span className="text-[#EDEDE3] font-plexmono font-bold">{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mt-5 mb-1">
+              Full stat sheet (per-90 rates, regardless of position)
             </div>
             <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-1 text-sm">
-              {Object.entries(p.seasonTotals).map(([k, v]) => (
+              {Object.entries(p.metrics).map(([k, v]) => (
                 <div key={k} className="flex justify-between border-b border-[#2C4A3B] py-1">
                   <span className="text-[#6B8570]">{k}</span>
-                  <span className="text-[#EDEDE3] font-plexmono font-bold">{v}</span>
+                  <span className="text-[#EDEDE3] font-plexmono">{metricLabel(v)}</span>
                 </div>
               ))}
             </div>
           </>
         )}
 
-        <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mt-4 mb-1">
-          Full stat sheet (per-90 rates, regardless of position)
-        </div>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-1 text-sm">
-          {Object.entries(p.metrics).map(([k, v]) => (
-            <div key={k} className="flex justify-between border-b border-[#2C4A3B] py-1">
-              <span className="text-[#6B8570]">{k}</span>
-              <span className="text-[#EDEDE3] font-plexmono">{metricLabel(v)}</span>
+        {tab === "notes" && (
+          <div className="mt-5">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Scout note</div>
+            <p className="text-[#C9C08A] leading-relaxed text-sm">{p.note}</p>
+            <div className="flex flex-wrap gap-1.5 mt-4">
+              {p.tags.map(t => (
+                <span key={t} className="text-[10px] uppercase tracking-wide px-2 py-1 border border-[#2C4A3B] text-[#9AAA9E]">{t}</span>
+              ))}
             </div>
-          ))}
-        </div>
-        <div className="mt-6">
-          <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Scout note</div>
-          <p className="text-[#C9C08A] leading-relaxed text-sm">{p.note}</p>
-        </div>
-        <div className="flex flex-wrap gap-1.5 mt-4">
-          {p.tags.map(t => (
-            <span key={t} className="text-[10px] uppercase tracking-wide px-2 py-1 border border-[#2C4A3B] text-[#9AAA9E]">{t}</span>
-          ))}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -974,7 +1007,7 @@ function ScoutDashboard() {
         potential score can be computed.
       </div>
 
-      {selected && <PlayerDossier p={selected} onClose={() => setSelected(null)}
+      {selected && <PlayerDossier key={selected.id} p={selected} onClose={() => setSelected(null)}
         onToggleShortlist={connectionStatus === "live" ? toggleShortlist : null} />}
       <CompareBar selected={compareList} onClear={() => setCompareList([])} onCompare={() => setComparing(true)} />
       {comparing && compareList.length === 2 && (
