@@ -15,12 +15,14 @@ Endpoints:
     GET /leagues
     GET /players?league=Eredivisie&position=CM&max_age=21&sort=potential&limit=50
     GET /players/{player_id}          -> full dossier incl. match log + scout notes
+    POST /players/{player_id}/watch   -> shortlist/monitor/priority a player (writes a scout_notes row)
 """
 
 import os
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import psycopg2
 import psycopg2.extras
 
@@ -43,7 +45,7 @@ ALLOWED_ORIGINS = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -110,7 +112,8 @@ def list_players(
             CASE WHEN stats.passes_attempted > 0
                  THEN ROUND(100.0 * stats.passes_completed / stats.passes_attempted, 1)
                  ELSE NULL END AS pass_accuracy_pct,
-            stats.avg_rating
+            stats.avg_rating,
+            latest_note.watch_level
         FROM players p
         LEFT JOIN clubs cl ON cl.id = p.current_club_id
         LEFT JOIN leagues l ON l.id = cl.league_id
@@ -132,6 +135,11 @@ def list_players(
             FROM player_match_stats
             GROUP BY player_id
         ) stats ON stats.player_id = p.id
+        LEFT JOIN LATERAL (
+            SELECT watch_level FROM scout_notes sn
+            WHERE sn.player_id = p.id
+            ORDER BY created_at DESC LIMIT 1
+        ) latest_note ON true
     """
 
     if season:
@@ -216,3 +224,39 @@ def player_dossier(player_id: int, authorized: bool = Depends(check_api_key)):
         "scout_notes": notes,
         "recent_matches": recent_matches,
     }
+
+
+class WatchRequest(BaseModel):
+    watch_level: Optional[str] = None  # 'monitor' | 'shortlist' | 'priority' | None to clear
+    note: Optional[str] = None
+    author: Optional[str] = "dashboard"
+
+
+@app.post("/players/{player_id}/watch")
+def set_watch_level(player_id: int, body: WatchRequest, authorized: bool = Depends(check_api_key)):
+    if body.watch_level is not None and body.watch_level not in ("monitor", "shortlist", "priority"):
+        raise HTTPException(status_code=400, detail="watch_level must be monitor, shortlist, priority, or null")
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM players WHERE id = %s", (player_id,))
+        if not cur.fetchone():
+            conn.close()
+            raise HTTPException(status_code=404, detail="Player not found")
+
+        note_text = body.note or (
+            f"Marked as {body.watch_level} via dashboard" if body.watch_level
+            else "Removed from shortlist via dashboard"
+        )
+        cur.execute(
+            """
+            INSERT INTO scout_notes (player_id, author, note, watch_level)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, watch_level, created_at
+            """,
+            (player_id, body.author, note_text, body.watch_level),
+        )
+        result = cur.fetchone()
+    conn.commit()
+    conn.close()
+    return result
