@@ -25,8 +25,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import psycopg2
 import psycopg2.extras
+import anthropic
+import re
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 # Simple shared-secret protection. Set this in Render's environment variables
 # and pass the same value as a header from your dashboard: X-API-Key: <value>
@@ -105,7 +108,7 @@ def list_players(
 
     base_query = """
         SELECT
-            p.id, p.full_name, p.date_of_birth, p.primary_position,
+            p.id, p.full_name, p.date_of_birth, p.primary_position, p.photo_url,
             cl.name AS club,
             l.name AS league,
             l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display,
@@ -299,3 +302,187 @@ def set_watch_level(player_id: int, body: WatchRequest, authorized: bool = Depen
     conn.commit()
     conn.close()
     return result
+
+
+# ---------------------------------------------------------------------------
+# "Ask the Index" — natural language Q&A over the database.
+# Two-step: (1) an LLM call turns the question into a single read-only SQL
+# query against the actual schema, which we validate and execute; (2) a
+# second LLM call turns the raw results back into a plain-English answer.
+# ---------------------------------------------------------------------------
+
+SCHEMA_DESCRIPTION = """
+Tables (Postgres):
+
+leagues(id, name, season TEXT e.g. '2025', country_id, is_top5 BOOLEAN)
+countries(id, name)
+clubs(id, name, league_id, country_id)
+players(id, full_name, date_of_birth, primary_position TEXT — one of
+    'Attacker','Midfielder','Defender','Goalkeeper', current_club_id)
+matches(id, league_id, home_club_id, away_club_id, match_date, home_score, away_score)
+player_match_stats(id, player_id, match_id, club_id, minutes_played,
+    goals, assists, shots, shots_on_target, key_passes,
+    passes_completed, passes_attempted, take_ons_attempted, take_ons_completed,
+    tackles, interceptions, duels_won, duels_attempted, rating,
+    saves, goals_conceded, fouls_committed, fouls_drawn,
+    yellow_cards, red_cards, penalties_won, penalties_committed,
+    penalties_scored, penalties_missed, offsides)
+    -- one row per player per match. This is the source of truth for all
+    -- season totals and per-90 rates — always SUM/AVG across this table
+    -- grouped by player_id, joined to matches->leagues for season/league
+    -- filtering, rather than assuming any pre-aggregated column exists.
+    -- NOTE: this table also has xg, xa, progressive_passes, progressive_carries
+    -- columns that exist but are NEVER populated (always 0/null) — never
+    -- use them to answer a question; if asked about xG, say it isn't tracked.
+player_potential_scores(player_id, season, potential_index 0-100,
+    stat_component, age_adjustment, qualitative_component)
+scout_notes(player_id, author, note, watch_level — 'monitor'/'shortlist'/'priority', created_at)
+
+Relationships: players.current_club_id -> clubs.id -> clubs.league_id -> leagues.id
+clubs.country_id / leagues.country_id -> countries.id
+matches.league_id -> leagues.id ; player_match_stats.match_id -> matches.id
+
+Season in this database is '2025' (most recently completed full season for most
+leagues) unless the user specifies otherwise. Per-90 rate = SUM(stat) * 90.0 /
+SUM(minutes_played), only for players with a meaningful minutes sample (use
+HAVING SUM(minutes_played) >= 450 for "who is best at X" style ranking
+questions, to avoid tiny-sample noise, unless the user asks about a specific
+named player where any sample is fine).
+"""
+
+SQL_FEWSHOT_EXAMPLES = """
+Q: Who has scored the most goals this season?
+SQL:
+SELECT p.full_name, cl.name AS club, l.name AS league, SUM(pms.goals) AS goals
+FROM player_match_stats pms
+JOIN players p ON p.id = pms.player_id
+JOIN matches m ON m.id = pms.match_id
+JOIN leagues l ON l.id = m.league_id
+LEFT JOIN clubs cl ON cl.id = pms.club_id
+WHERE l.season = '2025'
+GROUP BY p.full_name, cl.name, l.name
+ORDER BY goals DESC
+LIMIT 10;
+
+Q: Best young defenders outside the top 5 leagues by tackles per 90
+SQL:
+SELECT p.full_name, cl.name AS club, l.name AS league,
+       DATE_PART('year', AGE(p.date_of_birth)) AS age,
+       SUM(pms.tackles) * 90.0 / SUM(pms.minutes_played) AS tackles_p90,
+       SUM(pms.minutes_played) AS minutes
+FROM player_match_stats pms
+JOIN players p ON p.id = pms.player_id
+JOIN matches m ON m.id = pms.match_id
+JOIN leagues l ON l.id = m.league_id
+LEFT JOIN clubs cl ON cl.id = pms.club_id
+WHERE l.season = '2025' AND p.primary_position = 'Defender'
+      AND l.is_top5 = false
+      AND DATE_PART('year', AGE(p.date_of_birth)) <= 21
+GROUP BY p.full_name, cl.name, l.name, p.date_of_birth
+HAVING SUM(pms.minutes_played) >= 450
+ORDER BY tackles_p90 DESC
+LIMIT 10;
+
+Q: Show me my shortlisted players
+SQL:
+SELECT p.full_name, cl.name AS club, l.name AS league, sn.watch_level
+FROM scout_notes sn
+JOIN players p ON p.id = sn.player_id
+LEFT JOIN clubs cl ON cl.id = p.current_club_id
+LEFT JOIN leagues l ON l.id = cl.league_id
+WHERE sn.watch_level = 'shortlist'
+ORDER BY p.full_name;
+"""
+
+FORBIDDEN_SQL_KEYWORDS = re.compile(
+    r"\b(insert|update|delete|drop|alter|truncate|grant|revoke|create|copy|execute|call|vacuum|reindex)\b",
+    re.IGNORECASE,
+)
+
+
+def validate_readonly_sql(sql: str) -> str:
+    """Raises ValueError if the SQL isn't a safe, single, read-only statement."""
+    cleaned = sql.strip().rstrip(";").strip()
+    if not cleaned:
+        raise ValueError("Empty query generated.")
+    if ";" in cleaned:
+        raise ValueError("Multiple statements are not allowed.")
+    if not re.match(r"^\s*(select|with)\b", cleaned, re.IGNORECASE):
+        raise ValueError("Only SELECT/WITH queries are allowed.")
+    if FORBIDDEN_SQL_KEYWORDS.search(cleaned):
+        raise ValueError("Query contains a disallowed keyword.")
+    return cleaned
+
+
+def extract_sql(text: str) -> str:
+    """Pull SQL out of a ```sql fenced block if present, else use as-is."""
+    match = re.search(r"```(?:sql)?\s*(.*?)```", text, re.DOTALL | re.IGNORECASE)
+    return match.group(1).strip() if match else text.strip()
+
+
+class AskRequest(BaseModel):
+    question: str
+
+
+@app.post("/ask")
+def ask_the_index(body: AskRequest, authorized: bool = Depends(check_api_key)):
+    if not ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured on the server.")
+    if not body.question or not body.question.strip():
+        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    # Step 1: question -> SQL
+    sql_response = client.messages.create(
+        model="claude-sonnet-5",
+        max_tokens=800,
+        system=(
+            "You write a single read-only PostgreSQL query to answer football "
+            "scouting questions against the schema below. Respond with ONLY the "
+            "SQL query in a ```sql code block — no prose, no explanation.\n\n"
+            + SCHEMA_DESCRIPTION + "\n\nExamples:\n" + SQL_FEWSHOT_EXAMPLES
+        ),
+        messages=[{"role": "user", "content": body.question}],
+    )
+    raw_sql = "".join(b.text for b in sql_response.content if hasattr(b, "text"))
+    sql = extract_sql(raw_sql)
+
+    try:
+        sql = validate_readonly_sql(sql)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Could not safely answer that question: {e}")
+
+    # Execute with a hard row cap and a read-only transaction as defense in depth.
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET TRANSACTION READ ONLY")
+            cur.execute(sql)
+            rows = cur.fetchmany(200)
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"Query failed: {e}")
+    conn.close()
+
+    # Step 2: results -> plain-English answer
+    import json
+    answer_response = client.messages.create(
+        model="claude-sonnet-5",
+        max_tokens=600,
+        system=(
+            "You are a football scouting assistant. Given a user's question and "
+            "real query results from a database (2025 season, 17 leagues including "
+            "the top 5 plus talent-pipeline leagues), answer conversationally and "
+            "factually, citing specific names and numbers from the results. If "
+            "results are empty, say so plainly rather than guessing. Keep it concise."
+        ),
+        messages=[{
+            "role": "user",
+            "content": f"Question: {body.question}\n\nResults (JSON):\n{json.dumps(rows, default=str)}",
+        }],
+    )
+    answer = "".join(b.text for b in answer_response.content if hasattr(b, "text"))
+
+    return {"question": body.question, "answer": answer, "sql": sql, "rows": rows}
