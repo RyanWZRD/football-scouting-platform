@@ -453,7 +453,7 @@ function PlayerCard({ p, onOpen, onToggleCompare, isComparing, compareDisabled, 
           🏆 Top Prospect
         </div>
       )}
-      <div className="absolute top-4 right-4 flex items-center gap-3 z-10">
+      <div className="flex items-center justify-end gap-3">
         {onToggleShortlist && (
           <button onClick={(e) => { e.stopPropagation(); onToggleShortlist(p); }}
             title={shortlisted ? "Remove from shortlist" : "Add to shortlist"}
@@ -468,8 +468,8 @@ function PlayerCard({ p, onOpen, onToggleCompare, isComparing, compareDisabled, 
           Compare
         </label>
       </div>
-      <button onClick={() => onOpen(p)} className="text-left flex flex-col gap-3 w-full">
-        <div className="flex items-start justify-between pr-20">
+      <button onClick={() => onOpen(p)} className="text-left flex flex-col gap-3 w-full -mt-2">
+        <div className="flex items-start justify-between">
           <div className="flex items-start gap-3">
             <Avatar name={p.name} photoUrl={p.photoUrl} size={44} />
             <div>
