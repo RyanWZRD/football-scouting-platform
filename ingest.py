@@ -138,15 +138,16 @@ def upsert_players_for_league(conn, league_external_id, season, db_league_id):
                 cur.execute(
                     """
                     INSERT INTO players
-                        (external_id, full_name, date_of_birth, primary_position, current_club_id)
-                    VALUES (%s, %s, %s, %s, %s)
+                        (external_id, full_name, date_of_birth, primary_position, current_club_id, photo_url)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     ON CONFLICT (external_id) DO UPDATE SET
                         full_name = EXCLUDED.full_name,
                         current_club_id = EXCLUDED.current_club_id,
+                        photo_url = EXCLUDED.photo_url,
                         updated_at = now()
                     """,
                     (str(p["id"]), p["name"], p.get("birth", {}).get("date"),
-                     stats.get("games", {}).get("position"), db_club_id),
+                     stats.get("games", {}).get("position"), db_club_id, p.get("photo")),
                 )
             conn.commit()
         if page >= data.__len__() and len(data) < 20:
