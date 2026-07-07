@@ -113,6 +113,9 @@ def list_players(
                  THEN ROUND(100.0 * stats.passes_completed / stats.passes_attempted, 1)
                  ELSE NULL END AS pass_accuracy_pct,
             stats.avg_rating,
+            CASE WHEN stats.duels_attempted > 0
+                 THEN ROUND(100.0 * stats.duels_won / stats.duels_attempted, 1)
+                 ELSE NULL END AS duel_win_pct,
             latest_note.watch_level
         FROM players p
         LEFT JOIN clubs cl ON cl.id = p.current_club_id
@@ -131,6 +134,8 @@ def list_players(
                 SUM(take_ons_completed) AS take_ons_completed,
                 SUM(passes_completed) AS passes_completed,
                 SUM(passes_attempted) AS passes_attempted,
+                SUM(duels_won) AS duels_won,
+                SUM(duels_attempted) AS duels_attempted,
                 ROUND(AVG(rating), 1) AS avg_rating
             FROM player_match_stats
             GROUP BY player_id
