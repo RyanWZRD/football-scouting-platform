@@ -771,6 +771,7 @@ function RankingsTable({ players, sortBy, onSelect, onToggleCompare, compareIds,
 
 function ScoutDashboard() {
   const [league, setLeague] = useState("All leagues");
+  const [club, setClub] = useState("All clubs");
   const [position, setPosition] = useState("All positions");
   const [query, setQuery] = useState("");
   const [sortDesc, setSortDesc] = useState(true);
@@ -866,10 +867,17 @@ function ScoutDashboard() {
   const availablePositions = connectionStatus === "live"
     ? ["All positions", ...POSITION_OPTIONS]
     : ["All positions", ...Array.from(new Set(dataSource.map(p => p.position)))];
+  // Only meaningful once a specific league is picked — dataSource is
+  // comprehensive for that league at that point (up to 3000 players),
+  // so this list is genuinely complete, not a sample.
+  const availableClubs = league !== "All leagues"
+    ? ["All clubs", ...Array.from(new Set(dataSource.map(p => p.club))).sort()]
+    : ["All clubs"];
 
   const filtered = useMemo(() => {
     let list = dataSource.filter(p => {
       if (league !== "All leagues" && p.league !== league) return false;
+      if (club !== "All clubs" && p.club !== club) return false;
       if (position !== "All positions" && p.position !== position) return false;
       if (hideUnscored && p.potential == null) return false;
       if (shortlistOnly && p.watchLevel !== "shortlist") return false;
@@ -894,7 +902,7 @@ function ScoutDashboard() {
       return sortDesc ? bv - av : av - bv;
     });
     return list;
-  }, [dataSource, league, position, query, sortDesc, sortBy, hideUnscored, shortlistOnly]);
+  }, [dataSource, league, club, position, query, sortDesc, sortBy, hideUnscored, shortlistOnly]);
 
   const sortOptions = [
     { value: "potential", label: "Potential" },
@@ -949,10 +957,16 @@ function ScoutDashboard() {
             placeholder="Search player or club..."
             className="bg-transparent outline-none text-sm w-full placeholder:text-[#6B8570]" />
         </div>
-        <select value={league} onChange={e => setLeague(e.target.value)}
+        <select value={league} onChange={e => { setLeague(e.target.value); setClub("All clubs"); }}
           className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none w-full md:w-auto">
           {availableLeagues.map(l => <option key={l}>{l}</option>)}
         </select>
+        {league !== "All leagues" && (
+          <select value={club} onChange={e => setClub(e.target.value)}
+            className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none w-full md:w-auto">
+            {availableClubs.map(c => <option key={c}>{c}</option>)}
+          </select>
+        )}
         <select value={position} onChange={e => setPosition(e.target.value)}
           className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none w-full md:w-auto">
           {availablePositions.map(p => <option key={p}>{p}</option>)}
@@ -979,8 +993,8 @@ function ScoutDashboard() {
             ★ Shortlist only
           </label>
         )}
-        {(league !== "All leagues" || position !== "All positions" || query || hideUnscored || shortlistOnly) && (
-          <button onClick={() => { setLeague("All leagues"); setPosition("All positions"); setQuery(""); setHideUnscored(false); setShortlistOnly(false); }}
+        {(league !== "All leagues" || club !== "All clubs" || position !== "All positions" || query || hideUnscored || shortlistOnly) && (
+          <button onClick={() => { setLeague("All leagues"); setClub("All clubs"); setPosition("All positions"); setQuery(""); setHideUnscored(false); setShortlistOnly(false); }}
             className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] px-2">
             Reset
           </button>
