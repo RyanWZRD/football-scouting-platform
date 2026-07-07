@@ -66,6 +66,28 @@ const PLAYERS = [
     tags:["Underscouted market","High composure","Sample profile"] },
 ];
 
+// Circular player photo with a graceful initials-based fallback — API-Football
+// photo URLs sometimes 404 or don't exist for lower-profile players, so this
+// always degrades to something reasonable rather than a broken image icon.
+function Avatar({ name, photoUrl, size = 44 }) {
+  const [failed, setFailed] = useState(false);
+  const initials = (name || "?").split(" ").map(w => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
+  const showImage = photoUrl && !failed;
+  return (
+    <div
+      className="rounded-full overflow-hidden flex items-center justify-center shrink-0 border border-[#2C4A3B] bg-[#152922]"
+      style={{ width: size, height: size }}
+    >
+      {showImage ? (
+        <img src={photoUrl} alt={name} onError={() => setFailed(true)}
+          className="w-full h-full object-cover" />
+      ) : (
+        <span className="text-[#6B8570] font-plexmono" style={{ fontSize: size * 0.35 }}>{initials}</span>
+      )}
+    </div>
+  );
+}
+
 function potentialColor(v) {
   if (v == null) return "#4A5C52";
   if (v >= 85) return "#E3A857";
@@ -374,6 +396,7 @@ function buildPercentilePlayers(rows) {
       club: row.club || "Unattached",
       league: row.league_display || row.league || "Unknown league",
       flag: "",
+      photoUrl: row.photo_url || null,
       potential: row.potential_index != null ? Math.round(row.potential_index) : null,
       marketValue: "—",
       minutesPlayed: minutes,
@@ -445,10 +468,13 @@ function PlayerCard({ p, onOpen, onToggleCompare, isComparing, compareDisabled, 
       </label>
       <button onClick={() => onOpen(p)} className="text-left flex flex-col gap-3 w-full">
         <div className="flex items-start justify-between pr-16">
-          <div>
-            <div className="text-[11px] tracking-[0.18em] uppercase text-[#6B8570] font-plexmono">{p.league}</div>
-            <h3 className="text-xl text-[#EDEDE3] font-display leading-tight mt-1">{p.name}</h3>
-            <div className="text-sm text-[#9AAA9E] mt-0.5">{p.flag} {p.club} · Age {p.age ?? "—"} · {p.posLabel}</div>
+          <div className="flex items-start gap-3">
+            <Avatar name={p.name} photoUrl={p.photoUrl} size={44} />
+            <div>
+              <div className="text-[11px] tracking-[0.18em] uppercase text-[#6B8570] font-plexmono">{p.league}</div>
+              <h3 className="text-xl text-[#EDEDE3] font-display leading-tight mt-1">{p.name}</h3>
+              <div className="text-sm text-[#9AAA9E] mt-0.5">{p.flag} {p.club} · Age {p.age ?? "—"} · {p.posLabel}</div>
+            </div>
           </div>
           <div className="text-right shrink-0 pl-3">
             <div className="text-3xl font-bold" style={{ color: potentialColor(p.potential) }}>
@@ -489,17 +515,22 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
         onClick={e => e.stopPropagation()}>
         <button onClick={onClose} className="absolute top-5 right-5 text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
         <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">Scouting Dossier</div>
-        <div className="flex items-center justify-between mt-2">
-          <h2 className="text-3xl text-[#EDEDE3] font-display">{p.name}</h2>
+        <div className="flex items-start justify-between mt-2">
+          <div className="flex items-center gap-4">
+            <Avatar name={p.name} photoUrl={p.photoUrl} size={72} />
+            <div>
+              <h2 className="text-3xl text-[#EDEDE3] font-display">{p.name}</h2>
+              <div className="text-[#9AAA9E] mt-1">{p.flag} {p.club} · {p.league} · Age {p.age ?? "—"} · {p.posLabel}</div>
+            </div>
+          </div>
           {onToggleShortlist && (
             <button onClick={() => onToggleShortlist(p)}
-              className={`flex items-center gap-1.5 text-xs uppercase tracking-wide px-3 py-1.5 border ${shortlisted ? "border-[#E3A857] text-[#E3A857]" : "border-[#2C4A3B] text-[#9AAA9E] hover:border-[#6B8570]"}`}>
+              className={`flex items-center gap-1.5 text-xs uppercase tracking-wide px-3 py-1.5 border shrink-0 ${shortlisted ? "border-[#E3A857] text-[#E3A857]" : "border-[#2C4A3B] text-[#9AAA9E] hover:border-[#6B8570]"}`}>
               <span className="text-base">{shortlisted ? "★" : "☆"}</span>
               {shortlisted ? "Shortlisted" : "Add to shortlist"}
             </button>
           )}
         </div>
-        <div className="text-[#9AAA9E] mt-1">{p.flag} {p.club} · {p.league} · Age {p.age ?? "—"} · {p.posLabel}</div>
 
         <div className="flex gap-1 border-b border-[#2C4A3B] mt-5">
           <TabButton id="overview" label="Overview" />
