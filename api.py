@@ -112,12 +112,14 @@ def list_players(
             pps.potential_index, pps.stat_component, pps.age_adjustment,
             pps.qualitative_component,
             stats.appearances, stats.minutes_played, stats.goals, stats.assists,
-            stats.shots_on_target, stats.key_passes, stats.tackles,
-            stats.interceptions, stats.take_ons_completed,
+            stats.shots, stats.shots_on_target, stats.key_passes, stats.tackles,
+            stats.interceptions, stats.take_ons_attempted, stats.take_ons_completed,
+            stats.passes_completed, stats.passes_attempted,
             CASE WHEN stats.passes_attempted > 0
                  THEN ROUND(100.0 * stats.passes_completed / stats.passes_attempted, 1)
                  ELSE NULL END AS pass_accuracy_pct,
             stats.avg_rating,
+            stats.duels_won, stats.duels_attempted,
             CASE WHEN stats.duels_attempted > 0
                  THEN ROUND(100.0 * stats.duels_won / stats.duels_attempted, 1)
                  ELSE NULL END AS duel_win_pct,
@@ -134,10 +136,12 @@ def list_players(
                 SUM(minutes_played) AS minutes_played,
                 SUM(goals) AS goals,
                 SUM(assists) AS assists,
+                SUM(shots) AS shots,
                 SUM(shots_on_target) AS shots_on_target,
                 SUM(key_passes) AS key_passes,
                 SUM(tackles) AS tackles,
                 SUM(interceptions) AS interceptions,
+                SUM(take_ons_attempted) AS take_ons_attempted,
                 SUM(take_ons_completed) AS take_ons_completed,
                 SUM(passes_completed) AS passes_completed,
                 SUM(passes_attempted) AS passes_attempted,
