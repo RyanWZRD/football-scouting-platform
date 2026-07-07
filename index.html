@@ -362,7 +362,7 @@ function buildPercentilePlayers(rows) {
       position: row.primary_position,
       posLabel: row.primary_position,
       club: row.club || "Unattached",
-      league: row.league || "Unknown league",
+      league: row.league_display || row.league || "Unknown league",
       flag: "",
       potential: row.potential_index != null ? Math.round(row.potential_index) : null,
       marketValue: "—",
