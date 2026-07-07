@@ -367,6 +367,16 @@ function buildPercentilePlayers(rows) {
       potential: row.potential_index != null ? Math.round(row.potential_index) : null,
       marketValue: "—",
       minutesPlayed: minutes,
+      appearances: row.appearances ?? null,
+      seasonTotals: hasStats ? {
+        "Goals": row.goals ?? 0,
+        "Assists": row.assists ?? 0,
+        "Shots on Target": row.shots_on_target ?? 0,
+        "Key Passes": row.key_passes ?? 0,
+        "Tackles": row.tackles ?? 0,
+        "Interceptions": row.interceptions ?? 0,
+        "Take-ons": row.take_ons_completed ?? 0,
+      } : null,
       metrics,
       radarMetrics,
       watchLevel: row.watch_level ?? null,
@@ -467,8 +477,25 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
         <div className="mt-6 h-72">
           <OverlayRadarChart series={[{ label: p.name, color: "#E3A857", metrics: p.radarMetrics || p.metrics }]} />
         </div>
+
+        {p.seasonTotals && (
+          <>
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mt-4 mb-1">
+              Season Totals ({p.appearances ?? "?"} appearances, {p.league})
+            </div>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-1 text-sm">
+              {Object.entries(p.seasonTotals).map(([k, v]) => (
+                <div key={k} className="flex justify-between border-b border-[#2C4A3B] py-1">
+                  <span className="text-[#6B8570]">{k}</span>
+                  <span className="text-[#EDEDE3] font-plexmono font-bold">{v}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
         <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mt-4 mb-1">
-          Full stat sheet (all real numbers, regardless of position)
+          Full stat sheet (per-90 rates, regardless of position)
         </div>
         <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-1 text-sm">
           {Object.entries(p.metrics).map(([k, v]) => (
