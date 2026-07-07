@@ -513,7 +513,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50" onClick={onClose}>
-      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[90vh] overflow-y-auto p-8 relative"
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[90vh] overflow-y-auto p-4 sm:p-8 relative"
         onClick={e => e.stopPropagation()}>
         <button onClick={onClose} className="absolute top-5 right-5 text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
         <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">Scouting Dossier</div>
@@ -578,7 +578,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
                 <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mt-5 mb-1">
                   Season Totals ({p.appearances ?? "?"} appearances, {p.league})
                 </div>
-                <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-1 text-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 mt-1 text-sm">
                   {Object.entries(p.seasonTotals).map(([k, v]) => (
                     <div key={k} className="flex justify-between border-b border-[#2C4A3B] py-1">
                       <span className="text-[#6B8570]">{k}</span>
@@ -592,7 +592,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
             {p.hasDisciplineData && (
               <>
                 <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mt-5 mb-1">Discipline</div>
-                <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-1 text-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 mt-1 text-sm">
                   {Object.entries(p.disciplineTotals).map(([k, v]) => (
                     <div key={k} className="flex justify-between border-b border-[#2C4A3B] py-1">
                       <span className="text-[#6B8570]">{k}</span>
@@ -606,7 +606,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
             <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mt-5 mb-1">
               Full stat sheet (per-90 rates, regardless of position)
             </div>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-1 mt-1 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 mt-1 text-sm">
               {Object.entries(p.metrics).map(([k, v]) => (
                 <div key={k} className="flex justify-between border-b border-[#2C4A3B] py-1">
                   <span className="text-[#6B8570]">{k}</span>
@@ -636,13 +636,13 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
 function CompareBar({ selected, onClear, onCompare }) {
   if (selected.length === 0) return null;
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-[#152922] border-t border-[#E3A857] px-6 py-4 flex items-center justify-between z-40">
-      <div className="text-sm text-[#EDEDE3]">
+    <div className="fixed bottom-0 left-0 right-0 bg-[#152922] border-t border-[#E3A857] px-4 sm:px-6 py-3 sm:py-4 flex flex-col sm:flex-row items-center justify-between gap-2 z-40">
+      <div className="text-sm text-[#EDEDE3] truncate max-w-full">
         {selected.length === 1
           ? `${selected[0].name} selected — pick one more to compare`
           : `Comparing ${selected[0].name} vs ${selected[1].name}`}
       </div>
-      <div className="flex gap-3">
+      <div className="flex gap-3 shrink-0">
         <button onClick={onClear} className="text-xs uppercase tracking-wide text-[#9AAA9E] hover:text-[#EDEDE3] px-3 py-2">
           Clear
         </button>
@@ -669,7 +669,7 @@ function ComparePanel({ players, onClose }) {
   const samePosition = a.position && a.position === b.position;
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" onClick={onClose}>
-      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-3xl w-full max-h-[90vh] overflow-y-auto p-8 relative"
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-3xl w-full max-h-[90vh] overflow-y-auto p-4 sm:p-8 relative"
         onClick={e => e.stopPropagation()}>
         <button onClick={onClose} className="absolute top-5 right-5 text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
         <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono mb-4">Head to Head</div>
@@ -679,7 +679,7 @@ function ComparePanel({ players, onClose }) {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
           {[[a, colorA], [b, colorB]].map(([p, color]) => (
             <div key={p.id}>
               <div className="flex items-center gap-2">
@@ -950,19 +950,19 @@ function ScoutDashboard() {
             className="bg-transparent outline-none text-sm w-full placeholder:text-[#6B8570]" />
         </div>
         <select value={league} onChange={e => setLeague(e.target.value)}
-          className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none">
+          className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none w-full md:w-auto">
           {availableLeagues.map(l => <option key={l}>{l}</option>)}
         </select>
         <select value={position} onChange={e => setPosition(e.target.value)}
-          className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none">
+          className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none w-full md:w-auto">
           {availablePositions.map(p => <option key={p}>{p}</option>)}
         </select>
         <select value={sortBy} onChange={e => setSortBy(e.target.value)}
-          className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none">
+          className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none w-full md:w-auto">
           {sortOptions.map(o => <option key={o.value} value={o.value}>Sort: {o.label}</option>)}
         </select>
         <button onClick={() => setSortDesc(s => !s)}
-          className="flex items-center gap-2 bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm hover:border-[#E3A857]">
+          className="flex items-center justify-center gap-2 bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm hover:border-[#E3A857] w-full md:w-auto">
           {sortDesc ? "↓" : "↑"}
         </button>
         {connectionStatus === "live" && (
@@ -985,17 +985,17 @@ function ScoutDashboard() {
             Reset
           </button>
         )}
-        <div className="flex border border-[#2C4A3B] ml-auto">
+        <div className="flex border border-[#2C4A3B] w-full md:w-auto md:ml-auto">
           <button onClick={() => setView("cards")}
-            className={`px-3 py-2 text-xs uppercase tracking-wide ${view === "cards" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide ${view === "cards" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
             Cards
           </button>
           <button onClick={() => setView("rankings")}
-            className={`px-3 py-2 text-xs uppercase tracking-wide ${view === "rankings" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide ${view === "rankings" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
             Rankings
           </button>
           <button onClick={() => setView("scatter")}
-            className={`px-3 py-2 text-xs uppercase tracking-wide ${view === "scatter" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide ${view === "scatter" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
             Scatter
           </button>
         </div>
