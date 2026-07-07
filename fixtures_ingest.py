@@ -20,6 +20,7 @@ import time
 import argparse
 import requests
 import psycopg2
+from psycopg2.extras import execute_values
 
 API_BASE = "https://v3.football.api-sports.io"
 API_KEY = os.environ.get("FOOTBALL_API_KEY")
@@ -58,37 +59,148 @@ def get_db_league_id(conn, league_external_id):
         return row[0] if row else None
 
 
-def get_db_club_id(conn, club_external_id):
+def get_db_club_id(conn, club_external_id, cache=None):
     if not club_external_id:
         return None
+    key = str(club_external_id)
+    if cache is not None and key in cache:
+        return cache[key]
     with conn.cursor() as cur:
-        cur.execute("SELECT id FROM clubs WHERE external_id = %s", (str(club_external_id),))
+        cur.execute("SELECT id FROM clubs WHERE external_id = %s", (key,))
         row = cur.fetchone()
-        return row[0] if row else None
+    result = row[0] if row else None
+    if cache is not None:
+        cache[key] = result
+    return result
 
 
-def ensure_player(conn, player_external_id, name, club_id=None):
-    """Some players in a match lineup may not exist yet (e.g. squad players
-    the /players endpoint page limit didn't reach). Create a minimal row
-    rather than dropping their stats — and link the club we saw them play
-    for, so they don't end up with no league/club context."""
+def upsert_player_stats_for_match(conn, db_match_id, fixture_external_id, club_cache):
+    """Batched version: resolves all players in one match with a handful of
+    round-trips total instead of ~3 per player. This is the change that took
+    a 380-match league from 45+ minutes down to a couple of minutes."""
+    data = api_get("fixtures/players", {"fixture": fixture_external_id})
+    if not data:
+        return
+
+    # Pass 1: collect everyone who actually played, across both teams.
+    player_entries = []
+    for team_block in data:
+        club_id = get_db_club_id(conn, team_block["team"]["id"], club_cache)
+        for entry in team_block["players"]:
+            p = entry["player"]
+            stats = entry["statistics"][0] if entry["statistics"] else {}
+            games = stats.get("games", {})
+            minutes = games.get("minutes") or 0
+            if minutes == 0:
+                continue  # didn't actually play — skip, keeps table meaningful
+            player_entries.append({
+                "external_id": str(p["id"]), "name": p["name"], "club_id": club_id,
+                "stats": stats, "games": games,
+            })
+
+    if not player_entries:
+        return
+
+    ext_ids = [e["external_id"] for e in player_entries]
+
+    # One round-trip to find which of these players already exist.
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO players (external_id, full_name, current_club_id)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (external_id) DO UPDATE SET
-                current_club_id = COALESCE(players.current_club_id, EXCLUDED.current_club_id)
-            """,
-            (str(player_external_id), name, club_id),
-        )
-        cur.execute("SELECT id FROM players WHERE external_id = %s", (str(player_external_id),))
-        row = cur.fetchone()
-    conn.commit()
-    return row[0] if row else None
+        cur.execute("SELECT external_id, id FROM players WHERE external_id = ANY(%s)", (ext_ids,))
+        id_map = {row[0]: row[1] for row in cur.fetchall()}
+
+    missing = [e for e in player_entries if e["external_id"] not in id_map]
+    if missing:
+        # One batched insert for every new player in this match at once,
+        # instead of one INSERT per player.
+        values = [(e["external_id"], e["name"], e["club_id"]) for e in missing]
+        with conn.cursor() as cur:
+            execute_values(cur, """
+                INSERT INTO players (external_id, full_name, current_club_id)
+                VALUES %s
+                ON CONFLICT (external_id) DO UPDATE SET
+                    current_club_id = COALESCE(players.current_club_id, EXCLUDED.current_club_id)
+            """, values)
+        with conn.cursor() as cur:
+            cur.execute("SELECT external_id, id FROM players WHERE external_id = ANY(%s)", (ext_ids,))
+            id_map = {row[0]: row[1] for row in cur.fetchall()}
+
+    # Build one batched INSERT covering every player's match stats.
+    stat_rows = []
+    for e in player_entries:
+        db_player_id = id_map.get(e["external_id"])
+        if db_player_id is None:
+            continue
+        stats = e["stats"]
+        games = e["games"]
+        minutes = games.get("minutes") or 0
+        shots = stats.get("shots", {})
+        passes = stats.get("passes", {})
+        tackles = stats.get("tackles", {})
+        duels = stats.get("duels", {})
+        dribbles = stats.get("dribbles", {})
+        goals = stats.get("goals", {})
+
+        # API-Football gives pass "total" and an "accuracy" percentage,
+        # not a raw completed count — derive completed from the two.
+        passes_total = passes.get("total") or 0
+        accuracy_raw = passes.get("accuracy")
+        accuracy_pct = None
+        if accuracy_raw is not None:
+            try:
+                accuracy_pct = float(str(accuracy_raw).replace("%", ""))
+            except ValueError:
+                accuracy_pct = None
+
+        if accuracy_pct is not None and passes_total > 0:
+            passes_completed = round(passes_total * accuracy_pct / 100)
+            passes_attempted = passes_total
+        else:
+            passes_completed = 0
+            passes_attempted = 0
+
+        stat_rows.append((
+            db_player_id, db_match_id, e["club_id"], minutes, games.get("position"),
+            goals.get("total") or 0, goals.get("assists") or 0,
+            shots.get("total") or 0, shots.get("on") or 0,
+            passes.get("key") or 0, passes_completed, passes_attempted,
+            dribbles.get("attempts") or 0, dribbles.get("success") or 0,
+            tackles.get("total") or 0, tackles.get("interceptions") or 0,
+            duels.get("won") or 0, duels.get("total") or 0,
+            float(stats.get("games", {}).get("rating") or 0) or None,
+        ))
+
+    if stat_rows:
+        with conn.cursor() as cur:
+            execute_values(cur, """
+                INSERT INTO player_match_stats
+                    (player_id, match_id, club_id, minutes_played, position_played,
+                     goals, assists, shots, shots_on_target, key_passes,
+                     passes_completed, passes_attempted, take_ons_attempted,
+                     take_ons_completed, tackles, interceptions, duels_won,
+                     duels_attempted, rating)
+                VALUES %s
+                ON CONFLICT (player_id, match_id) DO UPDATE SET
+                    minutes_played = EXCLUDED.minutes_played,
+                    goals = EXCLUDED.goals,
+                    assists = EXCLUDED.assists,
+                    shots = EXCLUDED.shots,
+                    shots_on_target = EXCLUDED.shots_on_target,
+                    key_passes = EXCLUDED.key_passes,
+                    passes_completed = EXCLUDED.passes_completed,
+                    passes_attempted = EXCLUDED.passes_attempted,
+                    take_ons_attempted = EXCLUDED.take_ons_attempted,
+                    take_ons_completed = EXCLUDED.take_ons_completed,
+                    tackles = EXCLUDED.tackles,
+                    interceptions = EXCLUDED.interceptions,
+                    duels_won = EXCLUDED.duels_won,
+                    duels_attempted = EXCLUDED.duels_attempted,
+                    rating = EXCLUDED.rating
+            """, stat_rows)
+
+    conn.commit()  # once per match, not once (or twice) per player
 
 
-def upsert_matches_for_league(conn, league_external_id, season, db_league_id, max_fixtures):
+def upsert_matches_for_league(conn, league_external_id, season, db_league_id, max_fixtures, club_cache):
     fixtures = api_get("fixtures", {
         "league": league_external_id, "season": season, "status": "FT"
     })
@@ -104,8 +216,8 @@ def upsert_matches_for_league(conn, league_external_id, season, db_league_id, ma
         fx = f["fixture"]
         teams = f["teams"]
         goals = f["goals"]
-        home_club_id = get_db_club_id(conn, teams["home"]["id"])
-        away_club_id = get_db_club_id(conn, teams["away"]["id"])
+        home_club_id = get_db_club_id(conn, teams["home"]["id"], club_cache)
+        away_club_id = get_db_club_id(conn, teams["away"]["id"], club_cache)
 
         with conn.cursor() as cur:
             cur.execute(
@@ -126,92 +238,10 @@ def upsert_matches_for_league(conn, league_external_id, season, db_league_id, ma
     return db_match_ids
 
 
-def upsert_player_stats_for_match(conn, db_match_id, fixture_external_id):
-    data = api_get("fixtures/players", {"fixture": fixture_external_id})
-    if not data:
-        return
-    for team_block in data:
-        club_id = get_db_club_id(conn, team_block["team"]["id"])
-        for entry in team_block["players"]:
-            p = entry["player"]
-            stats = entry["statistics"][0] if entry["statistics"] else {}
-            games = stats.get("games", {})
-            minutes = games.get("minutes") or 0
-            if minutes == 0:
-                continue  # didn't actually play — skip, keeps table meaningful
-            db_player_id = ensure_player(conn, p["id"], p["name"], club_id)
-
-            shots = stats.get("shots", {})
-            passes = stats.get("passes", {})
-            tackles = stats.get("tackles", {})
-            duels = stats.get("duels", {})
-            dribbles = stats.get("dribbles", {})
-            goals = stats.get("goals", {})
-
-            # API-Football gives pass "total" and an "accuracy" percentage,
-            # not a raw completed count — derive completed from the two.
-            passes_total = passes.get("total") or 0
-            accuracy_raw = passes.get("accuracy")
-            accuracy_pct = None
-            if accuracy_raw is not None:
-                try:
-                    accuracy_pct = float(str(accuracy_raw).replace("%", ""))
-                except ValueError:
-                    accuracy_pct = None
-
-            if accuracy_pct is not None and passes_total > 0:
-                passes_completed = round(passes_total * accuracy_pct / 100)
-                passes_attempted = passes_total
-            else:
-                # Unknown accuracy — store as no data rather than guessing 100%.
-                passes_completed = 0
-                passes_attempted = 0
-
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO player_match_stats
-                        (player_id, match_id, club_id, minutes_played, position_played,
-                         goals, assists, shots, shots_on_target, key_passes,
-                         passes_completed, passes_attempted, take_ons_attempted,
-                         take_ons_completed, tackles, interceptions, duels_won,
-                         duels_attempted, rating)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (player_id, match_id) DO UPDATE SET
-                        minutes_played = EXCLUDED.minutes_played,
-                        goals = EXCLUDED.goals,
-                        assists = EXCLUDED.assists,
-                        shots = EXCLUDED.shots,
-                        shots_on_target = EXCLUDED.shots_on_target,
-                        key_passes = EXCLUDED.key_passes,
-                        passes_completed = EXCLUDED.passes_completed,
-                        passes_attempted = EXCLUDED.passes_attempted,
-                        take_ons_attempted = EXCLUDED.take_ons_attempted,
-                        take_ons_completed = EXCLUDED.take_ons_completed,
-                        tackles = EXCLUDED.tackles,
-                        interceptions = EXCLUDED.interceptions,
-                        duels_won = EXCLUDED.duels_won,
-                        duels_attempted = EXCLUDED.duels_attempted,
-                        rating = EXCLUDED.rating
-                    """,
-                    (
-                        db_player_id, db_match_id, club_id, minutes, games.get("position"),
-                        goals.get("total") or 0, goals.get("assists") or 0,
-                        shots.get("total") or 0, shots.get("on") or 0,
-                        passes.get("key") or 0, passes_completed,
-                        passes_attempted,
-                        dribbles.get("attempts") or 0, dribbles.get("success") or 0,
-                        tackles.get("total") or 0, tackles.get("interceptions") or 0,
-                        duels.get("won") or 0, duels.get("total") or 0,
-                        float(stats.get("games", {}).get("rating") or 0) or None,
-                    ),
-                )
-            conn.commit()
-
-
 def run(league_ids, season, max_fixtures):
     conn = get_conn()
     completed = []
+    club_cache = {}  # shared across the whole run — clubs don't change mid-run
     for league_id in league_ids:
         print(f"Fetching fixtures for league {league_id} / season {season} ...")
         try:
@@ -219,10 +249,26 @@ def run(league_ids, season, max_fixtures):
             if db_league_id is None:
                 print(f"  league {league_id} not found in DB yet — run ingest.py for it first, skipping")
                 continue
-            matches = upsert_matches_for_league(conn, league_id, season, db_league_id, max_fixtures)
-            print(f"  {len(matches)} matches recorded, fetching player stats...")
-            for db_match_id, fixture_external_id in matches:
-                upsert_player_stats_for_match(conn, db_match_id, fixture_external_id)
+            matches = upsert_matches_for_league(conn, league_id, season, db_league_id, max_fixtures, club_cache)
+
+            # Skip matches we've already fully ingested — no API call needed
+            # for those, which is what makes re-running this command cheap.
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT DISTINCT match_id FROM player_match_stats WHERE match_id = ANY(%s)",
+                    ([m[0] for m in matches],),
+                )
+                already_done = {row[0] for row in cur.fetchall()}
+            todo = [m for m in matches if m[0] not in already_done]
+            skipped = len(matches) - len(todo)
+
+            print(f"  {len(matches)} matches recorded"
+                  + (f" ({skipped} already have stats, skipping)" if skipped else "")
+                  + f" — fetching stats for {len(todo)}...")
+            for i, (db_match_id, fixture_external_id) in enumerate(todo, 1):
+                upsert_player_stats_for_match(conn, db_match_id, fixture_external_id, club_cache)
+                if i % 25 == 0:
+                    print(f"    ...{i}/{len(todo)} matches processed")
             completed.append(league_id)
             print(f"  done: league {league_id}")
         except RateLimitError:
