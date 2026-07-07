@@ -453,21 +453,23 @@ function PlayerCard({ p, onOpen, onToggleCompare, isComparing, compareDisabled, 
           🏆 Top Prospect
         </div>
       )}
-      {onToggleShortlist && (
-        <button onClick={(e) => { e.stopPropagation(); onToggleShortlist(p); }}
-          title={shortlisted ? "Remove from shortlist" : "Add to shortlist"}
-          className={`absolute top-4 left-4 text-lg z-10 ${shortlisted ? "text-[#E3A857]" : "text-[#4A5C52] hover:text-[#9AAA9E]"}`}>
-          {shortlisted ? "★" : "☆"}
-        </button>
-      )}
-      <label className="absolute top-4 right-4 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[#6B8570] cursor-pointer z-10">
-        <input type="checkbox" checked={isComparing} disabled={compareDisabled && !isComparing}
-          onChange={() => onToggleCompare(p)}
-          className="accent-[#E3A857]" />
-        Compare
-      </label>
+      <div className="absolute top-4 right-4 flex items-center gap-3 z-10">
+        {onToggleShortlist && (
+          <button onClick={(e) => { e.stopPropagation(); onToggleShortlist(p); }}
+            title={shortlisted ? "Remove from shortlist" : "Add to shortlist"}
+            className={`text-lg leading-none ${shortlisted ? "text-[#E3A857]" : "text-[#4A5C52] hover:text-[#9AAA9E]"}`}>
+            {shortlisted ? "★" : "☆"}
+          </button>
+        )}
+        <label className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[#6B8570] cursor-pointer">
+          <input type="checkbox" checked={isComparing} disabled={compareDisabled && !isComparing}
+            onChange={() => onToggleCompare(p)}
+            className="accent-[#E3A857]" />
+          Compare
+        </label>
+      </div>
       <button onClick={() => onOpen(p)} className="text-left flex flex-col gap-3 w-full">
-        <div className="flex items-start justify-between pr-16">
+        <div className="flex items-start justify-between pr-20">
           <div className="flex items-start gap-3">
             <Avatar name={p.name} photoUrl={p.photoUrl} size={44} />
             <div>
