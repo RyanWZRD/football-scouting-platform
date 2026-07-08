@@ -74,6 +74,21 @@ def health():
         raise HTTPException(status_code=503, detail=str(e))
 
 
+@app.get("/status")
+def data_status():
+    """When the pipeline last actually completed — scoring_model.py runs
+    last in the nightly workflow and stamps computed_at on every scored
+    player, so its max value is a reliable "data last refreshed at" marker."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT MAX(computed_at) AS last_updated FROM player_potential_scores")
+        row = cur.fetchone()
+        cur.execute("SELECT count(*) AS cnt FROM player_potential_scores")
+        count_row = cur.fetchone()
+    conn.close()
+    return {"last_updated": row["last_updated"], "scored_players": count_row["cnt"]}
+
+
 @app.get("/leagues")
 def list_leagues(authorized: bool = Depends(check_api_key)):
     conn = get_conn()
