@@ -444,7 +444,8 @@ function buildPercentilePlayers(rows) {
   });
 }
 
-function PlayerCard({ p, onOpen, onToggleCompare, isComparing, compareDisabled, isTopProspect, onToggleShortlist }) {
+function PlayerCard({ p, onOpen, onToggleCompare, isComparing, compareDisabled, isTopProspect, onToggleShortlist, sortBy }) {
+  const showSortValue = sortBy && !["potential", "age", "name"].includes(sortBy) && p.metrics[sortBy] !== undefined;
   const shortlisted = p.watchLevel === "shortlist";
   return (
     <div className={`bg-[#152922] border ${isTopProspect ? "border-[#E3A857]" : "border-[#2C4A3B]"} hover:border-[#E3A857] transition-colors duration-200 p-5 flex flex-col gap-3 w-full relative`}>
@@ -485,6 +486,11 @@ function PlayerCard({ p, onOpen, onToggleCompare, isComparing, compareDisabled, 
             <div className="text-[10px] tracking-[0.15em] uppercase text-[#6B8570]">
               {p.potential == null ? "Unscored" : "Potential"}
             </div>
+            {showSortValue && (
+              <div className="mt-1 text-sm font-plexmono text-[#E3A857]">
+                {sortBy}: {metricLabel(p.metrics[sortBy])}
+              </div>
+            )}
           </div>
         </div>
         <div className="h-32 -mx-2"><RadarChart metrics={p.radarMetrics || p.metrics} /></div>
@@ -1044,6 +1050,7 @@ function ScoutDashboard() {
               isComparing={!!compareList.find(x => x.id === p.id)}
               compareDisabled={compareList.length >= 2}
               isTopProspect={topProspectIds.has(p.id)}
+              sortBy={sortBy}
               onToggleShortlist={connectionStatus === "live" ? toggleShortlist : null} />
           ))}
           {connectionStatus !== "connecting" && filtered.length === 0 && (
