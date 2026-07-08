@@ -797,6 +797,7 @@ function ScoutDashboard() {
   const [sortDesc, setSortDesc] = useState(true);
   const [sortBy, setSortBy] = useState("potential");
   const [hideUnscored, setHideUnscored] = useState(false);
+  const [hideNoMinutes, setHideNoMinutes] = useState(true);
   const [shortlistOnly, setShortlistOnly] = useState(false);
   const [view, setView] = useState("cards");
   const [scatterX, setScatterX] = useState("Goals/90");
@@ -988,6 +989,7 @@ function ScoutDashboard() {
       if (club !== "All clubs" && p.club !== club) return false;
       if (position !== "All positions" && p.position !== position) return false;
       if (hideUnscored && p.potential == null) return false;
+      if (hideNoMinutes && (p.minutesPlayed == null || p.minutesPlayed === 0)) return false;
       if (shortlistOnly && p.watchLevel !== "shortlist") return false;
       if (query && !p.name.toLowerCase().includes(query.toLowerCase()) &&
           !p.club.toLowerCase().includes(query.toLowerCase())) return false;
@@ -1010,7 +1012,7 @@ function ScoutDashboard() {
       return sortDesc ? bv - av : av - bv;
     });
     return list;
-  }, [dataSource, league, club, position, query, sortDesc, sortBy, hideUnscored, shortlistOnly]);
+  }, [dataSource, league, club, position, query, sortDesc, sortBy, hideUnscored, hideNoMinutes, shortlistOnly]);
 
   const sortOptions = [
     { value: "potential", label: "Potential" },
@@ -1149,14 +1151,21 @@ function ScoutDashboard() {
           </label>
         )}
         {connectionStatus === "live" && (
+          <label className="flex items-center gap-2 text-xs text-[#9AAA9E] cursor-pointer px-1" title="Hides players with 0 minutes across the whole ingested season — usually means they've left, retired, or a roster listing hasn't caught up">
+            <input type="checkbox" checked={hideNoMinutes} onChange={e => setHideNoMinutes(e.target.checked)}
+              className="accent-[#E3A857]" />
+            Hide 0-minute players
+          </label>
+        )}
+        {connectionStatus === "live" && (
           <label className="flex items-center gap-2 text-xs text-[#9AAA9E] cursor-pointer px-1">
             <input type="checkbox" checked={shortlistOnly} onChange={e => setShortlistOnly(e.target.checked)}
               className="accent-[#E3A857]" />
             ★ Shortlist only
           </label>
         )}
-        {(league !== "All leagues" || club !== "All clubs" || position !== "All positions" || query || hideUnscored || shortlistOnly) && (
-          <button onClick={() => { setLeague("All leagues"); setClub("All clubs"); setPosition("All positions"); setQuery(""); setHideUnscored(false); setShortlistOnly(false); }}
+        {(league !== "All leagues" || club !== "All clubs" || position !== "All positions" || query || hideUnscored || !hideNoMinutes || shortlistOnly) && (
+          <button onClick={() => { setLeague("All leagues"); setClub("All clubs"); setPosition("All positions"); setQuery(""); setHideUnscored(false); setHideNoMinutes(true); setShortlistOnly(false); }}
             className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] px-2">
             Reset
           </button>
