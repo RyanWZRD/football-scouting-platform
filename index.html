@@ -867,9 +867,14 @@ function ScoutDashboard() {
 
   const dataSource = livePlayers && connectionStatus === "live" ? livePlayers : PLAYERS;
 
-  const availableLeagues = connectionStatus === "live" || allLeagueOptions.length > 0
+  // While the real league list is still loading (API_BASE_URL set but
+  // allLeagueOptions hasn't arrived yet), show just "All leagues" rather
+  // than a misleading partial list derived from the 5 seed/demo players.
+  const availableLeagues = allLeagueOptions.length > 0
     ? ["All leagues", ...allLeagueOptions]
-    : ["All leagues", ...Array.from(new Set(dataSource.map(p => p.league)))];
+    : API_BASE_URL
+      ? ["All leagues"]
+      : ["All leagues", ...Array.from(new Set(dataSource.map(p => p.league)))];
   const availablePositions = connectionStatus === "live"
     ? ["All positions", ...POSITION_OPTIONS]
     : ["All positions", ...Array.from(new Set(dataSource.map(p => p.position)))];
