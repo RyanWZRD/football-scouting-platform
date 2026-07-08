@@ -89,6 +89,30 @@ def data_status():
     return {"last_updated": row["last_updated"], "scored_players": count_row["cnt"]}
 
 
+@app.get("/transfers")
+def recent_transfers(limit: int = Query(20, le=100), authorized: bool = Depends(check_api_key)):
+    """Recent club changes, detected automatically by a database trigger
+    whenever ingestion updates a player's current_club_id."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT
+                p.id AS player_id, p.full_name, p.primary_position,
+                old_cl.name AS old_club, new_cl.name AS new_club,
+                l.name AS league, t.changed_at
+            FROM player_club_transfers t
+            JOIN players p ON p.id = t.player_id
+            LEFT JOIN clubs old_cl ON old_cl.id = t.old_club_id
+            LEFT JOIN clubs new_cl ON new_cl.id = t.new_club_id
+            LEFT JOIN leagues l ON l.id = new_cl.league_id
+            ORDER BY t.changed_at DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 @app.get("/leagues")
 def list_leagues(authorized: bool = Depends(check_api_key)):
     conn = get_conn()
@@ -112,7 +136,10 @@ def list_players(
     position: Optional[str] = None,
     max_age: Optional[int] = None,
     min_potential: Optional[float] = Query(None),
-    sort: str = Query("potential", enum=["potential", "age", "name"]),
+    sort: str = Query("potential", enum=[
+        "potential", "age", "name", "goals", "assists", "tackles",
+        "interceptions", "saves", "duel_win_pct", "pass_accuracy_pct",
+    ]),
     season: Optional[str] = None,
     limit: int = Query(50, le=5000),
     authorized: bool = Depends(check_api_key),
@@ -151,7 +178,8 @@ def list_players(
             stats.penalties_won, stats.penalties_committed,
             stats.penalties_scored, stats.penalties_missed,
             stats.offsides,
-            latest_note.watch_level
+            latest_note.watch_level,
+            latest_injury.injury_type, latest_injury.reason, latest_injury.reported_date
         FROM players p
         LEFT JOIN clubs cl ON cl.id = p.current_club_id
         LEFT JOIN leagues l ON l.id = cl.league_id
@@ -199,6 +227,11 @@ def list_players(
             WHERE sn.player_id = p.id
             ORDER BY created_at DESC LIMIT 1
         ) latest_note ON true
+        LEFT JOIN LATERAL (
+            SELECT injury_type, reason, reported_date FROM player_injuries pi
+            WHERE pi.player_id = p.id
+            ORDER BY reported_date DESC NULLS LAST, ingested_at DESC LIMIT 1
+        ) latest_injury ON true
     """
 
     if season:
@@ -226,6 +259,13 @@ def list_players(
         "potential": "pps.potential_index DESC NULLS LAST",
         "age": "p.date_of_birth DESC",
         "name": "p.full_name ASC",
+        "goals": "stats.goals DESC NULLS LAST",
+        "assists": "stats.assists DESC NULLS LAST",
+        "tackles": "stats.tackles DESC NULLS LAST",
+        "interceptions": "stats.interceptions DESC NULLS LAST",
+        "saves": "stats.saves DESC NULLS LAST",
+        "duel_win_pct": "duel_win_pct DESC NULLS LAST",
+        "pass_accuracy_pct": "pass_accuracy_pct DESC NULLS LAST",
     }
     base_query += f" ORDER BY {sort_map[sort]} LIMIT %s"
     params.append(limit)
@@ -278,12 +318,21 @@ def player_dossier(player_id: int, authorized: bool = Depends(check_api_key)):
         """, (player_id,))
         recent_matches = cur.fetchall()
 
+        cur.execute("""
+            SELECT potential_index, computed_at
+            FROM player_potential_history
+            WHERE player_id = %s
+            ORDER BY computed_at ASC
+        """, (player_id,))
+        history = cur.fetchall()
+
     conn.close()
     return {
         "player": player,
         "score": score,
         "scout_notes": notes,
         "recent_matches": recent_matches,
+        "history": history,
     }
 
 

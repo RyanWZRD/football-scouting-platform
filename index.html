@@ -17,6 +17,18 @@
   body { background:#0E1A15; margin:0; font-family: 'Inter', sans-serif; }
   .font-display { font-family: 'Archivo Black', sans-serif; }
   .font-plexmono { font-family: 'IBM Plex Mono', monospace; }
+
+  @media print {
+    body * { visibility: hidden; }
+    .printable-dossier, .printable-dossier * { visibility: visible; }
+    .printable-dossier {
+      position: absolute; left: 0; top: 0; width: 100%;
+      max-height: none !important; overflow: visible !important;
+      background: white !important; color: black !important; border: none !important;
+    }
+    .printable-dossier * { color: black !important; border-color: #ccc !important; }
+    .no-print { display: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -411,6 +423,7 @@ function buildPercentilePlayers(rows) {
       league: row.league_display || row.league || "Unknown league",
       flag: "",
       photoUrl: row.photo_url || null,
+      injury: row.injury_type ? { type: row.injury_type, reason: row.reason, date: row.reported_date } : null,
       potential: row.potential_index != null ? Math.round(row.potential_index) : null,
       marketValue: "—",
       minutesPlayed: minutes,
@@ -489,7 +502,10 @@ function PlayerCard({ p, onOpen, onToggleCompare, isComparing, compareDisabled, 
             <Avatar name={p.name} photoUrl={p.photoUrl} size={44} />
             <div>
               <div className="text-[11px] tracking-[0.18em] uppercase text-[#6B8570] font-plexmono">{p.league}</div>
-              <h3 className="text-xl text-[#EDEDE3] font-display leading-tight mt-1">{p.name}</h3>
+              <h3 className="text-xl text-[#EDEDE3] font-display leading-tight mt-1 flex items-center gap-2">
+                {p.name}
+                {p.injury && <span title={`${p.injury.type}${p.injury.reason ? ": " + p.injury.reason : ""}`} className="text-xs text-[#E36B57]">🩹</span>}
+              </h3>
               <div className="text-sm text-[#9AAA9E] mt-0.5">{p.flag} {p.club} · Age {p.age ?? "—"} · {p.posLabel}</div>
             </div>
           </div>
@@ -537,12 +553,14 @@ function Sparkline({ points, width = 200, height = 50 }) {
   );
 }
 
-function PlayerDossier({ p, onClose, onToggleShortlist }) {
+function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   const [tab, setTab] = useState("overview");
   const [details, setDetails] = useState(null); // full dossier: real notes + trend history
   const [noteText, setNoteText] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [similarPlayers, setSimilarPlayers] = useState(null);
+  const [similarLoading, setSimilarLoading] = useState(false);
   const shortlisted = p.watchLevel === "shortlist";
   const realId = String(p.id).replace("live-", "");
 
@@ -553,6 +571,38 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
       .then(data => setDetails(data))
       .catch(() => setDetails(null));
   }, [p.id]);
+
+  // Fetch a broad, position-matched pool and rank by similarity across all
+  // real stats — lazy-loaded only when the Similar tab is actually opened.
+  useEffect(() => {
+    if (tab !== "similar" || similarPlayers !== null || !API_BASE_URL || !p.position) return;
+    setSimilarLoading(true);
+    const params = new URLSearchParams({ position: p.position, limit: "3000" });
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
+      .then(rows => {
+        const pool = buildPercentilePlayers(rows);
+        const target = pool.find(x => x.id === p.id) || p;
+        const keys = Object.keys(target.metrics);
+        const scored = pool
+          .filter(x => x.id !== p.id)
+          .map(x => {
+            let sumSq = 0, n = 0;
+            keys.forEach(k => {
+              if (target.metrics[k]?.scaled == null || x.metrics[k]?.scaled == null) return;
+              const diff = target.metrics[k].scaled - x.metrics[k].scaled;
+              sumSq += diff * diff;
+              n++;
+            });
+            return { player: x, distance: n > 0 ? Math.sqrt(sumSq / n) : Infinity };
+          })
+          .sort((a, b) => a.distance - b.distance)
+          .slice(0, 6);
+        setSimilarPlayers(scored);
+      })
+      .catch(() => setSimilarPlayers([]))
+      .finally(() => setSimilarLoading(false));
+  }, [tab, p.id, p.position]);
 
   const saveNote = async () => {
     if (!noteText.trim() || !API_BASE_URL) return;
@@ -596,17 +646,23 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50" onClick={onClose}>
-      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[90vh] overflow-y-auto p-4 sm:p-8 relative"
+      <div className="printable-dossier bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[90vh] overflow-y-auto p-4 sm:p-8 relative"
         onClick={e => e.stopPropagation()}>
-        <button onClick={onClose} className="absolute top-5 right-5 text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
-        <div className="flex items-center justify-between">
+        <button onClick={onClose} className="no-print absolute top-5 right-5 text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        <div className="flex items-center justify-between no-print">
           <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">Scouting Dossier</div>
-          {String(p.id).startsWith("live-") && (
-            <button onClick={copyPlayerLink} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] mr-8">
-              🔗 {linkCopied ? "Copied!" : "Copy Player Link"}
+          <div className="flex items-center gap-3 mr-8">
+            <button onClick={() => window.print()} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
+              🖨 Print
             </button>
-          )}
+            {String(p.id).startsWith("live-") && (
+              <button onClick={copyPlayerLink} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
+                🔗 {linkCopied ? "Copied!" : "Copy Player Link"}
+              </button>
+            )}
+          </div>
         </div>
+        <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono hidden print:block">Scouting Dossier</div>
         <div className="flex items-start justify-between mt-2">
           <div className="flex items-center gap-4">
             <Avatar name={p.name} photoUrl={p.photoUrl} size={72} />
@@ -617,21 +673,30 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
           </div>
           {onToggleShortlist && (
             <button onClick={() => onToggleShortlist(p)}
-              className={`flex items-center gap-1.5 text-xs uppercase tracking-wide px-3 py-1.5 border shrink-0 ${shortlisted ? "border-[#E3A857] text-[#E3A857]" : "border-[#2C4A3B] text-[#9AAA9E] hover:border-[#6B8570]"}`}>
+              className={`no-print flex items-center gap-1.5 text-xs uppercase tracking-wide px-3 py-1.5 border shrink-0 ${shortlisted ? "border-[#E3A857] text-[#E3A857]" : "border-[#2C4A3B] text-[#9AAA9E] hover:border-[#6B8570]"}`}>
               <span className="text-base">{shortlisted ? "★" : "☆"}</span>
               {shortlisted ? "Shortlisted" : "Add to shortlist"}
             </button>
           )}
         </div>
 
-        <div className="flex gap-1 border-b border-[#2C4A3B] mt-5">
+        <div className="flex gap-1 border-b border-[#2C4A3B] mt-5 no-print">
           <TabButton id="overview" label="Overview" />
           <TabButton id="stats" label="Stats" />
           <TabButton id="notes" label="Notes" />
+          <TabButton id="similar" label="Similar" />
         </div>
 
         {tab === "overview" && (
           <>
+            {p.injury && (
+              <div className="mt-5 border border-[#E36B57] bg-[#2A1712] px-4 py-3 text-sm">
+                <span className="text-[#E36B57] font-bold">🩹 {p.injury.type}</span>
+                {p.injury.reason && <span className="text-[#C9A08A]"> — {p.injury.reason}</span>}
+                {p.injury.date && <span className="text-[#8A6858] text-xs"> (reported {p.injury.date})</span>}
+                <div className="text-xs text-[#8A6858] mt-1">Most recent known injury report — may not reflect current status.</div>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-4 mt-6 border-b border-[#2C4A3B] pb-4">
               <div>
                 <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">
@@ -754,6 +819,29 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
                 <span key={t} className="text-[10px] uppercase tracking-wide px-2 py-1 border border-[#2C4A3B] text-[#9AAA9E]">{t}</span>
               ))}
             </div>
+          </div>
+        )}
+
+        {tab === "similar" && (
+          <div className="mt-5">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-3">
+              Statistically similar {p.position ? `${p.position}s` : "players"}, ranked across all real stats
+            </div>
+            {similarLoading && <div className="text-sm text-[#6B8570]">Searching for similar players…</div>}
+            {!similarLoading && similarPlayers?.length === 0 && (
+              <div className="text-sm text-[#6B8570]">No comparable players found — needs a known position and live data.</div>
+            )}
+            {!similarLoading && similarPlayers?.map(({ player: sp }, i) => (
+              <button key={sp.id} onClick={() => onNavigateToPlayer(sp)}
+                className="w-full flex items-center justify-between text-sm py-2 px-2 -mx-2 hover:bg-[#152922] text-left border-b border-[#1C2E26]">
+                <span className="flex items-center gap-2 text-[#EDEDE3]">
+                  <span className="text-[#6B8570] w-5">{i + 1}.</span>
+                  <Avatar name={sp.name} photoUrl={sp.photoUrl} size={28} />
+                  {sp.name} <span className="text-[#6B8570] text-xs">· {sp.club} · {sp.league}</span>
+                </span>
+                <span className="font-plexmono" style={{ color: potentialColor(sp.potential) }}>{sp.potential ?? "—"}</span>
+              </button>
+            ))}
           </div>
         )}
       </div>
@@ -960,6 +1048,48 @@ function RankingsTable({ players, sortBy, onSelect, onToggleCompare, compareIds,
   );
 }
 
+function TransfersModal({ onClose, onSelectPlayer }) {
+  const [transfers, setTransfers] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/transfers?limit=30`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
+      .then(rows => setTransfers(rows))
+      .catch(() => setTransfers([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[80vh] overflow-y-auto p-4 sm:p-8 relative"
+        onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute top-5 right-5 text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🔄 Recent Transfers</div>
+        <p className="text-xs text-[#6B8570] mt-2">
+          Detected automatically whenever nightly ingestion sees a player's club change. New here as of today —
+          entries will appear as real moves happen and get picked up.
+        </p>
+        <div className="mt-5">
+          {transfers === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+          {transfers?.length === 0 && (
+            <div className="text-sm text-[#6B8570]">No transfers detected yet — check back after the next data refresh.</div>
+          )}
+          {transfers?.map(t => (
+            <button key={`${t.player_id}-${t.changed_at}`}
+              onClick={() => onSelectPlayer(t)}
+              className="w-full flex items-center justify-between text-sm py-2.5 px-2 -mx-2 hover:bg-[#152922] text-left border-b border-[#1C2E26]">
+              <span className="text-[#EDEDE3]">{t.full_name}</span>
+              <span className="text-xs text-[#9AAA9E] font-plexmono">
+                {t.old_club || "?"} → <span className="text-[#E3A857]">{t.new_club || "?"}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ScoutDashboard() {
   const [league, setLeague] = useState(() => new URLSearchParams(window.location.search).get("league") || "All leagues");
   const [club, setClub] = useState(() => new URLSearchParams(window.location.search).get("club") || "All clubs");
@@ -975,6 +1105,7 @@ function ScoutDashboard() {
   const [scatterY, setScatterY] = useState("Key Passes/90");
   const [selected, setSelected] = useState(null);
   const [clubProfileOpen, setClubProfileOpen] = useState(false);
+  const [transfersOpen, setTransfersOpen] = useState(false);
   const [deepLinkPlayerId, setDeepLinkPlayerId] = useState(() => new URLSearchParams(window.location.search).get("player"));
   const [livePlayers, setLivePlayers] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState(API_BASE_URL ? "connecting" : "offline");
@@ -1255,6 +1386,9 @@ function ScoutDashboard() {
         <div className="flex items-center justify-between mb-3">
           <div className="text-[11px] tracking-[0.25em] uppercase text-[#E3A857] font-plexmono">Cross-League Scouting Index</div>
           <div className="flex items-center gap-3 text-[11px] uppercase tracking-wide text-[#6B8570]">
+            {connectionStatus === "live" && (
+              <button onClick={() => setTransfersOpen(true)} className="hover:text-[#E3A857]">🔄 Transfers</button>
+            )}
             {connectionStatus === "live" && dataStatus?.last_updated && (
               <span className="text-[#9AAA9E]" title={new Date(dataStatus.last_updated).toLocaleString()}>
                 🔄 Updated {relativeTime(dataStatus.last_updated)} · {dataStatus.scored_players} players scored
@@ -1490,7 +1624,8 @@ function ScoutDashboard() {
       </div>
 
       {selected && <PlayerDossier key={selected.id} p={selected} onClose={() => setSelected(null)}
-        onToggleShortlist={connectionStatus === "live" ? toggleShortlist : null} />}
+        onToggleShortlist={connectionStatus === "live" ? toggleShortlist : null}
+        onNavigateToPlayer={(sp) => setSelected(sp)} />}
       {clubProfileOpen && league !== "All leagues" && club !== "All clubs" && (
         <ClubProfile
           players={dataSource.filter(p => p.club === club && p.league === league)}
@@ -1498,6 +1633,21 @@ function ScoutDashboard() {
           leagueName={league}
           onClose={() => setClubProfileOpen(false)}
           onSelectPlayer={(p) => { setClubProfileOpen(false); setSelected(p); }}
+        />
+      )}
+      {transfersOpen && (
+        <TransfersModal
+          onClose={() => setTransfersOpen(false)}
+          onSelectPlayer={(row) => {
+            setTransfersOpen(false);
+            // Reuse the deep-link mechanism (tested, correct) rather than
+            // constructing an incomplete player object from the transfer row.
+            // Also set league/club so the fetch scope actually includes this
+            // player — otherwise the default top-200 view might not have them.
+            if (row.league) setLeague(row.league);
+            if (row.new_club) setClub(row.new_club);
+            setDeepLinkPlayerId(String(row.player_id));
+          }}
         />
       )}
       <CompareBar selected={compareList} onClear={() => setCompareList([])} onCompare={() => setComparing(true)} />
