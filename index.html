@@ -518,9 +518,72 @@ function PlayerCard({ p, onOpen, onToggleCompare, isComparing, compareDisabled, 
   );
 }
 
+function Sparkline({ points, width = 200, height = 50 }) {
+  if (!points || points.length < 2) return null;
+  const values = points.map(p => p.potential_index);
+  const min = Math.min(...values), max = Math.max(...values);
+  const range = max - min || 1;
+  const stepX = width / (points.length - 1);
+  const coords = values.map((v, i) => `${i * stepX},${height - ((v - min) / range) * height}`);
+  const trendUp = values[values.length - 1] >= values[0];
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height}>
+      <polyline points={coords.join(" ")} fill="none" stroke={trendUp ? "#7FD99A" : "#E88B7D"} strokeWidth="2" />
+      {coords.map((c, i) => {
+        const [x, y] = c.split(",");
+        return <circle key={i} cx={x} cy={y} r="2.5" fill={trendUp ? "#7FD99A" : "#E88B7D"} />;
+      })}
+    </svg>
+  );
+}
+
 function PlayerDossier({ p, onClose, onToggleShortlist }) {
   const [tab, setTab] = useState("overview");
+  const [details, setDetails] = useState(null); // full dossier: real notes + trend history
+  const [noteText, setNoteText] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const shortlisted = p.watchLevel === "shortlist";
+  const realId = String(p.id).replace("live-", "");
+
+  useEffect(() => {
+    if (!API_BASE_URL || !String(p.id).startsWith("live-")) return;
+    fetch(`${API_BASE_URL}/players/${realId}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
+      .then(data => setDetails(data))
+      .catch(() => setDetails(null));
+  }, [p.id]);
+
+  const saveNote = async () => {
+    if (!noteText.trim() || !API_BASE_URL) return;
+    setSavingNote(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/players/${realId}/watch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+        body: JSON.stringify({ watch_level: p.watchLevel ?? null, note: noteText.trim(), author: "dashboard" }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const savedNote = await res.json();
+      setDetails(d => d ? { ...d, scout_notes: [{ note: noteText.trim(), author: "dashboard", watch_level: p.watchLevel ?? null, created_at: savedNote.created_at }, ...d.scout_notes] } : d);
+      setNoteText("");
+    } catch (e) {
+      console.error("Failed to save note:", e);
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  const copyPlayerLink = () => {
+    const params = new URLSearchParams();
+    params.set("player", realId);
+    if (p.league) params.set("league", p.league);
+    if (p.club && p.club !== "Unattached") params.set("club", p.club);
+    const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
+    navigator.clipboard?.writeText(url);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 1500);
+  };
 
   const TabButton = ({ id, label }) => (
     <button onClick={() => setTab(id)}
@@ -536,7 +599,14 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
       <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[90vh] overflow-y-auto p-4 sm:p-8 relative"
         onClick={e => e.stopPropagation()}>
         <button onClick={onClose} className="absolute top-5 right-5 text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
-        <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">Scouting Dossier</div>
+        <div className="flex items-center justify-between">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">Scouting Dossier</div>
+          {String(p.id).startsWith("live-") && (
+            <button onClick={copyPlayerLink} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] mr-8">
+              🔗 {linkCopied ? "Copied!" : "Copy Player Link"}
+            </button>
+          )}
+        </div>
         <div className="flex items-start justify-between mt-2">
           <div className="flex items-center gap-4">
             <Avatar name={p.name} photoUrl={p.photoUrl} size={72} />
@@ -580,6 +650,21 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
                 </div>
               </div>
             </div>
+
+            {details?.history && details.history.length >= 2 && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">
+                  Potential Trend ({details.history.length} data points)
+                </div>
+                <Sparkline points={details.history} />
+              </div>
+            )}
+            {details?.history && details.history.length === 1 && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4 text-xs text-[#6B8570] italic">
+                Trend chart will appear once this player has been scored across multiple nightly refreshes.
+              </div>
+            )}
+
             <div className="mt-6 h-72">
               <OverlayRadarChart series={[{ label: p.name, color: "#E3A857", metrics: p.radarMetrics || p.metrics }]} />
             </div>
@@ -639,8 +724,31 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
 
         {tab === "notes" && (
           <div className="mt-5">
-            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Scout note</div>
-            <p className="text-[#C9C08A] leading-relaxed text-sm">{p.note}</p>
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Add a scout note</div>
+            <textarea value={noteText} onChange={e => setNoteText(e.target.value)}
+              placeholder="What did you see? Technical strengths, weaknesses, injury concerns, transfer chatter..."
+              rows={3}
+              className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] outline-none focus:border-[#E3A857] resize-none" />
+            <button onClick={saveNote} disabled={!noteText.trim() || savingNote}
+              className="mt-2 text-xs uppercase tracking-wide px-4 py-2 bg-[#E3A857] text-[#0E1A15] font-bold disabled:opacity-40 disabled:cursor-not-allowed">
+              {savingNote ? "Saving..." : "Save Note"}
+            </button>
+
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mt-6 mb-2">
+              {details?.scout_notes?.length ? "Note history" : "No notes yet"}
+            </div>
+            <div className="space-y-3">
+              {(details?.scout_notes || []).map((n, i) => (
+                <div key={i} className="border-b border-[#2C4A3B] pb-2">
+                  <p className="text-[#C9C08A] leading-relaxed text-sm">{n.note}</p>
+                  <div className="text-[10px] text-[#6B8570] mt-1">
+                    {n.author || "dashboard"} · {new Date(n.created_at).toLocaleDateString()}
+                    {n.watch_level && ` · marked ${n.watch_level}`}
+                  </div>
+                </div>
+              ))}
+            </div>
+
             <div className="flex flex-wrap gap-1.5 mt-4">
               {p.tags.map(t => (
                 <span key={t} className="text-[10px] uppercase tracking-wide px-2 py-1 border border-[#2C4A3B] text-[#9AAA9E]">{t}</span>
@@ -648,6 +756,69 @@ function PlayerDossier({ p, onClose, onToggleShortlist }) {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer }) {
+  const scored = players.filter(p => p.potential != null);
+  const avgPotential = scored.length ? Math.round(scored.reduce((s, p) => s + p.potential, 0) / scored.length) : null;
+  const agesKnown = players.filter(p => p.age != null);
+  const avgAge = agesKnown.length ? (agesKnown.reduce((s, p) => s + p.age, 0) / agesKnown.length).toFixed(1) : null;
+
+  const POSITION_ORDER = ["Goalkeeper", "Defender", "Midfielder", "Attacker"];
+  const byPosition = POSITION_ORDER
+    .map(pos => ({ pos, list: players.filter(p => p.position === pos).sort((a, b) => (b.potential ?? -1) - (a.potential ?? -1)) }))
+    .filter(g => g.list.length > 0);
+  const otherPos = players.filter(p => !POSITION_ORDER.includes(p.position));
+  if (otherPos.length > 0) byPosition.push({ pos: "Other / Unknown", list: otherPos });
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[90vh] overflow-y-auto p-4 sm:p-8 relative"
+        onClick={e => e.stopPropagation()}>
+        <button onClick={onClose} className="absolute top-5 right-5 text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">Squad Profile</div>
+        <h2 className="text-3xl text-[#EDEDE3] font-display mt-2">{clubName}</h2>
+        <div className="text-[#9AAA9E] mt-1">{leagueName}</div>
+
+        <div className="grid grid-cols-3 gap-4 mt-6 border-b border-[#2C4A3B] pb-4">
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">Squad Size</div>
+            <div className="text-2xl font-bold text-[#EDEDE3]">{players.length}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">Avg Age</div>
+            <div className="text-2xl font-bold text-[#EDEDE3]">{avgAge ?? "—"}</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">Avg Potential</div>
+            <div className="text-2xl font-bold" style={{ color: potentialColor(avgPotential) }}>{avgPotential ?? "—"}</div>
+          </div>
+        </div>
+
+        {byPosition.map(group => (
+          <div key={group.pos} className="mt-5">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">
+              {group.pos} ({group.list.length})
+            </div>
+            <div className="space-y-1">
+              {group.list.map(p => (
+                <button key={p.id} onClick={() => onSelectPlayer(p)}
+                  className="w-full flex items-center justify-between text-sm py-1.5 px-2 -mx-2 hover:bg-[#152922] text-left">
+                  <span className="flex items-center gap-2 text-[#EDEDE3]">
+                    <Avatar name={p.name} photoUrl={p.photoUrl} size={24} />
+                    {p.name} <span className="text-[#6B8570] text-xs">· Age {p.age ?? "—"}</span>
+                  </span>
+                  <span className="font-plexmono" style={{ color: potentialColor(p.potential) }}>
+                    {p.potential ?? "—"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -803,6 +974,8 @@ function ScoutDashboard() {
   const [scatterX, setScatterX] = useState("Goals/90");
   const [scatterY, setScatterY] = useState("Key Passes/90");
   const [selected, setSelected] = useState(null);
+  const [clubProfileOpen, setClubProfileOpen] = useState(false);
+  const [deepLinkPlayerId, setDeepLinkPlayerId] = useState(() => new URLSearchParams(window.location.search).get("player"));
   const [livePlayers, setLivePlayers] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState(API_BASE_URL ? "connecting" : "offline");
   const [compareList, setCompareList] = useState([]);
@@ -989,6 +1162,18 @@ function ScoutDashboard() {
 
   const dataSource = livePlayers && connectionStatus === "live" ? livePlayers : PLAYERS;
 
+  // Deep-link support: once live data is loaded, find and open the player
+  // named in ?player=ID (the URL also restores league/club via the lazy
+  // useState initializers above, so this works even outside the top-200).
+  useEffect(() => {
+    if (!deepLinkPlayerId || connectionStatus !== "live") return;
+    const match = dataSource.find(p => p.id === `live-${deepLinkPlayerId}`);
+    if (match) {
+      setSelected(match);
+      setDeepLinkPlayerId(null); // only auto-open once
+    }
+  }, [dataSource, connectionStatus, deepLinkPlayerId]);
+
   // While the real league list is still loading (API_BASE_URL set but
   // allLeagueOptions hasn't arrived yet), show just "All leagues" rather
   // than a misleading partial list derived from the 5 seed/demo players.
@@ -1155,6 +1340,12 @@ function ScoutDashboard() {
             {isFavorited(club, league) ? "★" : "☆"}
           </button>
         )}
+        {league !== "All leagues" && club !== "All clubs" && (
+          <button onClick={() => setClubProfileOpen(true)}
+            className="px-3 py-2 border border-[#2C4A3B] text-[#9AAA9E] hover:border-[#E3A857] hover:text-[#E3A857] text-xs uppercase tracking-wide">
+            🏟 View Squad
+          </button>
+        )}
         <select value={position} onChange={e => setPosition(e.target.value)}
           className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none w-full md:w-auto">
           {availablePositions.map(p => <option key={p}>{p}</option>)}
@@ -1300,6 +1491,15 @@ function ScoutDashboard() {
 
       {selected && <PlayerDossier key={selected.id} p={selected} onClose={() => setSelected(null)}
         onToggleShortlist={connectionStatus === "live" ? toggleShortlist : null} />}
+      {clubProfileOpen && league !== "All leagues" && club !== "All clubs" && (
+        <ClubProfile
+          players={dataSource.filter(p => p.club === club && p.league === league)}
+          clubName={club}
+          leagueName={league}
+          onClose={() => setClubProfileOpen(false)}
+          onSelectPlayer={(p) => { setClubProfileOpen(false); setSelected(p); }}
+        />
+      )}
       <CompareBar selected={compareList} onClear={() => setCompareList([])} onCompare={() => setComparing(true)} />
       {comparing && compareList.length === 2 && (
         <ComparePanel players={compareList} onClose={() => setComparing(false)} />

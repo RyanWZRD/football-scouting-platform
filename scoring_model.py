@@ -201,6 +201,15 @@ def run(season):
                 """,
                 (pid, str(season), potential, stat_c, stat_c, age_c, qual_c_store),
             )
+            # Also append to history (never overwritten) so trend sparklines
+            # have real data to show as this runs night after night.
+            cur.execute(
+                """
+                INSERT INTO player_potential_history (player_id, season, potential_index)
+                VALUES (%s, %s, %s)
+                """,
+                (pid, str(season), potential),
+            )
     conn.commit()
     conn.close()
     print(f"Scored {len(rows)} players for season {season}.")
