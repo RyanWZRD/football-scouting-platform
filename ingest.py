@@ -111,12 +111,13 @@ def upsert_club(conn, team, db_league_id):
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO clubs (external_id, name, league_id, logo_url)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO clubs (external_id, name, league_id, logo_url, last_confirmed_at)
+            VALUES (%s, %s, %s, %s, now())
             ON CONFLICT (external_id) DO UPDATE SET
                 name = EXCLUDED.name,
                 league_id = EXCLUDED.league_id,
-                logo_url = EXCLUDED.logo_url
+                logo_url = EXCLUDED.logo_url,
+                last_confirmed_at = now()
             RETURNING id
             """,
             (str(team["id"]), team["name"], db_league_id, team.get("logo")),
