@@ -228,8 +228,12 @@ def list_players(
             ORDER BY created_at DESC LIMIT 1
         ) latest_note ON true
         LEFT JOIN LATERAL (
+            -- API-Football's /injuries endpoint returns the WHOLE season's
+            -- injury history, not a current snapshot — a 30-day window is a
+            -- rough but far more honest proxy for "likely still relevant"
+            -- than showing something from months ago as if it's current.
             SELECT injury_type, reason, reported_date FROM player_injuries pi
-            WHERE pi.player_id = p.id
+            WHERE pi.player_id = p.id AND pi.reported_date >= (CURRENT_DATE - INTERVAL '30 days')
             ORDER BY reported_date DESC NULLS LAST, ingested_at DESC LIMIT 1
         ) latest_injury ON true
     """
