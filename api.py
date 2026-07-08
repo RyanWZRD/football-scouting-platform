@@ -141,7 +141,11 @@ def list_players(
         LEFT JOIN clubs cl ON cl.id = p.current_club_id
         LEFT JOIN leagues l ON l.id = cl.league_id
         LEFT JOIN countries co ON co.id = l.country_id
-        LEFT JOIN player_potential_scores pps ON pps.player_id = p.id
+        LEFT JOIN LATERAL (
+            SELECT * FROM player_potential_scores
+            WHERE player_id = p.id
+            ORDER BY season DESC LIMIT 1
+        ) pps ON true
         LEFT JOIN (
             SELECT
                 player_id,
