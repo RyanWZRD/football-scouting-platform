@@ -694,7 +694,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
                 <span className="text-[#E36B57] font-bold">🩹 {p.injury.type}</span>
                 {p.injury.reason && <span className="text-[#C9A08A]"> — {p.injury.reason}</span>}
                 {p.injury.date && <span className="text-[#8A6858] text-xs"> (reported {p.injury.date})</span>}
-                <div className="text-xs text-[#8A6858] mt-1">Most recent known injury report — may not reflect current status.</div>
+                <div className="text-xs text-[#8A6858] mt-1">Most recent report within the last 30 days — API-Football's injury data covers the whole season's history, so this is a rough recency filter, not a confirmed current status. Always verify before a real decision.</div>
               </div>
             )}
             <div className="grid grid-cols-2 gap-4 mt-6 border-b border-[#2C4A3B] pb-4">
