@@ -1075,6 +1075,11 @@ function ScoutDashboard() {
         </div>
       )}
 
+      <div className="px-6 md:px-10 py-3 bg-[#0A140F] border-t border-b border-[#E3A857] text-xs text-[#E3A857] font-plexmono">
+        DEBUG — sortBy: "{sortBy}" | sortDesc: {String(sortDesc)} | filtered.length: {filtered.length} | view: {view} |
+        top 3: {filtered.slice(0, 3).map(p => `${p.name}(${sortBy === "age" ? p.age : sortBy === "potential" ? p.potential : metricLabel(p.metrics[sortBy] ?? 0)})`).join(", ")}
+      </div>
+
       <div className="px-6 md:px-10 py-6 border-t border-[#2C4A3B] text-xs text-[#6B8570]">
         ℹ When "Live API" shows above, you're looking at real ingested data. Radar/octagon charts
         show each stat as a percentile rank against real peers (same position where enough data
