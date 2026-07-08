@@ -88,6 +88,20 @@ function Avatar({ name, photoUrl, size = 44 }) {
   );
 }
 
+// Turns a timestamp into "3h ago", "Just now", "2d ago", etc.
+function relativeTime(isoString) {
+  if (!isoString) return null;
+  const then = new Date(isoString).getTime();
+  const diffMs = Date.now() - then;
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 function potentialColor(v) {
   if (v == null) return "#4A5C52";
   if (v >= 85) return "#E3A857";
@@ -793,6 +807,7 @@ function ScoutDashboard() {
   const [compareList, setCompareList] = useState([]);
   const [comparing, setComparing] = useState(false);
   const [allLeagueOptions, setAllLeagueOptions] = useState([]);
+  const [dataStatus, setDataStatus] = useState(null);
 
   // Fixed set of positions the API actually uses — cheaper than a dedicated
   // endpoint, and this genuinely doesn't change often.
@@ -806,6 +821,16 @@ function ScoutDashboard() {
     fetch(`${API_BASE_URL}/leagues`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
       .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
       .then(rows => setAllLeagueOptions(rows.map(r => r.league_display).sort()))
+      .catch(() => {});
+  }, []);
+
+  // When did the nightly pipeline last actually finish? No API key needed —
+  // /status is a lightweight, unauthenticated endpoint.
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/status`)
+      .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
+      .then(data => setDataStatus(data))
       .catch(() => {});
   }, []);
 
@@ -946,7 +971,12 @@ function ScoutDashboard() {
       <div className="border-b border-[#2C4A3B] px-6 py-10 md:px-10">
         <div className="flex items-center justify-between mb-3">
           <div className="text-[11px] tracking-[0.25em] uppercase text-[#E3A857] font-plexmono">Cross-League Scouting Index</div>
-          <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-[#6B8570]">
+          <div className="flex items-center gap-3 text-[11px] uppercase tracking-wide text-[#6B8570]">
+            {connectionStatus === "live" && dataStatus?.last_updated && (
+              <span className="text-[#9AAA9E]" title={new Date(dataStatus.last_updated).toLocaleString()}>
+                🔄 Updated {relativeTime(dataStatus.last_updated)} · {dataStatus.scored_players} players scored
+              </span>
+            )}
             {connectionStatus === "live" && <>📡 Live API</>}
             {connectionStatus === "connecting" && <>⏳ Connecting...</>}
             {connectionStatus === "offline" && <>⚠ Seed data</>}
