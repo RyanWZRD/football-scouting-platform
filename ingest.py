@@ -1,10 +1,13 @@
 """
 Ingestion pipeline: API-Football -> Postgres (schema.sql)
 
-Swap-friendly by design: everything hits API_BASE / API_KEY and a couple
-of field-mapping functions. Pointing this at Wyscout or StatsBomb later
-means rewriting `map_player`, `map_match`, `map_player_match_stats` —
-the DB schema and everything downstream (scoring model, dashboard) stays.
+Pulls players PER CLUB, not per league. This matters: /players?league=X
+returns every player API-Football has ever tracked for that league —
+years of history, reserves, old loanees — which took one league over 3
+HOURS to paginate through on Pro tier. /teams?league=X gives the authoritative
+current-season club list, and /players?team=X&season=Y for each club returns
+just that club's actual current squad (naturally 1-2 pages, no historical
+bloat) — reliably complete, not dependent on guessing pagination order.
 
 Usage:
     export FOOTBALL_API_KEY=...
@@ -20,7 +23,6 @@ import time
 import argparse
 import requests
 import psycopg2
-from psycopg2.extras import execute_values
 
 API_BASE = "https://v3.football.api-sports.io"
 API_KEY = os.environ.get("FOOTBALL_API_KEY")
@@ -43,7 +45,6 @@ def api_get(path, params=None):
     if errors:
         error_text = str(errors).lower()
         if "page parameter" in error_text:
-            # Free tier caps pagination at page 3 — not a rate limit, just stop paging.
             raise PageLimitReached()
         if isinstance(errors, dict) and any("request" in k.lower() for k in errors.keys()):
             raise RateLimitError(f"Rate limit reported in response body: {errors}")
@@ -98,6 +99,12 @@ def upsert_league(conn, league_id, season):
         return cur.fetchone()[0]
 
 
+def fetch_current_clubs(league_external_id, season):
+    """The authoritative list of clubs actually in this league for this
+    season — via /teams, not incidentally discovered through player data."""
+    return api_get("teams", {"league": league_external_id, "season": season})
+
+
 def upsert_club(conn, team, db_league_id):
     if not team or not team.get("id"):
         return None
@@ -108,7 +115,8 @@ def upsert_club(conn, team, db_league_id):
             VALUES (%s, %s, %s, %s)
             ON CONFLICT (external_id) DO UPDATE SET
                 name = EXCLUDED.name,
-                league_id = EXCLUDED.league_id
+                league_id = EXCLUDED.league_id,
+                logo_url = EXCLUDED.logo_url
             RETURNING id
             """,
             (str(team["id"]), team["name"], db_league_id, team.get("logo")),
@@ -117,23 +125,24 @@ def upsert_club(conn, team, db_league_id):
         return cur.fetchone()[0]
 
 
-def upsert_players_for_league(conn, league_external_id, season, db_league_id):
+def upsert_players_for_club(conn, club_external_id, season, db_club_id, max_pages=5):
+    """Team-scoped player pull — naturally bounded to that club's actual
+    current squad (typically 1-2 pages of 20), so max_pages=5 (~100
+    players) is a generous ceiling that should never realistically bind,
+    unlike the old league-wide pull."""
     page = 1
+    total_players = 0
     while True:
         try:
-            data = api_get("players", {"league": league_external_id, "season": season, "page": page})
+            data = api_get("players", {"team": club_external_id, "season": season, "page": page})
         except PageLimitReached:
-            print(f"    reached free-tier page limit (page {page}) — stopping pagination for this league")
+            print(f"      reached free-tier page limit (page {page})")
             break
         if not data:
             break
         for entry in data:
             p = entry["player"]
             stats = entry["statistics"][0] if entry["statistics"] else {}
-            team = stats.get("team", {})
-            db_club_id = upsert_club(conn, team, db_league_id)
-            if db_club_id is None:
-                print(f"    warning: no club id for player {p.get('name')} — team data: {team}")
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -150,14 +159,17 @@ def upsert_players_for_league(conn, league_external_id, season, db_league_id):
                      stats.get("games", {}).get("position"), db_club_id, p.get("photo")),
                 )
             conn.commit()
+            total_players += 1
         if page >= data.__len__() and len(data) < 20:
             break
         page += 1
-        if page > 50:  # safety cap for free-tier pagination
+        if page > max_pages:
+            print(f"      reached page cap ({max_pages} pages) for this club — unusually large squad")
             break
+    return total_players
 
 
-def run(league_ids, season):
+def run(league_ids, season, max_pages=5):
     conn = get_conn()
     completed = []
     for league_id in league_ids:
@@ -167,9 +179,25 @@ def run(league_ids, season):
             if db_league_id is None:
                 print(f"  no data for league {league_id}, skipping")
                 continue
-            upsert_players_for_league(conn, league_id, season, db_league_id)
+
+            teams = fetch_current_clubs(league_id, season)
+            if not teams:
+                print(f"  no clubs found for league {league_id} / season {season}, skipping")
+                continue
+            print(f"  {len(teams)} clubs found, pulling current squads...")
+
+            total_players = 0
+            for team_entry in teams:
+                team = team_entry["team"]
+                db_club_id = upsert_club(conn, team, db_league_id)
+                if db_club_id is None:
+                    continue
+                n = upsert_players_for_club(conn, team["id"], season, db_club_id, max_pages)
+                total_players += n
+                print(f"    {team['name']}: {n} players")
+
             completed.append(league_id)
-            print(f"  done: league {league_id}")
+            print(f"  done: league {league_id} ({total_players} players across {len(teams)} clubs)")
         except RateLimitError as e:
             print(f"\nHit the API rate limit while on league {league_id}.")
             print(f"Actual error detail: {e}")
@@ -187,23 +215,19 @@ if __name__ == "__main__":
     parser.add_argument("--season", type=int, required=True)
     parser.add_argument("--all-leagues", action="store_true",
                          help="Use the curated league list in LEAGUE_IDS below (top 5 + talent-pipeline leagues)")
+    parser.add_argument("--max-pages", type=int, default=5,
+                         help="Max player-list pages PER CLUB (20 players/page). Default 5 (~100 players) "
+                              "is generous headroom above any real squad size.")
     args = parser.parse_args()
 
-    # Now on Pro tier (7,500 req/day) — expanded to include the top 5 plus
-    # a wider set of leagues known for developing talent that moves up to
-    # bigger leagues. Add/remove IDs freely as priorities change.
     LEAGUE_IDS = [
-        # Top 5
-        39, 140, 78, 135, 61,        # Premier League, La Liga, Bundesliga, Serie A, Ligue 1
-        # Original non-top5 set
-        88, 94, 203, 71, 98, 253, 179, 62,
-        # Eredivisie, Liga Portugal, Süper Lig, Brasileirão, J1 League, MLS, Scottish Prem, Ligue 2
-        # Additional talent-pipeline leagues
-        40, 144, 262, 128,           # Championship (ENG 2nd tier), Belgian Pro League, Liga MX, Argentine Liga Profesional
+        39, 140, 78, 135, 61,        # Top 5
+        88, 94, 203, 71, 98, 253, 179, 62,   # Original non-top5 set
+        40, 144, 262, 128,           # Additional talent-pipeline leagues
     ]
 
     ids = args.league if args.league else (LEAGUE_IDS if args.all_leagues else [])
     if not ids:
         parser.error("Provide --league <id> (repeatable) or --all-leagues")
 
-    run(ids, args.season)
+    run(ids, args.season, args.max_pages)
