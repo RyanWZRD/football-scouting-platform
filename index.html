@@ -835,6 +835,29 @@ function ScoutDashboard() {
   }, []);
 
   const [movers, setMovers] = useState(null); // null = not computed yet / no prior visit
+  const [favoriteClubs, setFavoriteClubs] = useState([]);
+  const FAVORITES_KEY = "scoutindex_favorite_clubs_v1";
+
+  // Load favorites once on mount.
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]");
+      if (Array.isArray(saved)) setFavoriteClubs(saved);
+    } catch (e) { /* corrupted or unavailable storage — start empty */ }
+  }, []);
+
+  const isFavorited = (clubName, leagueName) =>
+    favoriteClubs.some(f => f.club === clubName && f.league === leagueName);
+
+  const toggleFavoriteClub = (clubName, leagueName) => {
+    setFavoriteClubs(prev => {
+      const next = isFavorited(clubName, leagueName)
+        ? prev.filter(f => !(f.club === clubName && f.league === leagueName))
+        : [...prev, { club: clubName, league: leagueName }];
+      try { localStorage.setItem(FAVORITES_KEY, JSON.stringify(next)); } catch (e) { /* skip if storage unavailable */ }
+      return next;
+    });
+  };
   const [moversDismissed, setMoversDismissed] = useState(false);
 
   const SNAPSHOT_KEY = "scoutindex_snapshot_v1";
@@ -1099,6 +1122,13 @@ function ScoutDashboard() {
             {availableClubs.map(c => <option key={c}>{c}</option>)}
           </select>
         )}
+        {league !== "All leagues" && club !== "All clubs" && (
+          <button onClick={() => toggleFavoriteClub(club, league)}
+            title={isFavorited(club, league) ? "Remove from favorite clubs" : "Add to favorite clubs"}
+            className={`px-3 py-2 border text-lg leading-none ${isFavorited(club, league) ? "border-[#E3A857] text-[#E3A857]" : "border-[#2C4A3B] text-[#4A5C52] hover:text-[#9AAA9E]"}`}>
+            {isFavorited(club, league) ? "★" : "☆"}
+          </button>
+        )}
         <select value={position} onChange={e => setPosition(e.target.value)}
           className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none w-full md:w-auto">
           {availablePositions.map(p => <option key={p}>{p}</option>)}
@@ -1146,6 +1176,19 @@ function ScoutDashboard() {
           </button>
         </div>
       </div>
+
+      {favoriteClubs.length > 0 && (
+        <div className="px-6 md:px-10 py-3 flex flex-wrap gap-2 items-center border-b border-[#2C4A3B] bg-[#152922]">
+          <span className="text-[10px] uppercase tracking-wide text-[#6B8570] mr-1">★ Favorites:</span>
+          {favoriteClubs.map(f => (
+            <button key={`${f.league}-${f.club}`}
+              onClick={() => { setLeague(f.league); setClub(f.club); }}
+              className={`text-xs px-3 py-1.5 border ${league === f.league && club === f.club ? "border-[#E3A857] text-[#E3A857] bg-[#0E1A15]" : "border-[#2C4A3B] text-[#9AAA9E] hover:border-[#6B8570]"}`}>
+              {f.club}
+            </button>
+          ))}
+        </div>
+      )}
 
       {view === "scatter" && (
         <div className="px-6 md:px-10 py-4 flex flex-wrap gap-3 items-center border-b border-[#2C4A3B]">
