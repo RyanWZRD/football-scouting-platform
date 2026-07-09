@@ -152,23 +152,23 @@ def upsert_player_stats_for_match(conn, db_match_id, fixture_external_id, club_c
         cards = stats.get("cards", {})
         penalty = stats.get("penalty", {})
 
-        # API-Football gives pass "total" and an "accuracy" percentage,
-        # not a raw completed count — derive completed from the two.
+        # IMPORTANT: in the /fixtures/players endpoint, passes.accuracy is
+        # the raw COUNT of accurate passes (e.g. "27" = 27 completed), NOT a
+        # percentage — the %-format only applies on season-aggregate
+        # endpoints. Treating it as a percentage silently understated every
+        # player's passing by ~4x (e.g. 26.8% completion rates).
         passes_total = passes.get("total") or 0
         accuracy_raw = passes.get("accuracy")
-        accuracy_pct = None
-        if accuracy_raw is not None:
+        passes_completed = 0
+        passes_attempted = 0
+        if accuracy_raw is not None and passes_total > 0:
             try:
-                accuracy_pct = float(str(accuracy_raw).replace("%", ""))
+                completed_count = int(float(str(accuracy_raw).replace("%", "")))
+                # Sanity clamp: completed can never exceed attempted.
+                passes_completed = min(completed_count, passes_total)
+                passes_attempted = passes_total
             except ValueError:
-                accuracy_pct = None
-
-        if accuracy_pct is not None and passes_total > 0:
-            passes_completed = round(passes_total * accuracy_pct / 100)
-            passes_attempted = passes_total
-        else:
-            passes_completed = 0
-            passes_attempted = 0
+                pass
 
         stat_rows.append((
             db_player_id, db_match_id, e["club_id"], minutes, games.get("position"),
@@ -269,7 +269,7 @@ def upsert_matches_for_league(conn, league_external_id, season, db_league_id, ma
     return db_match_ids
 
 
-def run(league_ids, season, max_fixtures):
+def run(league_ids, season, max_fixtures, force=False):
     conn = get_conn()
     completed = []
     club_cache = {}
@@ -282,14 +282,18 @@ def run(league_ids, season, max_fixtures):
                 continue
             matches = upsert_matches_for_league(conn, league_id, season, db_league_id, max_fixtures, club_cache)
 
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT DISTINCT match_id FROM player_match_stats WHERE match_id = ANY(%s)",
-                    ([m[0] for m in matches],),
-                )
-                already_done = {row[0] for row in cur.fetchall()}
-            todo = [m for m in matches if m[0] not in already_done]
-            skipped = len(matches) - len(todo)
+            if force:
+                todo = matches
+                skipped = 0
+            else:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT DISTINCT match_id FROM player_match_stats WHERE match_id = ANY(%s)",
+                        ([m[0] for m in matches],),
+                    )
+                    already_done = {row[0] for row in cur.fetchall()}
+                todo = [m for m in matches if m[0] not in already_done]
+                skipped = len(matches) - len(todo)
 
             print(f"  {len(matches)} matches recorded"
                   + (f" ({skipped} already have stats, skipping)" if skipped else "")
@@ -316,6 +320,9 @@ if __name__ == "__main__":
     parser.add_argument("--all-leagues", action="store_true")
     parser.add_argument("--max-fixtures", type=int, default=600,
                          help="Recent finished matches to pull PER LEAGUE. Each costs 1 API request.")
+    parser.add_argument("--force", action="store_true",
+                         help="Reprocess ALL matches even if stats already exist — needed after "
+                              "fixing a calculation bug, since stored values can't be recomputed.")
     args = parser.parse_args()
 
     LEAGUE_IDS = [
@@ -328,4 +335,4 @@ if __name__ == "__main__":
     if not ids:
         parser.error("Provide --league <id> (repeatable) or --all-leagues")
 
-    run(ids, args.season, args.max_fixtures)
+    run(ids, args.season, args.max_fixtures, args.force)
