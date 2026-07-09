@@ -1160,6 +1160,25 @@ function ScoutDashboard() {
   const [club, setClub] = useState(() => new URLSearchParams(window.location.search).get("club") || "All clubs");
   const [position, setPosition] = useState(() => new URLSearchParams(window.location.search).get("position") || "All positions");
   const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState(null); // null = not actively searching
+
+  // Real server-side search across the WHOLE database, not just whatever's
+  // currently loaded — otherwise anyone outside the top-200 default view
+  // (or the current league/club filter) is invisible to search.
+  useEffect(() => {
+    if (!API_BASE_URL || query.trim().length < 2) {
+      setSearchResults(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams({ search: query.trim(), limit: "50" });
+      fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+        .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
+        .then(rows => setSearchResults(rows))
+        .catch(() => setSearchResults([]));
+    }, 300); // debounce — avoid firing on every keystroke
+    return () => clearTimeout(timer);
+  }, [query]);
   const [sortDesc, setSortDesc] = useState(true);
   const [sortBy, setSortBy] = useState("potential");
   const [hideUnscored, setHideUnscored] = useState(false);
@@ -1396,8 +1415,6 @@ function ScoutDashboard() {
       if (hideUnscored && p.potential == null) return false;
       if (hideNoMinutes && (p.minutesPlayed == null || p.minutesPlayed === 0)) return false;
       if (shortlistOnly && p.watchLevel !== "shortlist") return false;
-      if (query && !p.name.toLowerCase().includes(query.toLowerCase()) &&
-          !p.club.toLowerCase().includes(query.toLowerCase())) return false;
       return true;
     });
 
@@ -1417,7 +1434,7 @@ function ScoutDashboard() {
       return sortDesc ? bv - av : av - bv;
     });
     return list;
-  }, [dataSource, league, club, position, query, sortDesc, sortBy, hideUnscored, hideNoMinutes, shortlistOnly]);
+  }, [dataSource, league, club, position, sortDesc, sortBy, hideUnscored, hideNoMinutes, shortlistOnly]);
 
   const sortOptions = [
     { value: "potential", label: "Potential" },
@@ -1627,7 +1644,7 @@ function ScoutDashboard() {
         </div>
       )}
 
-      {view === "scatter" && (
+      {searchResults === null && view === "scatter" && (
         <div className="px-6 md:px-10 py-4 flex flex-wrap gap-3 items-center border-b border-[#2C4A3B]">
           <span className="text-xs uppercase tracking-wide text-[#6B8570]">X axis</span>
           <select value={scatterX} onChange={e => setScatterX(e.target.value)}
@@ -1643,7 +1660,7 @@ function ScoutDashboard() {
         </div>
       )}
 
-      {view === "explore" && connectionStatus === "live" && (
+      {searchResults === null && view === "explore" && connectionStatus === "live" && (
         <ExploreView onSelectPlayer={(row) => {
           // Reuse the tested deep-link mechanism — set matching filters so
           // this player is guaranteed to be in the fetched dataset, then
@@ -1653,13 +1670,41 @@ function ScoutDashboard() {
           setDeepLinkPlayerId(String(row.id));
         }} />
       )}
-      {view === "explore" && connectionStatus !== "live" && (
+      {searchResults === null && view === "explore" && connectionStatus !== "live" && (
         <div className="px-6 md:px-10 py-8 text-sm text-[#6B8570]">
           Explore needs a live connection to the API — currently showing seed data.
         </div>
       )}
 
-      {view === "cards" && (
+      {searchResults !== null && (
+        <div className="px-6 md:px-10 py-6">
+          <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-3">
+            {searchResults.length} result{searchResults.length !== 1 ? "s" : ""} for "{query}" — searched across all leagues
+          </div>
+          {searchResults.length === 0 && <div className="text-sm text-[#6B8570]">No players found.</div>}
+          <div className="space-y-1">
+            {searchResults.map(row => (
+              <button key={row.id} onClick={() => {
+                  if (row.league_display) setLeague(row.league_display);
+                  if (row.club) setClub(row.club);
+                  setDeepLinkPlayerId(String(row.id));
+                  setQuery("");
+                }}
+                className="w-full flex items-center justify-between text-sm py-2.5 px-2 -mx-2 hover:bg-[#152922] text-left border-b border-[#1C2E26]">
+                <span className="flex items-center gap-2 text-[#EDEDE3]">
+                  <Avatar name={row.full_name} photoUrl={row.photo_url} size={28} />
+                  {row.full_name} <span className="text-[#6B8570] text-xs">· {row.club} · {row.league_display}</span>
+                </span>
+                <span className="font-plexmono" style={{ color: potentialColor(row.potential_index != null ? Math.round(row.potential_index) : null) }}>
+                  {row.potential_index != null ? Math.round(row.potential_index) : "—"}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {searchResults === null && view === "cards" && (
         <div className="px-6 md:px-10 py-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 pb-24">
           {connectionStatus === "connecting" && (
             [...Array(6)].map((_, i) => (
@@ -1681,7 +1726,7 @@ function ScoutDashboard() {
         </div>
       )}
 
-      {view === "rankings" && connectionStatus !== "connecting" && (
+      {searchResults === null && view === "rankings" && connectionStatus !== "connecting" && (
         <RankingsTable players={filtered} sortBy={sortBy} onSelect={setSelected}
           onToggleCompare={toggleCompare}
           compareIds={new Set(compareList.map(x => x.id))}
@@ -1689,7 +1734,7 @@ function ScoutDashboard() {
           topProspectIds={topProspectIds} />
       )}
 
-      {view === "scatter" && connectionStatus !== "connecting" && (
+      {searchResults === null && view === "scatter" && connectionStatus !== "connecting" && (
         <div className="px-6 md:px-10 py-8 pb-24">
           <ScatterPlot players={filtered} xKey={scatterX} yKey={scatterY} onSelect={setSelected}
             topProspectIds={topProspectIds}
