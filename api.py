@@ -136,6 +136,7 @@ def list_players(
     position: Optional[str] = None,
     max_age: Optional[int] = None,
     min_potential: Optional[float] = Query(None),
+    search: Optional[str] = None,
     sort: str = Query("potential", enum=[
         "potential", "age", "name", "goals", "assists", "tackles",
         "interceptions", "saves", "duel_win_pct", "pass_accuracy_pct",
@@ -255,6 +256,10 @@ def list_players(
     if min_potential:
         filters.append("pps.potential_index >= %s")
         params.append(min_potential)
+    if search:
+        filters.append("(p.full_name ILIKE %s OR cl.name ILIKE %s)")
+        params.append(f"%{search}%")
+        params.append(f"%{search}%")
 
     if filters:
         base_query += " WHERE " + " AND ".join(filters)
