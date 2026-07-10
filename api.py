@@ -19,6 +19,7 @@ Endpoints:
 """
 
 import os
+import json
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,6 +33,7 @@ import requests
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+FOOTBALL_API_KEY = os.environ.get("FOOTBALL_API_KEY")  # for on-demand match event lookups
 
 # Simple shared-secret protection. Set this in Render's environment variables
 # and pass the same value as a header from your dashboard: X-API-Key: <value>
@@ -188,6 +190,91 @@ def fixtures(
         rows = cur.fetchall()
     conn.close()
     return rows
+
+
+@app.get("/fixtures/{match_id}/boxscore")
+def match_boxscore(match_id: int, authorized: bool = Depends(check_api_key)):
+    """Every player's stats for a specific match, split by team — entirely
+    free, since this is just querying data already ingested via the normal
+    match-stats pipeline. No new API-Football calls."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT m.id, m.match_date, m.home_score, m.away_score,
+                   home_cl.id AS home_club_id, home_cl.name AS home_club,
+                   away_cl.id AS away_club_id, away_cl.name AS away_club
+            FROM matches m
+            LEFT JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            LEFT JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            WHERE m.id = %s
+        """, (match_id,))
+        match = cur.fetchone()
+        if not match:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Match not found")
+
+        cur.execute("""
+            SELECT p.full_name, p.photo_url, pms.club_id, pms.minutes_played,
+                   pms.goals, pms.assists, pms.yellow_cards, pms.red_cards, pms.rating
+            FROM player_match_stats pms
+            JOIN players p ON p.id = pms.player_id
+            WHERE pms.match_id = %s
+            ORDER BY pms.goals DESC, pms.rating DESC NULLS LAST
+        """, (match_id,))
+        players = cur.fetchall()
+    conn.close()
+    return {
+        "match": match,
+        "home_players": [p for p in players if p["club_id"] == match["home_club_id"]],
+        "away_players": [p for p in players if p["club_id"] == match["away_club_id"]],
+    }
+
+
+@app.get("/fixtures/{match_id}/events")
+def match_events(match_id: int, authorized: bool = Depends(check_api_key)):
+    """Full minute-by-minute event timeline (goals, cards, subs). On-demand
+    and permanently cached — a finished match's history never changes, so
+    the 1 API-Football request this costs is paid at most ONCE per match,
+    ever, no matter how many times it's viewed afterward."""
+    if not FOOTBALL_API_KEY:
+        raise HTTPException(status_code=503, detail="FOOTBALL_API_KEY not configured on the server.")
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT events FROM match_events_cache WHERE match_id = %s", (match_id,))
+        cached = cur.fetchone()
+        if cached:
+            conn.close()
+            return {"events": cached["events"], "cached": True}
+
+        cur.execute("SELECT external_id FROM matches WHERE id = %s", (match_id,))
+        match = cur.fetchone()
+        if not match:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Match not found")
+
+    try:
+        resp = requests.get(
+            "https://v3.football.api-sports.io/fixtures/events",
+            headers={"x-apisports-key": FOOTBALL_API_KEY},
+            params={"fixture": match["external_id"]},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        resp.encoding = "utf-8"
+        events = resp.json().get("response", [])
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=502, detail=f"Failed to fetch match events: {e}")
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO match_events_cache (match_id, events) VALUES (%s, %s) "
+            "ON CONFLICT (match_id) DO UPDATE SET events = EXCLUDED.events",
+            (match_id, json.dumps(events)),
+        )
+    conn.commit()
+    conn.close()
+    return {"events": events, "cached": False}
 
 
 @app.get("/leagues")
