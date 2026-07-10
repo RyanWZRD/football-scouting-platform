@@ -1662,6 +1662,98 @@ function DreamXIBuilder({ onClose }) {
   );
 }
 
+function FixturesModal({ allLeagueOptions, onClose }) {
+  const [league, setLeague] = useState("");
+  const [club, setClub] = useState("");
+  const [clubs, setClubs] = useState([]);
+  const [mode, setMode] = useState("upcoming"); // "upcoming" | "results"
+  const [fixturesList, setFixturesList] = useState(null);
+
+  useEffect(() => {
+    setClub("");
+    if (!API_BASE_URL || !league) { setClubs([]); return; }
+    const params = new URLSearchParams({ league, limit: "3000" });
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setClubs(Array.from(new Set(rows.map(r => r.club).filter(Boolean))).sort()))
+      .catch(() => setClubs([]));
+  }, [league]);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !league) { setFixturesList(null); return; }
+    setFixturesList(null);
+    const params = new URLSearchParams({ league, upcoming: String(mode === "upcoming"), limit: "50" });
+    if (club) params.set("club", club);
+    fetch(`${API_BASE_URL}/fixtures?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setFixturesList(rows))
+      .catch(() => setFixturesList([]));
+  }, [league, club, mode]);
+
+  const formatDate = (iso) => new Date(iso).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  const formatTime = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📅 Fixtures</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+          <select value={league} onChange={e => setLeague(e.target.value)}
+            className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none text-[#EDEDE3]">
+            <option value="">Select a league...</option>
+            {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+          <select value={club} onChange={e => setClub(e.target.value)} disabled={!league}
+            className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none text-[#EDEDE3] disabled:opacity-50">
+            <option value="">All clubs</option>
+            {clubs.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+
+        {league && (
+          <div className="flex border border-[#2C4A3B] mb-4 w-fit">
+            <button onClick={() => setMode("upcoming")}
+              className={`px-4 py-1.5 text-xs uppercase tracking-wide ${mode === "upcoming" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+              Upcoming
+            </button>
+            <button onClick={() => setMode("results")}
+              className={`px-4 py-1.5 text-xs uppercase tracking-wide ${mode === "results" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+              Recent Results
+            </button>
+          </div>
+        )}
+
+        {!league && <div className="text-sm text-[#6B8570]">Select a league to see its fixtures.</div>}
+        {league && fixturesList === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {league && fixturesList?.length === 0 && (
+          <div className="text-sm text-[#6B8570]">
+            No {mode === "upcoming" ? "upcoming fixtures" : "recent results"} found{club ? ` for ${club}` : ""}.
+          </div>
+        )}
+        {fixturesList?.map(f => (
+          <div key={f.id} className="flex items-center justify-between text-sm py-2.5 border-b border-[#1C2E26]">
+            <div className="text-[#6B8570] text-xs w-24 shrink-0">
+              {formatDate(f.match_date)}<br />{formatTime(f.match_date)}
+            </div>
+            <div className="flex-1 text-center text-[#EDEDE3] truncate px-2">
+              {f.home_club} <span className="text-[#6B8570]">vs</span> {f.away_club}
+            </div>
+            <div className="w-16 text-right shrink-0 font-plexmono">
+              {f.status === "finished"
+                ? <span className="text-[#E3A857]">{f.home_score}–{f.away_score}</span>
+                : <span className="text-[#6B8570] text-xs">Scheduled</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ClubCompareModal({ allLeagueOptions, onClose }) {
   const [league1, setLeague1] = useState("");
   const [club1, setClub1] = useState("");
@@ -1895,6 +1987,7 @@ function ScoutDashboard() {
   const [transfersOpen, setTransfersOpen] = useState(false);
   const [dreamXIOpen, setDreamXIOpen] = useState(false);
   const [clubCompareOpen, setClubCompareOpen] = useState(false);
+  const [fixturesOpen, setFixturesOpen] = useState(false);
   const [deepLinkPlayerId, setDeepLinkPlayerId] = useState(() => new URLSearchParams(window.location.search).get("player"));
   const [livePlayers, setLivePlayers] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState(API_BASE_URL ? "connecting" : "offline");
@@ -2239,6 +2332,7 @@ function ScoutDashboard() {
                 <button onClick={() => setTransfersOpen(true)} className="hover:text-[#E3A857]">🔄 Transfers</button>
                 <button onClick={() => setDreamXIOpen(true)} className="hover:text-[#E3A857]">⚽ Dream XI</button>
                 <button onClick={() => setClubCompareOpen(true)} className="hover:text-[#E3A857]">⚖ Compare Clubs</button>
+                <button onClick={() => setFixturesOpen(true)} className="hover:text-[#E3A857]">📅 Fixtures</button>
               </>
             )}
             {connectionStatus === "live" && dataStatus?.last_updated && (
@@ -2617,6 +2711,7 @@ function ScoutDashboard() {
       )}
       {dreamXIOpen && <DreamXIBuilder onClose={() => setDreamXIOpen(false)} />}
       {clubCompareOpen && <ClubCompareModal allLeagueOptions={allLeagueOptions} onClose={() => setClubCompareOpen(false)} />}
+      {fixturesOpen && <FixturesModal allLeagueOptions={allLeagueOptions} onClose={() => setFixturesOpen(false)} />}
       <CompareBar selected={compareList} onClear={() => setCompareList([])} onCompare={() => setComparing(true)} />
       {comparing && compareList.length >= 2 && (
         <ComparePanel players={compareList} onClose={() => setComparing(false)} />
