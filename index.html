@@ -1807,6 +1807,87 @@ function MatchDetailModal({ matchId, homeClub, awayClub, homeScore, awayScore, o
   );
 }
 
+// True whenever it's realistically possible something is live across the
+// 17 tracked leagues (Japan through Argentina/MLS) — genuinely dead only
+// roughly 3am-8am UK time. Uses Intl with an explicit timeZone so this
+// stays correct across BST/GMT without manual offset math.
+function isWithinLiveWindow() {
+  const ukHour = parseInt(new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London", hour: "2-digit", hour12: false,
+  }).format(new Date()), 10);
+  return ukHour >= 8 || ukHour < 3; // active 08:00–02:59 UK, dead 03:00–07:59
+}
+
+function LiveScoresModal({ onClose }) {
+  const [matches, setMatches] = useState(null);
+  const [lastFetch, setLastFetch] = useState(0);
+  const inWindow = isWithinLiveWindow();
+
+  const fetchLive = () => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/live`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : { matches: [] })
+      .then(data => { setMatches(data.matches); setLastFetch(Date.now()); })
+      .catch(() => setMatches([]));
+  };
+
+  useEffect(() => {
+    if (!inWindow) return;
+    fetchLive(); // immediate fetch on open, whatever's happening right now
+    const interval = setInterval(fetchLive, 60000); // baseline 60s poll
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      // Throttled: only refetch on tab-focus if it's been 45s+ since the
+      // last real fetch — prevents rapid tab-switching from spamming quota.
+      if (Date.now() - lastFetch >= 45000) fetchLive();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [inWindow]);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[#E36B57] animate-pulse"></span> Live Scores
+          </div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        {!inWindow && (
+          <div className="text-sm text-[#6B8570] text-center py-8">
+            Live scores update 8am–3am UK time. Outside that window right now — check back soon.
+          </div>
+        )}
+        {inWindow && matches === null && <div className="text-sm text-[#6B8570] text-center py-8">Loading…</div>}
+        {inWindow && matches?.length === 0 && (
+          <div className="text-sm text-[#6B8570] text-center py-8">Nothing live right now across your tracked leagues.</div>
+        )}
+        {inWindow && matches?.map((m, i) => (
+          <div key={i} className="flex items-center justify-between text-sm py-2.5 border-b border-[#1C2E26]">
+            <div className="text-[#6B8570] text-xs w-16 shrink-0">
+              {m.status_short === "HT" ? "HT" : m.elapsed != null ? `${m.elapsed}'` : m.status_short}
+            </div>
+            <div className="flex-1 text-center text-[#EDEDE3] truncate px-2">
+              {m.home_club} <span className="font-plexmono text-[#E3A857]">{m.home_score}–{m.away_score}</span> {m.away_club}
+            </div>
+            <div className="text-[#6B8570] text-xs w-24 text-right truncate shrink-0">{m.league}</div>
+          </div>
+        ))}
+        {inWindow && (
+          <div className="text-[10px] text-[#4A5C52] text-center mt-4">Updates every 60s while this is open.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function StandingsModal({ allLeagueOptions, onClose }) {
   const [league, setLeague] = useState("");
   const [table, setTable] = useState(null);
@@ -2276,6 +2357,7 @@ function ScoutDashboard() {
   const [clubCompareOpen, setClubCompareOpen] = useState(false);
   const [fixturesOpen, setFixturesOpen] = useState(false);
   const [standingsOpen, setStandingsOpen] = useState(false);
+  const [liveScoresOpen, setLiveScoresOpen] = useState(false);
   const [deepLinkPlayerId, setDeepLinkPlayerId] = useState(() => new URLSearchParams(window.location.search).get("player"));
   const [livePlayers, setLivePlayers] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState(API_BASE_URL ? "connecting" : "offline");
@@ -2622,6 +2704,7 @@ function ScoutDashboard() {
                 <button onClick={() => setClubCompareOpen(true)} className="hover:text-[#E3A857]">⚖ Compare Clubs</button>
                 <button onClick={() => setFixturesOpen(true)} className="hover:text-[#E3A857]">📅 Fixtures</button>
                 <button onClick={() => setStandingsOpen(true)} className="hover:text-[#E3A857]">🏆 Standings</button>
+                <button onClick={() => setLiveScoresOpen(true)} className="hover:text-[#E3A857]">🔴 Live</button>
               </>
             )}
             {connectionStatus === "live" && dataStatus?.last_updated && (
@@ -3002,6 +3085,7 @@ function ScoutDashboard() {
       {clubCompareOpen && <ClubCompareModal allLeagueOptions={allLeagueOptions} onClose={() => setClubCompareOpen(false)} />}
       {fixturesOpen && <FixturesModal allLeagueOptions={allLeagueOptions} onClose={() => setFixturesOpen(false)} />}
       {standingsOpen && <StandingsModal allLeagueOptions={allLeagueOptions} onClose={() => setStandingsOpen(false)} />}
+      {liveScoresOpen && <LiveScoresModal onClose={() => setLiveScoresOpen(false)} />}
       <CompareBar selected={compareList} onClear={() => setCompareList([])} onCompare={() => setComparing(true)} />
       {comparing && compareList.length >= 2 && (
         <ComparePanel players={compareList} onClose={() => setComparing(false)} />
