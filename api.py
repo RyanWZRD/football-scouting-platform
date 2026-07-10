@@ -20,6 +20,7 @@ Endpoints:
 
 import os
 import json
+import time
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -118,6 +119,61 @@ def data_status():
         count_row = cur.fetchone()
     conn.close()
     return {"last_updated": row["last_updated"], "scored_players": count_row["cnt"]}
+
+
+# Our 17 tracked league external IDs, for filtering the global live-scores response
+TRACKED_LEAGUE_IDS = {39, 140, 78, 135, 61, 88, 94, 203, 71, 98, 253, 179, 62, 40, 144, 262, 128}
+
+# Simple in-memory cache — protects against rapid repeated calls (e.g. quick
+# tab-switching) from each triggering a fresh API-Football request. Resets
+# on server restart, which is fine for something this short-lived.
+_live_cache = {"data": None, "fetched_at": 0}
+LIVE_CACHE_SECONDS = 20
+
+
+@app.get("/live")
+def live_scores(authorized: bool = Depends(check_api_key)):
+    """Currently in-progress matches across all tracked leagues, in ONE
+    API-Football request (their live=all endpoint returns everything at
+    once, regardless of league count — cost doesn't scale with coverage).
+    Cached briefly server-side as an extra safety buffer."""
+    if not FOOTBALL_API_KEY:
+        raise HTTPException(status_code=503, detail="FOOTBALL_API_KEY not configured on the server.")
+
+    now = time.time()
+    if _live_cache["data"] is not None and (now - _live_cache["fetched_at"]) < LIVE_CACHE_SECONDS:
+        return {"matches": _live_cache["data"], "cached": True}
+
+    try:
+        resp = requests.get(
+            "https://v3.football.api-sports.io/fixtures",
+            headers={"x-apisports-key": FOOTBALL_API_KEY},
+            params={"live": "all"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        resp.encoding = "utf-8"
+        raw = resp.json().get("response", [])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch live scores: {e}")
+
+    matches = []
+    for f in raw:
+        if f["league"]["id"] not in TRACKED_LEAGUE_IDS:
+            continue
+        matches.append({
+            "league": f["league"]["name"],
+            "home_club": f["teams"]["home"]["name"],
+            "away_club": f["teams"]["away"]["name"],
+            "home_score": f["goals"]["home"],
+            "away_score": f["goals"]["away"],
+            "elapsed": f["fixture"]["status"]["elapsed"],
+            "status_short": f["fixture"]["status"]["short"],
+        })
+
+    _live_cache["data"] = matches
+    _live_cache["fetched_at"] = now
+    return {"matches": matches, "cached": False}
 
 
 @app.get("/transfers")
