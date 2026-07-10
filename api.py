@@ -22,11 +22,13 @@ import os
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 import psycopg2
 import psycopg2.extras
 import anthropic
 import re
+import requests
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
@@ -72,6 +74,33 @@ def health():
         return {"status": "ok"}
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+ALLOWED_IMAGE_HOSTS = {"media.api-sports.io"}
+
+
+@app.get("/image-proxy")
+def image_proxy(url: str):
+    """Re-serves a player photo from our own domain with permissive CORS
+    headers. Needed because html2canvas can't safely export cross-origin
+    images onto a canvas unless the source server allows it — API-Football's
+    photo CDN doesn't, so exported share-card images showed a blank circle
+    instead of the real photo. Restricted to a known trusted host to avoid
+    this becoming an open image-fetching proxy."""
+    from urllib.parse import urlparse
+    host = urlparse(url).hostname
+    if host not in ALLOWED_IMAGE_HOSTS:
+        raise HTTPException(status_code=400, detail="URL host not allowed")
+    try:
+        resp = requests.get(url, timeout=8)
+        resp.raise_for_status()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch image: {e}")
+    return Response(
+        content=resp.content,
+        media_type=resp.headers.get("content-type", "image/png"),
+        headers={"Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.get("/status")

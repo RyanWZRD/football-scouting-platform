@@ -578,7 +578,10 @@ function ShareCard({ p, forwardedRef, variant = "overview", similarPlayers, note
         background: "#152922", flexShrink: 0,
       }}>
         {p.photoUrl ? (
-          <img src={p.photoUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          <img
+            src={API_BASE_URL ? `${API_BASE_URL}/image-proxy?url=${encodeURIComponent(p.photoUrl)}` : p.photoUrl}
+            crossOrigin="anonymous"
+            style={{ width: "100%", height: "100%", objectFit: "cover" }} />
         ) : (
           <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: s(48), color: "#6B8570" }}>
             {(p.name || "?").split(" ").map(w => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()}
@@ -709,7 +712,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
       return;
     }
     setExportingImage(true);
-    html2canvas(shareCardRef.current, { backgroundColor: "#0E1A15", scale: 2 })
+    html2canvas(shareCardRef.current, { backgroundColor: "#0E1A15", scale: 2, useCORS: true })
       .then(canvas => {
         const link = document.createElement("a");
         link.download = `${p.name.replace(/\s+/g, "_")}_${tab}_card.png`;
