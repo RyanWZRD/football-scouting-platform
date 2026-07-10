@@ -166,6 +166,7 @@ def list_players(
     max_age: Optional[int] = None,
     min_potential: Optional[float] = Query(None),
     search: Optional[str] = None,
+    shortlist_only: bool = False,
     sort: str = Query("potential", enum=[
         "potential", "age", "name", "goals", "assists", "tackles",
         "interceptions", "saves", "duel_win_pct", "pass_accuracy_pct",
@@ -289,6 +290,8 @@ def list_players(
         filters.append("(p.full_name ILIKE %s OR cl.name ILIKE %s)")
         params.append(f"%{search}%")
         params.append(f"%{search}%")
+    if shortlist_only:
+        filters.append("latest_note.watch_level = 'shortlist'")
 
     if filters:
         base_query += " WHERE " + " AND ".join(filters)
