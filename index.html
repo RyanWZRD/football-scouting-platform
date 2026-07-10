@@ -621,45 +621,45 @@ function ShareCard({ p, forwardedRef, variant = "overview", similarPlayers, note
       )}
 
       {variant === "stats" && (
-        <div style={{ width: "100%", marginTop: 36 }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 18, letterSpacing: 2, color: "#6B8570", textTransform: "uppercase", textAlign: "center", marginBottom: 20 }}>
+        <div style={{ width: "100%", flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, letterSpacing: 2, color: "#6B8570", textTransform: "uppercase", textAlign: "center", marginBottom: 32 }}>
             Season Totals
           </div>
           {p.seasonTotals ? (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "14px 32px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px 40px" }}>
               {Object.entries(p.seasonTotals).map(([k, v]) => (
-                <div key={k} style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #2C4A3B", paddingBottom: 10 }}>
-                  <span style={{ color: "#6B8570", fontSize: 20 }}>{k}</span>
-                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 20, fontWeight: "bold" }}>{v}</span>
+                <div key={k} style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid #2C4A3B", paddingBottom: 14 }}>
+                  <span style={{ color: "#6B8570", fontSize: 22, textTransform: "uppercase", letterSpacing: 0.5 }}>{k}</span>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 40, fontWeight: "bold", marginTop: 4 }}>{v}</span>
                 </div>
               ))}
             </div>
           ) : (
-            <div style={{ textAlign: "center", color: "#6B8570", fontSize: 24 }}>No season stats recorded yet.</div>
+            <div style={{ textAlign: "center", color: "#6B8570", fontSize: 28 }}>No season stats recorded yet.</div>
           )}
         </div>
       )}
 
       {variant === "notes" && (
-        <div style={{ width: "100%", marginTop: 40, textAlign: "center" }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 18, letterSpacing: 2, color: "#6B8570", textTransform: "uppercase", marginBottom: 20 }}>
+        <div style={{ width: "100%", flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", textAlign: "center" }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, letterSpacing: 2, color: "#6B8570", textTransform: "uppercase", marginBottom: 32 }}>
             Scout Note
           </div>
-          <div style={{ fontSize: 30, color: "#C9C08A", lineHeight: 1.5, fontStyle: "italic" }}>
+          <div style={{ fontSize: 40, color: "#C9C08A", lineHeight: 1.5, fontStyle: "italic", padding: "0 20px" }}>
             "{noteText || p.note || "No note recorded."}"
           </div>
         </div>
       )}
 
       {variant === "similar" && (
-        <div style={{ width: "100%", marginTop: 36 }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 18, letterSpacing: 2, color: "#6B8570", textTransform: "uppercase", textAlign: "center", marginBottom: 20 }}>
+        <div style={{ width: "100%", flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, letterSpacing: 2, color: "#6B8570", textTransform: "uppercase", textAlign: "center", marginBottom: 32 }}>
             Statistically Similar Players
           </div>
           {(similarPlayers || []).slice(0, 5).map(({ player: sp }, i) => (
-            <div key={sp.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #2C4A3B", padding: "14px 0" }}>
-              <span style={{ fontSize: 24 }}>{i + 1}. {sp.name} <span style={{ color: "#6B8570", fontSize: 18 }}>· {sp.club}</span></span>
-              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 24, color: potentialColor(sp.potential) }}>{sp.potential ?? "—"}</span>
+            <div key={sp.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #2C4A3B", padding: "22px 0" }}>
+              <span style={{ fontSize: 32 }}>{i + 1}. {sp.name} <span style={{ color: "#6B8570", fontSize: 22 }}>· {sp.club}</span></span>
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 34, color: potentialColor(sp.potential) }}>{sp.potential ?? "—"}</span>
             </div>
           ))}
         </div>
