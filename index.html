@@ -580,7 +580,7 @@ function ShareCard({ p, forwardedRef, variant = "overview", similarPlayers, note
         {p.photoUrl ? (
           <img
             src={API_BASE_URL ? `${API_BASE_URL}/image-proxy?url=${encodeURIComponent(p.photoUrl)}` : p.photoUrl}
-            crossOrigin="anonymous"
+            crossOrigin="anonymous" alt={p.name}
             style={{ width: "100%", height: "100%", objectFit: "cover" }} />
         ) : (
           <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: s(48), color: "#6B8570" }}>
@@ -1424,7 +1424,7 @@ function DreamXISlot({ slot, player, onClick, size = 1 }) {
       }}>
         {player ? (
           player.photoUrl
-            ? <img src={player.photoUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            ? <img src={player.photoUrl} alt={player.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
             : <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 16 * size, color: "#E3A857" }}>
                 {(player.name || "?").split(" ").map(w => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()}
               </span>
@@ -1537,8 +1537,8 @@ function DreamXIBuilder({ onClose }) {
           <button onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
         </div>
 
-        <div style={{ maxWidth: 380, margin: "0 auto" }}>
-          <DreamXIPitch slots={slots} size={380 / 600} />
+        <div style={{ maxWidth: 300, margin: "0 auto", overflowX: "auto" }}>
+          <DreamXIPitch slots={slots} size={300 / 600} />
         </div>
         {/* Hidden full-size version, exclusively for export capture */}
         <div style={{ position: "fixed", top: 0, left: -99999 }}>
@@ -1886,6 +1886,13 @@ function ScoutDashboard() {
 
   const exportCSV = (rows, filename) => {
     if (!rows.length) { alert("Nothing to export — no players match the current view."); return; }
+    // Defends against CSV/formula injection: a cell starting with =, +, -, or @
+    // can be interpreted as a formula by Excel/Sheets when the file is opened.
+    // Prefixing with a leading apostrophe forces it to be read as plain text.
+    const sanitize = (v) => {
+      const s = String(v);
+      return /^[=+\-@]/.test(s) ? `'${s}` : s;
+    };
     const headers = ["Name", "Club", "League", "Age", "Position", "Potential", "Minutes", "Goals", "Assists", "Watch Level"];
     const csvRows = [headers.join(",")];
     rows.forEach(p => {
@@ -1893,7 +1900,7 @@ function ScoutDashboard() {
         p.name, p.club, p.league, p.age ?? "", p.posLabel, p.potential ?? "",
         p.minutesPlayed ?? "", p.seasonTotals?.["Goals"] ?? "", p.seasonTotals?.["Assists"] ?? "",
         p.watchLevel ?? "",
-      ].map(v => `"${String(v).replace(/"/g, '""')}"`); // quote + escape for safety with commas/quotes in names
+      ].map(v => `"${sanitize(v).replace(/"/g, '""')}"`); // quote + escape for safety with commas/quotes in names
       csvRows.push(row.join(","));
     });
     const blob = new Blob([csvRows.join("\n")], { type: "text/csv;charset=utf-8;" });
@@ -1932,9 +1939,9 @@ function ScoutDashboard() {
   return (
     <div className="min-h-screen bg-[#0E1A15] text-[#EDEDE3]">
       <div className="border-b border-[#2C4A3B] px-6 py-10 md:px-10">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div className="text-[11px] tracking-[0.25em] uppercase text-[#E3A857] font-plexmono">Cross-League Scouting Index</div>
-          <div className="flex items-center gap-3 text-[11px] uppercase tracking-wide text-[#6B8570]">
+          <div className="flex items-center flex-wrap gap-x-3 gap-y-1 text-[11px] uppercase tracking-wide text-[#6B8570]">
             {connectionStatus === "live" && (
               <>
                 <button onClick={() => setTransfersOpen(true)} className="hover:text-[#E3A857]">🔄 Transfers</button>
@@ -1943,7 +1950,8 @@ function ScoutDashboard() {
             )}
             {connectionStatus === "live" && dataStatus?.last_updated && (
               <span className="text-[#9AAA9E]" title={new Date(dataStatus.last_updated).toLocaleString()}>
-                🔄 Updated {relativeTime(dataStatus.last_updated)} · {dataStatus.scored_players} players scored
+                🔄 Updated {relativeTime(dataStatus.last_updated)}
+                <span className="hidden sm:inline"> · {dataStatus.scored_players} players scored</span>
               </span>
             )}
             {connectionStatus === "live" && <>📡 Live API</>}
@@ -2062,7 +2070,7 @@ function ScoutDashboard() {
           <label className="flex items-center gap-2 text-xs text-[#9AAA9E] cursor-pointer px-1">
             <input type="checkbox" checked={shortlistOnly} onChange={e => setShortlistOnly(e.target.checked)}
               className="accent-[#E3A857]" />
-            ★ Shortlist only
+            ★ Shortlisted only
           </label>
         )}
         {(league !== "All leagues" || club !== "All clubs" || position !== "All positions" || query || hideUnscored || !hideNoMinutes || shortlistOnly) && (
@@ -2106,7 +2114,7 @@ function ScoutDashboard() {
           </button>
           <button onClick={() => setView("shortlist")}
             className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide ${view === "shortlist" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
-            ★ Shortlist
+            ★ My Shortlist
           </button>
         </div>
       </div>
