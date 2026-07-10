@@ -273,15 +273,19 @@ def upsert_matches_for_league(conn, league_external_id, season, db_league_id, ma
     return db_match_ids
 
 
-def upsert_upcoming_fixtures_for_league(conn, league_external_id, season, db_league_id, club_cache, next_n=20):
+def upsert_upcoming_fixtures_for_league(conn, league_external_id, fixture_season, db_league_id, club_cache, next_n=20):
     """Pulls the next N upcoming fixtures for a league — costs exactly 1
     API request regardless of N, since API-Football's 'next' parameter
     returns them all in one response. Stored with status='scheduled' and
     no score yet. When this same match later gets picked up by the normal
     finished-fixtures pull (once it's actually been played), the shared
     ON CONFLICT logic above naturally overwrites it with the real result
-    and flips status to 'finished' — no separate transition logic needed."""
-    fixtures = api_get("fixtures", {"league": league_external_id, "season": season, "next": next_n})
+    and flips status to 'finished' — no separate transition logic needed.
+
+    IMPORTANT: fixture_season should be the UPCOMING season (e.g. next
+    year), not whatever season's results you're currently tracking — a
+    just-finished season has zero fixtures left to schedule by definition."""
+    fixtures = api_get("fixtures", {"league": league_external_id, "season": fixture_season, "next": next_n})
     if not fixtures:
         return 0
 
@@ -325,8 +329,8 @@ def run(league_ids, season, max_fixtures, force=False):
                 continue
             matches = upsert_matches_for_league(conn, league_id, season, db_league_id, max_fixtures, club_cache)
 
-            upcoming_count = upsert_upcoming_fixtures_for_league(conn, league_id, season, db_league_id, club_cache)
-            print(f"  {upcoming_count} upcoming fixtures recorded")
+            upcoming_count = upsert_upcoming_fixtures_for_league(conn, league_id, season + 1, db_league_id, club_cache)
+            print(f"  {upcoming_count} upcoming fixtures recorded (season {season + 1})")
 
             if force:
                 todo = matches
