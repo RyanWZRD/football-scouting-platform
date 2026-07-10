@@ -946,6 +946,34 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
                 </div>
               ))}
             </div>
+
+            {details?.recent_matches?.length > 0 && (
+              <>
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mt-5 mb-1">
+                  Match Log (last {details.recent_matches.length})
+                </div>
+                <div className="space-y-1 mt-1">
+                  {details.recent_matches.map((m, i) => {
+                    const result = m.is_home
+                      ? (m.home_score > m.away_score ? "W" : m.home_score < m.away_score ? "L" : "D")
+                      : (m.away_score > m.home_score ? "W" : m.away_score < m.home_score ? "L" : "D");
+                    const resultColor = result === "W" ? "#7FD99A" : result === "L" ? "#E36B57" : "#9AAA9E";
+                    return (
+                      <div key={i} className="flex items-center justify-between text-xs py-1.5 border-b border-[#1C2E26]">
+                        <span className="text-[#6B8570] w-20 shrink-0">{new Date(m.match_date).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</span>
+                        <span className="text-[#EDEDE3] flex-1 truncate px-2">
+                          {m.is_home ? "vs" : "@"} {m.opponent} <span className="font-plexmono" style={{ color: resultColor }}>({m.home_score}-{m.away_score})</span>
+                        </span>
+                        <span className="text-[#9AAA9E] shrink-0">
+                          {m.minutes_played}' {m.goals > 0 && `⚽${m.goals > 1 ? m.goals : ""}`} {m.assists > 0 && `🅰${m.assists > 1 ? m.assists : ""}`} {m.yellow_cards > 0 && "🟨"} {m.red_cards > 0 && "🟥"}
+                        </span>
+                        <span className="text-[#6B8570] font-plexmono w-8 text-right shrink-0">{m.rating ?? "—"}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </>
         )}
 
@@ -1779,6 +1807,79 @@ function MatchDetailModal({ matchId, homeClub, awayClub, homeScore, awayScore, o
   );
 }
 
+function StandingsModal({ allLeagueOptions, onClose }) {
+  const [league, setLeague] = useState("");
+  const [table, setTable] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !league) { setTable(null); return; }
+    setTable(null);
+    const params = new URLSearchParams({ league });
+    fetch(`${API_BASE_URL}/standings?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setTable(rows))
+      .catch(() => setTable([]));
+  }, [league]);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🏆 Standings</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        <select value={league} onChange={e => setLeague(e.target.value)}
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none text-[#EDEDE3] mb-4">
+          <option value="">Select a league...</option>
+          {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+
+        {!league && <div className="text-sm text-[#6B8570]">Select a league to see its table.</div>}
+        {league && table === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {league && table?.length === 0 && <div className="text-sm text-[#6B8570]">No finished matches recorded yet for this league.</div>}
+
+        {table?.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[#6B8570] uppercase tracking-wide border-b border-[#2C4A3B]">
+                  <th className="text-left py-2 pr-2">#</th>
+                  <th className="text-left py-2 pr-2">Club</th>
+                  <th className="text-center py-2 px-1">P</th>
+                  <th className="text-center py-2 px-1">W</th>
+                  <th className="text-center py-2 px-1">D</th>
+                  <th className="text-center py-2 px-1">L</th>
+                  <th className="text-center py-2 px-1">GF</th>
+                  <th className="text-center py-2 px-1">GA</th>
+                  <th className="text-center py-2 px-1">GD</th>
+                  <th className="text-center py-2 pl-1 text-[#E3A857]">Pts</th>
+                </tr>
+              </thead>
+              <tbody>
+                {table.map((row, i) => (
+                  <tr key={row.club} className="border-b border-[#1C2E26] text-[#EDEDE3]">
+                    <td className="py-1.5 pr-2 text-[#6B8570]">{i + 1}</td>
+                    <td className="py-1.5 pr-2 truncate max-w-[140px]">{row.club}</td>
+                    <td className="text-center px-1">{row.played}</td>
+                    <td className="text-center px-1">{row.won}</td>
+                    <td className="text-center px-1">{row.drawn}</td>
+                    <td className="text-center px-1">{row.lost}</td>
+                    <td className="text-center px-1">{row.gf}</td>
+                    <td className="text-center px-1">{row.ga}</td>
+                    <td className="text-center px-1">{row.gd > 0 ? `+${row.gd}` : row.gd}</td>
+                    <td className="text-center pl-1 font-plexmono font-bold text-[#E3A857]">{row.points}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FixturesModal({ allLeagueOptions, onClose }) {
   const [league, setLeague] = useState("");
   const [club, setClub] = useState("");
@@ -1931,6 +2032,48 @@ function ClubCompareModal({ allLeagueOptions, onClose }) {
   const s2 = summarize(squad2);
   const POSITION_ORDER = ["Goalkeeper", "Defender", "Midfielder", "Attacker"];
 
+  const [h2h, setH2h] = useState(null);
+  const [form1, setForm1] = useState(null);
+  const [form2, setForm2] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !club1 || !club2) { setH2h(null); return; }
+    const params = new URLSearchParams({ club1, club2, limit: "10" });
+    fetch(`${API_BASE_URL}/h2h?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setH2h(rows))
+      .catch(() => setH2h([]));
+  }, [club1, club2]);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !club1 || !league1) { setForm1(null); return; }
+    const params = new URLSearchParams({ club: club1, league: league1 });
+    fetch(`${API_BASE_URL}/clubs/form?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : { form: [] })
+      .then(data => setForm1(data.form))
+      .catch(() => setForm1([]));
+  }, [club1, league1]);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !club2 || !league2) { setForm2(null); return; }
+    const params = new URLSearchParams({ club: club2, league: league2 });
+    fetch(`${API_BASE_URL}/clubs/form?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : { form: [] })
+      .then(data => setForm2(data.form))
+      .catch(() => setForm2([]));
+  }, [club2, league2]);
+
+  const FormBadges = ({ form }) => (
+    <div className="flex gap-1 justify-center">
+      {(form || []).map((r, i) => (
+        <span key={i} className="w-5 h-5 flex items-center justify-center text-[10px] font-bold rounded-full"
+          style={{ background: r === "W" ? "#7FD99A" : r === "L" ? "#E36B57" : "#6B8570", color: "#0E1A15" }}>
+          {r}
+        </span>
+      ))}
+    </div>
+  );
+
   return (
     <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
       <div className="bg-[#0E1A15] border border-[#E3A857] max-w-3xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
@@ -1968,9 +2111,13 @@ function ClubCompareModal({ allLeagueOptions, onClose }) {
 
         {s1 && s2 && (
           <div className="mt-6">
-            <div className="grid grid-cols-2 gap-6 text-center mb-4">
+            <div className="grid grid-cols-2 gap-6 text-center mb-2">
               <div className="text-lg text-[#E3A857] font-display truncate">{club1}</div>
               <div className="text-lg text-[#7FB3D5] font-display truncate">{club2}</div>
+            </div>
+            <div className="grid grid-cols-2 gap-6 mb-4">
+              <FormBadges form={form1} />
+              <FormBadges form={form2} />
             </div>
             {[
               ["Squad Size", s1.size, s2.size],
@@ -1991,6 +2138,21 @@ function ClubCompareModal({ allLeagueOptions, onClose }) {
                 <div className="col-span-2 text-xs text-[#6B8570] text-center -mt-1">{pos}</div>
               </div>
             ))}
+
+            {h2h && h2h.length > 0 && (
+              <>
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] text-center mt-6 mb-2">Head to Head — Last {h2h.length} Meetings</div>
+                {h2h.map((m, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs py-1.5 border-b border-[#1C2E26]">
+                    <span className="text-[#6B8570] w-20 shrink-0">{new Date(m.match_date).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "2-digit" })}</span>
+                    <span className="text-[#EDEDE3] flex-1 text-center">{m.home_club} <span className="font-plexmono text-[#E3A857]">{m.home_score}–{m.away_score}</span> {m.away_club}</span>
+                  </div>
+                ))}
+              </>
+            )}
+            {h2h && h2h.length === 0 && (
+              <div className="text-xs text-[#6B8570] text-center mt-6">No previous meetings found in ingested data.</div>
+            )}
           </div>
         )}
         {(club1 && club2 && (!s1 || !s2)) && <div className="text-sm text-[#6B8570] mt-6 text-center">Loading squads…</div>}
@@ -2113,6 +2275,7 @@ function ScoutDashboard() {
   const [dreamXIOpen, setDreamXIOpen] = useState(false);
   const [clubCompareOpen, setClubCompareOpen] = useState(false);
   const [fixturesOpen, setFixturesOpen] = useState(false);
+  const [standingsOpen, setStandingsOpen] = useState(false);
   const [deepLinkPlayerId, setDeepLinkPlayerId] = useState(() => new URLSearchParams(window.location.search).get("player"));
   const [livePlayers, setLivePlayers] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState(API_BASE_URL ? "connecting" : "offline");
@@ -2458,6 +2621,7 @@ function ScoutDashboard() {
                 <button onClick={() => setDreamXIOpen(true)} className="hover:text-[#E3A857]">⚽ Dream XI</button>
                 <button onClick={() => setClubCompareOpen(true)} className="hover:text-[#E3A857]">⚖ Compare Clubs</button>
                 <button onClick={() => setFixturesOpen(true)} className="hover:text-[#E3A857]">📅 Fixtures</button>
+                <button onClick={() => setStandingsOpen(true)} className="hover:text-[#E3A857]">🏆 Standings</button>
               </>
             )}
             {connectionStatus === "live" && dataStatus?.last_updated && (
@@ -2837,6 +3001,7 @@ function ScoutDashboard() {
       {dreamXIOpen && <DreamXIBuilder onClose={() => setDreamXIOpen(false)} />}
       {clubCompareOpen && <ClubCompareModal allLeagueOptions={allLeagueOptions} onClose={() => setClubCompareOpen(false)} />}
       {fixturesOpen && <FixturesModal allLeagueOptions={allLeagueOptions} onClose={() => setFixturesOpen(false)} />}
+      {standingsOpen && <StandingsModal allLeagueOptions={allLeagueOptions} onClose={() => setStandingsOpen(false)} />}
       <CompareBar selected={compareList} onClear={() => setCompareList([])} onCompare={() => setComparing(true)} />
       {comparing && compareList.length >= 2 && (
         <ComparePanel players={compareList} onClose={() => setComparing(false)} />
