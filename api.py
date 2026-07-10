@@ -142,6 +142,54 @@ def recent_transfers(limit: int = Query(20, le=100), authorized: bool = Depends(
     return rows
 
 
+@app.get("/fixtures")
+def fixtures(
+    league: Optional[str] = None,
+    club: Optional[str] = None,
+    upcoming: bool = True,
+    limit: int = Query(50, le=200),
+    authorized: bool = Depends(check_api_key),
+):
+    """Upcoming (status='scheduled') or recent results (status='finished'),
+    filterable by league and/or club. 'Competition' in this context means
+    the league itself — we only ingest fixtures for tracked leagues, not
+    separate cup/continental competitions."""
+    conn = get_conn()
+    filters = ["m.status = %s"]
+    params = [("scheduled" if upcoming else "finished")]
+
+    if league:
+        filters.append("(l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s")
+        params.append(league)
+    if club:
+        filters.append("(home_cl.name = %s OR away_cl.name = %s)")
+        params.append(club)
+        params.append(club)
+
+    order = "m.match_date ASC" if upcoming else "m.match_date DESC"
+    query = f"""
+        SELECT
+            m.id, m.match_date, m.status, m.home_score, m.away_score,
+            l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display,
+            home_cl.name AS home_club, away_cl.name AS away_club
+        FROM matches m
+        JOIN leagues l ON l.id = m.league_id
+        LEFT JOIN countries co ON co.id = l.country_id
+        LEFT JOIN clubs home_cl ON home_cl.id = m.home_club_id
+        LEFT JOIN clubs away_cl ON away_cl.id = m.away_club_id
+        WHERE {" AND ".join(filters)}
+        ORDER BY {order}
+        LIMIT %s
+    """
+    params.append(limit)
+
+    with conn.cursor() as cur:
+        cur.execute(query, params)
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 @app.get("/leagues")
 def list_leagues(authorized: bool = Depends(check_api_key)):
     conn = get_conn()
