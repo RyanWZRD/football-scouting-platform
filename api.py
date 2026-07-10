@@ -277,6 +277,105 @@ def match_events(match_id: int, authorized: bool = Depends(check_api_key)):
     return {"events": events, "cached": False}
 
 
+@app.get("/standings")
+def standings(league: str, authorized: bool = Depends(check_api_key)):
+    """Full league table (P/W/D/L/GF/GA/GD/Pts), computed entirely from
+    match results already ingested — no new API-Football calls."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        cur.execute("""
+            WITH club_matches AS (
+                SELECT home_club_id AS club_id, home_score AS gf, away_score AS ga,
+                    CASE WHEN home_score > away_score THEN 3 WHEN home_score = away_score THEN 1 ELSE 0 END AS pts,
+                    CASE WHEN home_score > away_score THEN 1 ELSE 0 END AS win,
+                    CASE WHEN home_score = away_score THEN 1 ELSE 0 END AS draw,
+                    CASE WHEN home_score < away_score THEN 1 ELSE 0 END AS loss
+                FROM matches WHERE league_id = %s AND status = 'finished'
+                UNION ALL
+                SELECT away_club_id, away_score, home_score,
+                    CASE WHEN away_score > home_score THEN 3 WHEN away_score = home_score THEN 1 ELSE 0 END,
+                    CASE WHEN away_score > home_score THEN 1 ELSE 0 END,
+                    CASE WHEN away_score = home_score THEN 1 ELSE 0 END,
+                    CASE WHEN away_score < home_score THEN 1 ELSE 0 END
+                FROM matches WHERE league_id = %s AND status = 'finished'
+            )
+            SELECT c.name AS club, COUNT(*) AS played, SUM(win) AS won, SUM(draw) AS drawn, SUM(loss) AS lost,
+                   SUM(gf) AS gf, SUM(ga) AS ga, SUM(gf) - SUM(ga) AS gd, SUM(pts) AS points
+            FROM club_matches cm
+            JOIN clubs c ON c.id = cm.club_id
+            GROUP BY c.name
+            ORDER BY points DESC, gd DESC, gf DESC
+        """, (league_id, league_id))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/h2h")
+def head_to_head(club1: str, club2: str, limit: int = Query(10, le=30), authorized: bool = Depends(check_api_key)):
+    """Last N meetings between two specific clubs, regardless of which
+    league/season each match belongs to — free, existing match data."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT m.match_date, m.home_score, m.away_score,
+                   home_cl.name AS home_club, away_cl.name AS away_club
+            FROM matches m
+            JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            WHERE m.status = 'finished'
+              AND ((home_cl.name = %s AND away_cl.name = %s) OR (home_cl.name = %s AND away_cl.name = %s))
+            ORDER BY m.match_date DESC
+            LIMIT %s
+        """, (club1, club2, club2, club1, limit))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/clubs/form")
+def club_form(club: str, league: str, limit: int = Query(5, le=10), authorized: bool = Depends(check_api_key)):
+    """Last N results for a club, as W/D/L from that club's perspective —
+    free, existing match data."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT m.match_date, m.home_score, m.away_score,
+                   home_cl.name AS home_club, away_cl.name AS away_club
+            FROM matches m
+            JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            LEFT JOIN leagues l ON l.id = m.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE m.status = 'finished'
+              AND (home_cl.name = %s OR away_cl.name = %s)
+              AND (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+            ORDER BY m.match_date DESC
+            LIMIT %s
+        """, (club, club, league, limit))
+        rows = cur.fetchall()
+
+    form = []
+    for r in rows:
+        is_home = r["home_club"] == club
+        gf = r["home_score"] if is_home else r["away_score"]
+        ga = r["away_score"] if is_home else r["home_score"]
+        form.append("W" if gf > ga else "L" if gf < ga else "D")
+    conn.close()
+    return {"form": form}
+
+
 @app.get("/leagues")
 def list_leagues(authorized: bool = Depends(check_api_key)):
     conn = get_conn()
@@ -482,15 +581,17 @@ def player_dossier(player_id: int, authorized: bool = Depends(check_api_key)):
         notes = cur.fetchall()
 
         cur.execute("""
-            SELECT m.match_date, cl.name AS opponent, pms.minutes_played,
-                   pms.goals, pms.assists, pms.xg, pms.xa, pms.rating
+            SELECT m.match_date, cl.name AS opponent,
+                   CASE WHEN m.home_club_id = pms.club_id THEN true ELSE false END AS is_home,
+                   m.home_score, m.away_score, pms.minutes_played,
+                   pms.goals, pms.assists, pms.rating, pms.yellow_cards, pms.red_cards
             FROM player_match_stats pms
             JOIN matches m ON m.id = pms.match_id
             LEFT JOIN clubs cl ON cl.id = CASE
                 WHEN m.home_club_id = pms.club_id THEN m.away_club_id
                 ELSE m.home_club_id END
             WHERE pms.player_id = %s
-            ORDER BY m.match_date DESC LIMIT 10
+            ORDER BY m.match_date DESC LIMIT 20
         """, (player_id,))
         recent_matches = cur.fetchall()
 
