@@ -161,6 +161,7 @@ def run(season):
     idx = {c: i for i, c in enumerate(cols)}
     stat_scores = compute_stat_percentiles(cols, rows)
 
+    processed = 0
     with conn.cursor() as cur:
         for row in rows:
             pid = row[idx["player_id"]]
@@ -210,6 +211,15 @@ def run(season):
                 """,
                 (pid, str(season), potential),
             )
+
+            processed += 1
+            # Commit periodically — a single transaction spanning thousands
+            # of inserts risks hitting a statement/lock timeout on the
+            # database (this happened in practice: "canceling statement due
+            # to statement timeout" partway through a ~17,000-player run).
+            if processed % 200 == 0:
+                conn.commit()
+                print(f"  ...{processed}/{len(rows)} scored")
     conn.commit()
     conn.close()
     print(f"Scored {len(rows)} players for season {season}.")
