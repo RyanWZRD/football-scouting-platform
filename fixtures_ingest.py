@@ -261,7 +261,8 @@ def upsert_matches_for_league(conn, league_external_id, season, db_league_id, ma
                 VALUES (%s, %s, %s, %s, %s, %s, %s, 'finished')
                 ON CONFLICT (external_id) DO UPDATE SET
                     home_score = EXCLUDED.home_score,
-                    away_score = EXCLUDED.away_score
+                    away_score = EXCLUDED.away_score,
+                    status = 'finished'
                 RETURNING id
                 """,
                 (str(fx["id"]), db_league_id, home_club_id, away_club_id,
@@ -270,6 +271,45 @@ def upsert_matches_for_league(conn, league_external_id, season, db_league_id, ma
             conn.commit()
             db_match_ids.append((cur.fetchone()[0], fx["id"]))
     return db_match_ids
+
+
+def upsert_upcoming_fixtures_for_league(conn, league_external_id, season, db_league_id, club_cache, next_n=20):
+    """Pulls the next N upcoming fixtures for a league — costs exactly 1
+    API request regardless of N, since API-Football's 'next' parameter
+    returns them all in one response. Stored with status='scheduled' and
+    no score yet. When this same match later gets picked up by the normal
+    finished-fixtures pull (once it's actually been played), the shared
+    ON CONFLICT logic above naturally overwrites it with the real result
+    and flips status to 'finished' — no separate transition logic needed."""
+    fixtures = api_get("fixtures", {"league": league_external_id, "season": season, "next": next_n})
+    if not fixtures:
+        return 0
+
+    count = 0
+    for f in fixtures:
+        fx = f["fixture"]
+        teams = f["teams"]
+        home_club_id = get_db_club_id(conn, teams["home"]["id"], club_cache)
+        away_club_id = get_db_club_id(conn, teams["away"]["id"], club_cache)
+        if home_club_id is None or away_club_id is None:
+            continue  # club not in our tracked set — skip rather than guess
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO matches (external_id, league_id, home_club_id, away_club_id,
+                                      match_date, home_score, away_score, status)
+                VALUES (%s, %s, %s, %s, %s, NULL, NULL, 'scheduled')
+                ON CONFLICT (external_id) DO UPDATE SET
+                    match_date = EXCLUDED.match_date
+                    -- deliberately does NOT touch home_score/away_score/status —
+                    -- if this match was already finished, don't un-finish it
+                """,
+                (str(fx["id"]), db_league_id, home_club_id, away_club_id, fx["date"]),
+            )
+            conn.commit()
+            count += 1
+    return count
 
 
 def run(league_ids, season, max_fixtures, force=False):
@@ -284,6 +324,9 @@ def run(league_ids, season, max_fixtures, force=False):
                 print(f"  league {league_id} not found in DB yet — run ingest.py for it first, skipping")
                 continue
             matches = upsert_matches_for_league(conn, league_id, season, db_league_id, max_fixtures, club_cache)
+
+            upcoming_count = upsert_upcoming_fixtures_for_league(conn, league_id, season, db_league_id, club_cache)
+            print(f"  {upcoming_count} upcoming fixtures recorded")
 
             if force:
                 todo = matches
