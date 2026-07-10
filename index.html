@@ -1662,11 +1662,129 @@ function DreamXIBuilder({ onClose }) {
   );
 }
 
+function MatchDetailModal({ matchId, homeClub, awayClub, homeScore, awayScore, onClose }) {
+  const [boxscore, setBoxscore] = useState(null);
+  const [events, setEvents] = useState(null);
+  const [eventsLoading, setEventsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/fixtures/${matchId}/boxscore`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setBoxscore(data))
+      .catch(() => setBoxscore(null));
+  }, [matchId]);
+
+  const loadEvents = () => {
+    if (!API_BASE_URL) return;
+    setEventsLoading(true);
+    fetch(`${API_BASE_URL}/fixtures/${matchId}/events`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : { events: [] })
+      .then(data => setEvents(data.events))
+      .catch(() => setEvents([]))
+      .finally(() => setEventsLoading(false));
+  };
+
+  const scorers = (players) => (players || []).filter(p => p.goals > 0);
+
+  const PlayerStatRow = ({ p }) => (
+    <div className="flex items-center justify-between text-xs py-1.5 border-b border-[#1C2E26]">
+      <span className="flex items-center gap-2 text-[#EDEDE3] truncate">
+        <Avatar name={p.full_name} photoUrl={p.photo_url} size={20} />
+        <span className="truncate">{p.full_name}</span>
+        {p.goals > 0 && <span className="text-[#E3A857]">⚽{p.goals > 1 ? `×${p.goals}` : ""}</span>}
+        {p.assists > 0 && <span className="text-[#7FB3D5]">🅰{p.assists > 1 ? `×${p.assists}` : ""}</span>}
+        {p.yellow_cards > 0 && <span className="text-yellow-500">🟨</span>}
+        {p.red_cards > 0 && <span className="text-red-500">🟥</span>}
+      </span>
+      <span className="text-[#6B8570] font-plexmono shrink-0 pl-2">{p.rating ?? "—"}</span>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[70]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">Match Detail</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        <div className="text-center mb-6">
+          <div className="text-xl text-[#EDEDE3] font-display">{homeClub} <span className="text-[#E3A857]">{homeScore}–{awayScore}</span> {awayClub}</div>
+        </div>
+
+        {!boxscore && <div className="text-sm text-[#6B8570] text-center">Loading box score…</div>}
+
+        {boxscore && (
+          <>
+            {(scorers(boxscore.home_players).length > 0 || scorers(boxscore.away_players).length > 0) && (
+              <div className="mb-6">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2 text-center">Goalscorers</div>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    {scorers(boxscore.home_players).map(p => (
+                      <div key={p.full_name} className="text-[#EDEDE3]">⚽ {p.full_name}{p.goals > 1 ? ` (${p.goals})` : ""}</div>
+                    ))}
+                  </div>
+                  <div className="text-right">
+                    {scorers(boxscore.away_players).map(p => (
+                      <div key={p.full_name} className="text-[#EDEDE3]">{p.full_name}{p.goals > 1 ? ` (${p.goals})` : ""} ⚽</div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="text-center mb-4">
+              {events === null && (
+                <button onClick={loadEvents} disabled={eventsLoading}
+                  className="text-xs uppercase tracking-wide px-4 py-2 border border-[#2C4A3B] text-[#9AAA9E] hover:border-[#E3A857] hover:text-[#E3A857] disabled:opacity-50">
+                  {eventsLoading ? "Loading…" : "⏱ Load Full Match Timeline"}
+                </button>
+              )}
+            </div>
+
+            {events && events.length > 0 && (
+              <div className="mb-6">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2 text-center">Match Timeline</div>
+                {events.map((ev, i) => (
+                  <div key={i} className="flex items-center gap-3 text-xs py-1.5 border-b border-[#1C2E26]">
+                    <span className="text-[#6B8570] w-10 shrink-0 font-plexmono">{ev.time?.elapsed}'</span>
+                    <span className="text-[#EDEDE3]">
+                      {ev.type === "Goal" && "⚽"} {ev.type === "Card" && (ev.detail === "Red Card" ? "🟥" : "🟨")} {ev.type === "subst" && "🔄"}
+                      {" "}{ev.player?.name} <span className="text-[#6B8570]">· {ev.team?.name} · {ev.detail}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {events && events.length === 0 && (
+              <div className="text-xs text-[#6B8570] text-center mb-6">No detailed timeline available for this match.</div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">{homeClub}</div>
+                {boxscore.home_players.map(p => <PlayerStatRow key={p.full_name} p={p} />)}
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">{awayClub}</div>
+                {boxscore.away_players.map(p => <PlayerStatRow key={p.full_name} p={p} />)}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FixturesModal({ allLeagueOptions, onClose }) {
   const [league, setLeague] = useState("");
   const [club, setClub] = useState("");
   const [clubs, setClubs] = useState([]);
   const [mode, setMode] = useState("upcoming"); // "upcoming" | "results"
+  const [selectedMatch, setSelectedMatch] = useState(null);
   const [fixturesList, setFixturesList] = useState(null);
 
   useEffect(() => {
@@ -1735,7 +1853,9 @@ function FixturesModal({ allLeagueOptions, onClose }) {
           </div>
         )}
         {fixturesList?.map(f => (
-          <div key={f.id} className="flex items-center justify-between text-sm py-2.5 border-b border-[#1C2E26]">
+          <div key={f.id}
+            onClick={() => f.status === "finished" && setSelectedMatch(f)}
+            className={`flex items-center justify-between text-sm py-2.5 border-b border-[#1C2E26] ${f.status === "finished" ? "cursor-pointer hover:bg-[#152922]" : ""}`}>
             <div className="text-[#6B8570] text-xs w-24 shrink-0">
               {formatDate(f.match_date)}<br />{formatTime(f.match_date)}
             </div>
@@ -1750,6 +1870,11 @@ function FixturesModal({ allLeagueOptions, onClose }) {
           </div>
         ))}
       </div>
+      {selectedMatch && (
+        <MatchDetailModal matchId={selectedMatch.id} homeClub={selectedMatch.home_club} awayClub={selectedMatch.away_club}
+          homeScore={selectedMatch.home_score} awayScore={selectedMatch.away_score}
+          onClose={() => setSelectedMatch(null)} />
+      )}
     </div>
   );
 }
