@@ -562,7 +562,7 @@ function ShareCard({ p, forwardedRef, variant = "overview", similarPlayers, note
   const metricKeys = POSITION_METRIC_SETS[p.position] || DEFAULT_METRIC_SET;
   return (
     <div ref={forwardedRef} style={{
-      width: 1080, height: 1350, background: "#0E1A15", color: "#EDEDE3",
+      width: 1080, minHeight: 900, background: "#0E1A15", color: "#EDEDE3",
       fontFamily: "'Inter', sans-serif", padding: 64, boxSizing: "border-box",
       display: "flex", flexDirection: "column", alignItems: "center",
       border: "2px solid #E3A857",
@@ -621,51 +621,67 @@ function ShareCard({ p, forwardedRef, variant = "overview", similarPlayers, note
       )}
 
       {variant === "stats" && (
-        <div style={{ width: "100%", flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, letterSpacing: 2, color: "#6B8570", textTransform: "uppercase", textAlign: "center", marginBottom: 32 }}>
+        <div style={{ width: "100%", marginTop: 40 }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, letterSpacing: 2, color: "#6B8570", textTransform: "uppercase", textAlign: "center", marginBottom: 28 }}>
             Season Totals
           </div>
           {p.seasonTotals ? (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px 40px" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "22px 40px" }}>
               {Object.entries(p.seasonTotals).map(([k, v]) => (
-                <div key={k} style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid #2C4A3B", paddingBottom: 14 }}>
-                  <span style={{ color: "#6B8570", fontSize: 22, textTransform: "uppercase", letterSpacing: 0.5 }}>{k}</span>
-                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 40, fontWeight: "bold", marginTop: 4 }}>{v}</span>
+                <div key={k} style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid #2C4A3B", paddingBottom: 12 }}>
+                  <span style={{ color: "#6B8570", fontSize: 20, textTransform: "uppercase", letterSpacing: 0.5 }}>{k}</span>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 36, fontWeight: "bold", marginTop: 4 }}>{v}</span>
                 </div>
               ))}
             </div>
           ) : (
             <div style={{ textAlign: "center", color: "#6B8570", fontSize: 28 }}>No season stats recorded yet.</div>
           )}
+
+          {p.hasDisciplineData && (
+            <>
+              <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, letterSpacing: 2, color: "#6B8570", textTransform: "uppercase", textAlign: "center", margin: "40px 0 28px" }}>
+                Discipline
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "22px 40px" }}>
+                {Object.entries(p.disciplineTotals).map(([k, v]) => (
+                  <div key={k} style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid #2C4A3B", paddingBottom: 12 }}>
+                    <span style={{ color: "#6B8570", fontSize: 20, textTransform: "uppercase", letterSpacing: 0.5 }}>{k}</span>
+                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 36, fontWeight: "bold", marginTop: 4 }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 
       {variant === "notes" && (
-        <div style={{ width: "100%", flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", textAlign: "center" }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, letterSpacing: 2, color: "#6B8570", textTransform: "uppercase", marginBottom: 32 }}>
+        <div style={{ width: "100%", marginTop: 44, textAlign: "center" }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, letterSpacing: 2, color: "#6B8570", textTransform: "uppercase", marginBottom: 28 }}>
             Scout Note
           </div>
-          <div style={{ fontSize: 40, color: "#C9C08A", lineHeight: 1.5, fontStyle: "italic", padding: "0 20px" }}>
+          <div style={{ fontSize: 38, color: "#C9C08A", lineHeight: 1.5, fontStyle: "italic", padding: "0 20px" }}>
             "{noteText || p.note || "No note recorded."}"
           </div>
         </div>
       )}
 
       {variant === "similar" && (
-        <div style={{ width: "100%", flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, letterSpacing: 2, color: "#6B8570", textTransform: "uppercase", textAlign: "center", marginBottom: 32 }}>
+        <div style={{ width: "100%", marginTop: 40 }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, letterSpacing: 2, color: "#6B8570", textTransform: "uppercase", textAlign: "center", marginBottom: 28 }}>
             Statistically Similar Players
           </div>
           {(similarPlayers || []).slice(0, 5).map(({ player: sp }, i) => (
-            <div key={sp.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #2C4A3B", padding: "22px 0" }}>
-              <span style={{ fontSize: 32 }}>{i + 1}. {sp.name} <span style={{ color: "#6B8570", fontSize: 22 }}>· {sp.club}</span></span>
-              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 34, color: potentialColor(sp.potential) }}>{sp.potential ?? "—"}</span>
+            <div key={sp.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #2C4A3B", padding: "20px 0" }}>
+              <span style={{ fontSize: 30 }}>{i + 1}. {sp.name} <span style={{ color: "#6B8570", fontSize: 20 }}>· {sp.club}</span></span>
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 32, color: potentialColor(sp.potential) }}>{sp.potential ?? "—"}</span>
             </div>
           ))}
         </div>
       )}
 
-      <div style={{ marginTop: "auto", fontFamily: "'IBM Plex Mono', monospace", fontSize: 16, color: "#4A5C52", letterSpacing: 1 }}>
+      <div style={{ marginTop: 40, fontFamily: "'IBM Plex Mono', monospace", fontSize: 16, color: "#4A5C52", letterSpacing: 1 }}>
         Real ingested match data · not a projection
       </div>
     </div>
@@ -991,7 +1007,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
       {shareCardOpen && (
         <div className="fixed inset-0 bg-black/85 flex flex-col items-center justify-center p-4 z-[60]" onClick={() => setShareCardOpen(false)}>
           <div onClick={e => e.stopPropagation()} className="flex flex-col items-center">
-            <div style={{ width: 360, height: 450, overflow: "hidden", position: "relative" }}>
+            <div style={{ width: 360, maxHeight: "70vh", overflowY: "auto", position: "relative" }}>
               <div style={{ transform: "scale(0.3333)", transformOrigin: "top left" }}>
                 <ShareCard p={p} forwardedRef={shareCardRef} variant={tab}
                   similarPlayers={similarPlayers}
