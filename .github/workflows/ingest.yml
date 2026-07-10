@@ -1,4 +1,4 @@
-﻿name: Ingest & Score
+name: Ingest & Score
 
 on:
   workflow_dispatch:
@@ -42,6 +42,12 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           python fixtures_ingest.py --all-leagues --season ${{ github.event.inputs.season || '2025' }} --max-fixtures ${{ github.event.inputs.max_fixtures || '600' }}
+
+      - name: Correct club assignments using real match evidence
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          python fix_club_assignments.py --season ${{ github.event.inputs.season || '2025' }}
 
       - name: Recompute potential scores
         env:
