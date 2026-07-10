@@ -36,6 +36,9 @@ def api_get(path, params=None):
     if resp.status_code == 429:
         raise RateLimitError("Rate limit hit (HTTP 429).")
     resp.raise_for_status()
+    # Force UTF-8 explicitly rather than trusting requests' auto-detected
+    # encoding — see ingest.py for the full explanation of this bug.
+    resp.encoding = "utf-8"
     body = resp.json()
     errors = body.get("errors")
     if errors and isinstance(errors, dict) and any("request" in k.lower() for k in errors.keys()):

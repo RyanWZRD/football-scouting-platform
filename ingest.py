@@ -40,6 +40,12 @@ def api_get(path, params=None):
     if resp.status_code == 429:
         raise RateLimitError("Daily or per-minute request limit hit (HTTP 429).")
     resp.raise_for_status()
+    # Force UTF-8 explicitly rather than trusting requests' auto-detected
+    # encoding — API-Football's responses don't declare a charset, and
+    # requests' fallback guessing can misidentify genuinely UTF-8 content
+    # (e.g. accented names) as a different encoding, corrupting characters
+    # like "ï" into "Ã¯" (classic double-encoding/mojibake).
+    resp.encoding = "utf-8"
     body = resp.json()
     errors = body.get("errors")
     if errors:
