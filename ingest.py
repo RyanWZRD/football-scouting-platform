@@ -35,6 +35,26 @@ HEADERS = {"x-apisports-key": API_KEY}
 REQUEST_DELAY_SECONDS = 0.25
 
 
+def fix_mojibake(s):
+    """Repairs a specific, common source-side corruption in API-Football's
+    'name' field: some player names are stored there as UTF-8 bytes that
+    were mistakenly decoded as Latin-1 and re-encoded (e.g. "OulaÃ¯" instead
+    of "Oulaï"). Confirmed via a raw API check — their own 'lastname' field
+    has the SAME name correctly encoded, proving this is corrupted at their
+    source, not something we're introducing by decoding their response
+    wrong. Since this exact corruption is a reversible round-trip, we can
+    recover the real characters: re-encode as Latin-1 to get back the
+    original UTF-8 bytes, then decode those correctly as UTF-8.
+    Only applies the fix if it succeeds cleanly (a genuinely correct
+    string won't usually round-trip this way, so this is safe)."""
+    if not s:
+        return s
+    try:
+        return s.encode("latin-1").decode("utf-8")
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        return s
+
+
 def api_get(path, params=None):
     resp = requests.get(f"{API_BASE}/{path}", headers=HEADERS, params=params or {})
     if resp.status_code == 429:
@@ -99,7 +119,7 @@ def upsert_league(conn, league_id, season):
             ON CONFLICT (external_id) DO UPDATE SET season = EXCLUDED.season
             RETURNING id
             """,
-            (str(league["id"]), league["name"], country_id, 1, is_top5, str(season)),
+            (str(league["id"]), fix_mojibake(league["name"]), country_id, 1, is_top5, str(season)),
         )
         conn.commit()
         return cur.fetchone()[0]
@@ -126,7 +146,7 @@ def upsert_club(conn, team, db_league_id):
                 last_confirmed_at = now()
             RETURNING id
             """,
-            (str(team["id"]), team["name"], db_league_id, team.get("logo")),
+            (str(team["id"]), fix_mojibake(team["name"]), db_league_id, team.get("logo")),
         )
         conn.commit()
         return cur.fetchone()[0]
@@ -162,7 +182,7 @@ def upsert_players_for_club(conn, club_external_id, season, db_club_id, max_page
                         photo_url = EXCLUDED.photo_url,
                         updated_at = now()
                     """,
-                    (str(p["id"]), p["name"], p.get("birth", {}).get("date"),
+                    (str(p["id"]), fix_mojibake(p["name"]), p.get("birth", {}).get("date"),
                      stats.get("games", {}).get("position"), db_club_id, p.get("photo")),
                 )
             conn.commit()
