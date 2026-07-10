@@ -1395,20 +1395,49 @@ function ExploreView({ onSelectPlayer }) {
   );
 }
 
-// Fixed 4-3-3 formation, laid out via percentage positions on a pitch.
-const FORMATION_SLOTS = [
-  { id: "GK", label: "GK", x: 50, y: 90 },
-  { id: "DEF1", label: "DEF", x: 15, y: 72 },
-  { id: "DEF2", label: "DEF", x: 38, y: 76 },
-  { id: "DEF3", label: "DEF", x: 62, y: 76 },
-  { id: "DEF4", label: "DEF", x: 85, y: 72 },
-  { id: "MID1", label: "MID", x: 28, y: 50 },
-  { id: "MID2", label: "MID", x: 50, y: 54 },
-  { id: "MID3", label: "MID", x: 72, y: 50 },
-  { id: "FWD1", label: "FWD", x: 20, y: 22 },
-  { id: "FWD2", label: "FWD", x: 50, y: 15 },
-  { id: "FWD3", label: "FWD", x: 80, y: 22 },
-];
+// Multiple selectable formations, each laid out via percentage positions.
+const FORMATIONS = {
+  "4-3-3": [
+    { id: "GK", label: "GK", x: 50, y: 90 },
+    { id: "DEF1", label: "DEF", x: 15, y: 72 },
+    { id: "DEF2", label: "DEF", x: 38, y: 76 },
+    { id: "DEF3", label: "DEF", x: 62, y: 76 },
+    { id: "DEF4", label: "DEF", x: 85, y: 72 },
+    { id: "MID1", label: "MID", x: 28, y: 50 },
+    { id: "MID2", label: "MID", x: 50, y: 54 },
+    { id: "MID3", label: "MID", x: 72, y: 50 },
+    { id: "FWD1", label: "FWD", x: 20, y: 22 },
+    { id: "FWD2", label: "FWD", x: 50, y: 15 },
+    { id: "FWD3", label: "FWD", x: 80, y: 22 },
+  ],
+  "4-4-2": [
+    { id: "GK", label: "GK", x: 50, y: 90 },
+    { id: "DEF1", label: "DEF", x: 15, y: 72 },
+    { id: "DEF2", label: "DEF", x: 38, y: 76 },
+    { id: "DEF3", label: "DEF", x: 62, y: 76 },
+    { id: "DEF4", label: "DEF", x: 85, y: 72 },
+    { id: "MID1", label: "MID", x: 15, y: 48 },
+    { id: "MID2", label: "MID", x: 38, y: 52 },
+    { id: "MID3", label: "MID", x: 62, y: 52 },
+    { id: "MID4", label: "MID", x: 85, y: 48 },
+    { id: "FWD1", label: "FWD", x: 35, y: 18 },
+    { id: "FWD2", label: "FWD", x: 65, y: 18 },
+  ],
+  "3-5-2": [
+    { id: "GK", label: "GK", x: 50, y: 90 },
+    { id: "DEF1", label: "DEF", x: 25, y: 75 },
+    { id: "DEF2", label: "DEF", x: 50, y: 78 },
+    { id: "DEF3", label: "DEF", x: 75, y: 75 },
+    { id: "MID1", label: "MID", x: 10, y: 50 },
+    { id: "MID2", label: "MID", x: 30, y: 55 },
+    { id: "MID3", label: "MID", x: 50, y: 48 },
+    { id: "MID4", label: "MID", x: 70, y: 55 },
+    { id: "MID5", label: "MID", x: 90, y: 50 },
+    { id: "FWD1", label: "FWD", x: 35, y: 18 },
+    { id: "FWD2", label: "FWD", x: 65, y: 18 },
+  ],
+};
+const FORMATION_NAMES = Object.keys(FORMATIONS);
 
 function DreamXISlot({ slot, player, onClick, size = 1 }) {
   return (
@@ -1443,14 +1472,17 @@ function DreamXISlot({ slot, player, onClick, size = 1 }) {
   );
 }
 
-function DreamXIPitch({ slots, forwardedRef, size = 1, title }) {
+function DreamXIPitch({ slots, formationSlots, formationName, forwardedRef, size = 1, title }) {
   return (
     <div ref={forwardedRef} style={{
       width: 600 * size, background: "#0E1A15", padding: 24 * size, boxSizing: "border-box",
       border: `${2 * size}px solid #E3A857`,
     }}>
-      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 16 * size, letterSpacing: 3, color: "#E3A857", textTransform: "uppercase", textAlign: "center", marginBottom: 12 * size }}>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 16 * size, letterSpacing: 3, color: "#E3A857", textTransform: "uppercase", textAlign: "center", marginBottom: 4 * size }}>
         ⚽ {title || "My Dream XI"}
+      </div>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 * size, color: "#6B8570", textAlign: "center", marginBottom: 8 * size }}>
+        {formationName}
       </div>
       <div style={{ position: "relative", width: "100%", height: 620 * size, background: "linear-gradient(180deg, #16281F 0%, #12211A 100%)", border: `${1 * size}px solid #2C4A3B` }}>
         {/* Pitch markings */}
@@ -1459,7 +1491,7 @@ function DreamXIPitch({ slots, forwardedRef, size = 1, title }) {
         <div style={{ position: "absolute", left: "50%", top: "50%", width: 90 * size, height: 90 * size, borderRadius: "50%", border: `${1 * size}px solid #2C4A3B`, transform: "translate(-50%, -50%)" }} />
         <div style={{ position: "absolute", left: "25%", right: "25%", bottom: 0, height: "16%", border: `${1 * size}px solid #2C4A3B`, borderBottom: "none" }} />
         <div style={{ position: "absolute", left: "25%", right: "25%", top: 0, height: "16%", border: `${1 * size}px solid #2C4A3B`, borderTop: "none" }} />
-        {FORMATION_SLOTS.map(slot => (
+        {formationSlots.map(slot => (
           <DreamXISlot key={slot.id} slot={slot} player={slots[slot.id]} size={size}
             onClick={() => {}} />
         ))}
@@ -1472,10 +1504,14 @@ function DreamXIPitch({ slots, forwardedRef, size = 1, title }) {
 }
 
 function DreamXIBuilder({ onClose }) {
-  const DREAM_XI_KEY = "scoutindex_dream_xi_v1";
-  const [slots, setSlots] = useState(() => {
+  const DREAM_XI_KEY = "scoutindex_dream_xi_v2"; // v2: now keyed per-formation
+  const [formation, setFormation] = useState("4-3-3");
+  const [allSlots, setAllSlots] = useState(() => {
     try { return JSON.parse(localStorage.getItem(DREAM_XI_KEY) || "{}"); } catch (e) { return {}; }
   });
+  const slots = allSlots[formation] || {};
+  const formationSlots = FORMATIONS[formation];
+
   const [pickingSlot, setPickingSlot] = useState(null);
   const [searchText, setSearchText] = useState("");
   const [searchResults, setSearchResults] = useState([]);
@@ -1483,8 +1519,8 @@ function DreamXIBuilder({ onClose }) {
   const pitchRef = useRef(null);
 
   useEffect(() => {
-    try { localStorage.setItem(DREAM_XI_KEY, JSON.stringify(slots)); } catch (e) { /* skip if unavailable */ }
-  }, [slots]);
+    try { localStorage.setItem(DREAM_XI_KEY, JSON.stringify(allSlots)); } catch (e) { /* skip if unavailable */ }
+  }, [allSlots]);
 
   useEffect(() => {
     if (!API_BASE_URL || searchText.trim().length < 2) { setSearchResults([]); return; }
@@ -1498,13 +1534,17 @@ function DreamXIBuilder({ onClose }) {
     return () => clearTimeout(timer);
   }, [searchText]);
 
+  const setSlotsForFormation = (updater) => {
+    setAllSlots(prev => ({ ...prev, [formation]: updater(prev[formation] || {}) }));
+  };
+
   const assignPlayer = (row) => {
     const alreadyIn = Object.entries(slots).find(([slotId, p]) => p?.id === row.id && slotId !== pickingSlot);
     if (alreadyIn) {
-      alert(`${row.full_name} is already in your XI (${FORMATION_SLOTS.find(s => s.id === alreadyIn[0])?.label}). Remove them from there first if you want to move them.`);
+      alert(`${row.full_name} is already in your XI (${formationSlots.find(s => s.id === alreadyIn[0])?.label}). Remove them from there first if you want to move them.`);
       return;
     }
-    setSlots(prev => ({
+    setSlotsForFormation(prev => ({
       ...prev,
       [pickingSlot]: { id: row.id, name: row.full_name, photoUrl: row.photo_url, potential: row.potential_index != null ? Math.round(row.potential_index) : null },
     }));
@@ -1513,7 +1553,7 @@ function DreamXIBuilder({ onClose }) {
     setSearchResults([]);
   };
 
-  const clearAll = () => { if (confirm("Clear your whole Dream XI?")) setSlots({}); };
+  const clearAll = () => { if (confirm(`Clear your ${formation} Dream XI?`)) setSlotsForFormation(() => ({})); };
 
   const downloadImage = () => {
     if (!pitchRef.current || typeof html2canvas === "undefined") {
@@ -1524,7 +1564,7 @@ function DreamXIBuilder({ onClose }) {
     html2canvas(pitchRef.current, { backgroundColor: "#0E1A15", scale: 2, useCORS: true })
       .then(canvas => {
         const link = document.createElement("a");
-        link.download = "my_dream_xi.png";
+        link.download = `my_dream_xi_${formation}.png`;
         link.href = canvas.toDataURL("image/png");
         link.click();
       })
@@ -1542,21 +1582,30 @@ function DreamXIBuilder({ onClose }) {
           <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
         </div>
 
+        <div className="flex justify-center gap-2 mb-4">
+          {FORMATION_NAMES.map(f => (
+            <button key={f} onClick={() => setFormation(f)}
+              className={`text-xs px-3 py-1.5 border ${formation === f ? "border-[#E3A857] text-[#E3A857] bg-[#152922]" : "border-[#2C4A3B] text-[#9AAA9E] hover:border-[#6B8570]"}`}>
+              {f}
+            </button>
+          ))}
+        </div>
+
         <div style={{ maxWidth: 300, margin: "0 auto", overflowX: "auto" }}>
-          <DreamXIPitch slots={slots} size={300 / 600} />
+          <DreamXIPitch slots={slots} formationSlots={formationSlots} formationName={formation} size={300 / 600} />
         </div>
         {/* Hidden full-size version, exclusively for export capture */}
         <div style={{ position: "fixed", top: 0, left: -99999 }}>
-          <DreamXIPitch slots={slots} forwardedRef={pitchRef} size={1} />
+          <DreamXIPitch slots={slots} formationSlots={formationSlots} formationName={formation} forwardedRef={pitchRef} size={1} />
         </div>
 
         <div className="mt-4 text-center text-xs text-[#6B8570]">
-          Tap any position above to add a player · {filledCount}/11 filled
+          Tap any position above to add a player · {filledCount}/{formationSlots.length} filled
         </div>
 
         {/* Simple slot picker list, since the pitch above is display-only here */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-4">
-          {FORMATION_SLOTS.map(slot => (
+          {formationSlots.map(slot => (
             <button key={slot.id} onClick={() => setPickingSlot(slot.id)}
               className={`text-xs px-3 py-2 border text-left truncate ${slots[slot.id] ? "border-[#E3A857] text-[#EDEDE3]" : "border-[#2C4A3B] text-[#6B8570]"}`}>
               {slot.label}: {slots[slot.id]?.name || "Empty"}
@@ -1578,7 +1627,7 @@ function DreamXIBuilder({ onClose }) {
           <div className="fixed inset-0 bg-black/70 flex items-start justify-center pt-20 p-4 z-[70]" onClick={() => setPickingSlot(null)}>
             <div className="bg-[#152922] border border-[#E3A857] max-w-md w-full p-4" onClick={e => e.stopPropagation()}>
               <div className="text-xs uppercase tracking-wide text-[#E3A857] mb-3">
-                Pick a player for {FORMATION_SLOTS.find(s => s.id === pickingSlot)?.label}
+                Pick a player for {formationSlots.find(s => s.id === pickingSlot)?.label}
               </div>
               {slots[pickingSlot] && (
                 <button onClick={() => { setSlots(prev => ({ ...prev, [pickingSlot]: null })); setPickingSlot(null); }}
@@ -1609,6 +1658,202 @@ function DreamXIBuilder({ onClose }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function ClubCompareModal({ allLeagueOptions, onClose }) {
+  const [league1, setLeague1] = useState("");
+  const [club1, setClub1] = useState("");
+  const [league2, setLeague2] = useState("");
+  const [club2, setClub2] = useState("");
+  const [clubs1, setClubs1] = useState([]);
+  const [clubs2, setClubs2] = useState([]);
+  const [squad1, setSquad1] = useState(null);
+  const [squad2, setSquad2] = useState(null);
+
+  const fetchClubsForLeague = (leagueName, setClubsFn) => {
+    if (!API_BASE_URL || !leagueName) { setClubsFn([]); return; }
+    const params = new URLSearchParams({ league: leagueName, limit: "3000" });
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setClubsFn(Array.from(new Set(rows.map(r => r.club).filter(Boolean))).sort()))
+      .catch(() => setClubsFn([]));
+  };
+
+  useEffect(() => { fetchClubsForLeague(league1, setClubs1); setClub1(""); setSquad1(null); }, [league1]);
+  useEffect(() => { fetchClubsForLeague(league2, setClubs2); setClub2(""); setSquad2(null); }, [league2]);
+
+  const fetchSquad = (leagueName, clubName, setSquadFn) => {
+    if (!API_BASE_URL || !leagueName || !clubName) return;
+    const params = new URLSearchParams({ league: leagueName, limit: "3000" });
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setSquadFn(rows.filter(r => r.club === clubName)))
+      .catch(() => setSquadFn([]));
+  };
+
+  useEffect(() => { if (club1) fetchSquad(league1, club1, setSquad1); }, [club1]);
+  useEffect(() => { if (club2) fetchSquad(league2, club2, setSquad2); }, [club2]);
+
+  const summarize = (squad) => {
+    if (!squad) return null;
+    const scored = squad.filter(p => p.potential_index != null);
+    const avgPotential = scored.length ? Math.round(scored.reduce((s, p) => s + p.potential_index, 0) / scored.length) : null;
+    const ages = squad.filter(p => p.date_of_birth).map(p => {
+      const diff = Date.now() - new Date(p.date_of_birth).getTime();
+      return Math.floor(diff / 3.15576e10);
+    });
+    const avgAge = ages.length ? (ages.reduce((s, a) => s + a, 0) / ages.length).toFixed(1) : null;
+    const POSITION_ORDER = ["Goalkeeper", "Defender", "Midfielder", "Attacker"];
+    const byPosition = Object.fromEntries(POSITION_ORDER.map(pos => [pos, squad.filter(p => p.primary_position === pos).length]));
+    return { size: squad.length, avgPotential, avgAge, byPosition };
+  };
+
+  const s1 = summarize(squad1);
+  const s2 = summarize(squad2);
+  const POSITION_ORDER = ["Goalkeeper", "Defender", "Midfielder", "Attacker"];
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-3xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">⚖ Compare Clubs</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <select value={league1} onChange={e => setLeague1(e.target.value)}
+              className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none text-[#EDEDE3] mb-2">
+              <option value="">Select league...</option>
+              {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+            </select>
+            <select value={club1} onChange={e => setClub1(e.target.value)} disabled={!league1}
+              className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none text-[#EDEDE3] disabled:opacity-50">
+              <option value="">Select club...</option>
+              {clubs1.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div>
+            <select value={league2} onChange={e => setLeague2(e.target.value)}
+              className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none text-[#EDEDE3] mb-2">
+              <option value="">Select league...</option>
+              {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+            </select>
+            <select value={club2} onChange={e => setClub2(e.target.value)} disabled={!league2}
+              className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none text-[#EDEDE3] disabled:opacity-50">
+              <option value="">Select club...</option>
+              {clubs2.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {s1 && s2 && (
+          <div className="mt-6">
+            <div className="grid grid-cols-2 gap-6 text-center mb-4">
+              <div className="text-lg text-[#E3A857] font-display truncate">{club1}</div>
+              <div className="text-lg text-[#7FB3D5] font-display truncate">{club2}</div>
+            </div>
+            {[
+              ["Squad Size", s1.size, s2.size],
+              ["Avg Age", s1.avgAge ?? "—", s2.avgAge ?? "—"],
+              ["Avg Potential", s1.avgPotential ?? "—", s2.avgPotential ?? "—"],
+            ].map(([label, v1, v2]) => (
+              <div key={label} className="grid grid-cols-2 gap-6 border-b border-[#2C4A3B] py-2.5 items-center">
+                <div className="text-2xl font-plexmono text-[#E3A857] text-center">{v1}</div>
+                <div className="text-2xl font-plexmono text-[#7FB3D5] text-center">{v2}</div>
+                <div className="col-span-2 text-[10px] uppercase tracking-wide text-[#6B8570] text-center -mt-2">{label}</div>
+              </div>
+            ))}
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] text-center mt-5 mb-2">Squad Depth by Position</div>
+            {POSITION_ORDER.map(pos => (
+              <div key={pos} className="grid grid-cols-2 gap-6 border-b border-[#2C4A3B] py-2 items-center">
+                <div className="text-lg font-plexmono text-[#E3A857] text-center">{s1.byPosition[pos]}</div>
+                <div className="text-lg font-plexmono text-[#7FB3D5] text-center">{s2.byPosition[pos]}</div>
+                <div className="col-span-2 text-xs text-[#6B8570] text-center -mt-1">{pos}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {(club1 && club2 && (!s1 || !s2)) && <div className="text-sm text-[#6B8570] mt-6 text-center">Loading squads…</div>}
+      </div>
+    </div>
+  );
+}
+
+function BriefingView({ movers, topProspects, onSelectPlayer }) {
+  const [transfers, setTransfers] = useState(null);
+  const [shortlistHighlights, setShortlistHighlights] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/transfers?limit=5`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setTransfers(rows))
+      .catch(() => setTransfers([]));
+    const params = new URLSearchParams({ shortlist_only: "true", limit: "5", sort: "potential" });
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setShortlistHighlights(rows))
+      .catch(() => setShortlistHighlights([]));
+  }, []);
+
+  const Section = ({ title, children }) => (
+    <div className="mb-8">
+      <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-3">{title}</div>
+      {children}
+    </div>
+  );
+
+  const PlayerRow = ({ name, club, league, potential, photoUrl, onClick, rightExtra }) => (
+    <button onClick={onClick} className="w-full flex items-center justify-between text-sm py-2 px-2 -mx-2 hover:bg-[#152922] text-left border-b border-[#1C2E26]">
+      <span className="flex items-center gap-2 text-[#EDEDE3] truncate">
+        <Avatar name={name} photoUrl={photoUrl} size={28} />
+        <span className="truncate">{name}</span>
+        <span className="text-[#6B8570] text-xs shrink-0 truncate">· {club}{league ? ` · ${league}` : ""}</span>
+      </span>
+      {rightExtra ?? <span className="font-plexmono shrink-0 pl-2" style={{ color: potentialColor(potential) }}>{potential ?? "—"}</span>}
+    </button>
+  );
+
+  return (
+    <div className="px-6 md:px-10 py-8 grid grid-cols-1 md:grid-cols-2 gap-x-10">
+      <Section title="🏆 Top Prospects Right Now">
+        {topProspects.slice(0, 5).map(p => (
+          <PlayerRow key={p.id} name={p.name} club={p.club} league={p.league} potential={p.potential} photoUrl={p.photoUrl}
+            onClick={() => onSelectPlayer({ league_display: p.league, club: p.club, id: p.id.replace("live-", "") })} />
+        ))}
+      </Section>
+
+      <Section title="⭐ Your Shortlist Highlights">
+        {shortlistHighlights === null && <div className="text-xs text-[#6B8570]">Loading…</div>}
+        {shortlistHighlights?.length === 0 && <div className="text-xs text-[#6B8570]">Nothing shortlisted yet.</div>}
+        {shortlistHighlights?.map(row => (
+          <PlayerRow key={row.id} name={row.full_name} club={row.club} league={row.league_display}
+            potential={row.potential_index != null ? Math.round(row.potential_index) : null} photoUrl={row.photo_url}
+            onClick={() => onSelectPlayer({ league_display: row.league_display, club: row.club, id: row.id })} />
+        ))}
+      </Section>
+
+      <Section title="📈 Biggest Risers Since Last Visit">
+        {(!movers || movers.risers.length === 0) && <div className="text-xs text-[#6B8570]">No movement detected yet — check back after your next visit.</div>}
+        {movers?.risers.map(r => (
+          <PlayerRow key={r.id} name={r.name} club={r.club} potential={r.potential} photoUrl={null}
+            onClick={() => onSelectPlayer({ league_display: r.league, club: r.club, id: r.id })}
+            rightExtra={<span className="font-plexmono text-[#7FD99A] shrink-0">{r.from} → {r.potential}</span>} />
+        ))}
+      </Section>
+
+      <Section title="🔄 Recent Transfers">
+        {transfers === null && <div className="text-xs text-[#6B8570]">Loading…</div>}
+        {transfers?.length === 0 && <div className="text-xs text-[#6B8570]">No transfers detected yet.</div>}
+        {transfers?.map(t => (
+          <PlayerRow key={`${t.player_id}-${t.changed_at}`} name={t.full_name} club={t.new_club} league={null} photoUrl={null}
+            onClick={() => onSelectPlayer({ league_display: t.league, club: t.new_club, id: String(t.player_id) })}
+            rightExtra={<span className="text-xs text-[#9AAA9E] font-plexmono">{t.old_club} → <span className="text-[#E3A857]">{t.new_club}</span></span>} />
+        ))}
+      </Section>
     </div>
   );
 }
@@ -1649,6 +1894,7 @@ function ScoutDashboard() {
   const [clubProfileOpen, setClubProfileOpen] = useState(false);
   const [transfersOpen, setTransfersOpen] = useState(false);
   const [dreamXIOpen, setDreamXIOpen] = useState(false);
+  const [clubCompareOpen, setClubCompareOpen] = useState(false);
   const [deepLinkPlayerId, setDeepLinkPlayerId] = useState(() => new URLSearchParams(window.location.search).get("player"));
   const [livePlayers, setLivePlayers] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState(API_BASE_URL ? "connecting" : "offline");
@@ -1730,6 +1976,41 @@ function ScoutDashboard() {
       return next;
     });
   };
+
+  const [savedViews, setSavedViews] = useState([]);
+  const SAVED_VIEWS_KEY = "scoutindex_saved_views_v1";
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SAVED_VIEWS_KEY) || "[]");
+      if (Array.isArray(saved)) setSavedViews(saved);
+    } catch (e) { /* corrupted or unavailable storage — start empty */ }
+  }, []);
+
+  const persistSavedViews = (next) => {
+    setSavedViews(next);
+    try { localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(next)); } catch (e) { /* skip if unavailable */ }
+  };
+
+  const saveCurrentView = () => {
+    const name = prompt("Name this view (e.g. \"Championship U21 Defenders\"):");
+    if (!name || !name.trim()) return;
+    const newView = {
+      id: `${Date.now()}`, name: name.trim(), league, club, position,
+      sortBy, hideUnscored, hideNoMinutes,
+    };
+    persistSavedViews([...savedViews, newView]);
+  };
+
+  const applySavedView = (v) => {
+    setLeague(v.league); setClub(v.club); setPosition(v.position);
+    setSortBy(v.sortBy); setHideUnscored(v.hideUnscored); setHideNoMinutes(v.hideNoMinutes);
+  };
+
+  const deleteSavedView = (id) => {
+    persistSavedViews(savedViews.filter(v => v.id !== id));
+  };
+
   const [moversDismissed, setMoversDismissed] = useState(false);
 
   const SNAPSHOT_KEY = "scoutindex_snapshot_v1";
@@ -1957,6 +2238,7 @@ function ScoutDashboard() {
               <>
                 <button onClick={() => setTransfersOpen(true)} className="hover:text-[#E3A857]">🔄 Transfers</button>
                 <button onClick={() => setDreamXIOpen(true)} className="hover:text-[#E3A857]">⚽ Dream XI</button>
+                <button onClick={() => setClubCompareOpen(true)} className="hover:text-[#E3A857]">⚖ Compare Clubs</button>
               </>
             )}
             {connectionStatus === "live" && dataStatus?.last_updated && (
@@ -2106,7 +2388,17 @@ function ScoutDashboard() {
             ⬇ Export CSV
           </button>
         )}
+        {connectionStatus === "live" && (league !== "All leagues" || position !== "All positions") && (
+          <button onClick={saveCurrentView}
+            className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] px-2">
+            💾 Save View
+          </button>
+        )}
         <div className="flex border border-[#2C4A3B] w-full md:w-auto md:ml-auto">
+          <button onClick={() => setView("briefing")}
+            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide ${view === "briefing" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+            🏠 Briefing
+          </button>
           <button onClick={() => setView("cards")}
             className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide ${view === "cards" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
             Cards
@@ -2139,6 +2431,23 @@ function ScoutDashboard() {
               className={`text-xs px-3 py-1.5 border ${league === f.league && club === f.club ? "border-[#E3A857] text-[#E3A857] bg-[#0E1A15]" : "border-[#2C4A3B] text-[#9AAA9E] hover:border-[#6B8570]"}`}>
               {f.club}
             </button>
+          ))}
+        </div>
+      )}
+
+      {savedViews.length > 0 && (
+        <div className="px-6 md:px-10 py-3 flex flex-wrap gap-2 items-center border-b border-[#2C4A3B] bg-[#152922]">
+          <span className="text-[10px] uppercase tracking-wide text-[#6B8570] mr-1">💾 Saved Views:</span>
+          {savedViews.map(v => (
+            <div key={v.id} className="flex items-center border border-[#2C4A3B] hover:border-[#6B8570]">
+              <button onClick={() => applySavedView(v)} className="text-xs px-3 py-1.5 text-[#9AAA9E] hover:text-[#E3A857]">
+                {v.name}
+              </button>
+              <button onClick={() => deleteSavedView(v.id)} aria-label={`Delete saved view ${v.name}`}
+                className="text-xs px-2 py-1.5 text-[#6B8570] hover:text-[#E36B57] border-l border-[#2C4A3B]">
+                ×
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -2185,6 +2494,20 @@ function ScoutDashboard() {
       {searchResults === null && view === "shortlist" && connectionStatus !== "live" && (
         <div className="px-6 md:px-10 py-8 text-sm text-[#6B8570]">
           Shortlist needs a live connection to the API — currently showing seed data.
+        </div>
+      )}
+
+      {searchResults === null && view === "briefing" && connectionStatus === "live" && (
+        <BriefingView movers={movers} topProspects={dataSource.slice(0, 5)}
+          onSelectPlayer={(row) => {
+            if (row.league_display) setLeague(row.league_display);
+            if (row.club) setClub(row.club);
+            setDeepLinkPlayerId(String(row.id));
+          }} />
+      )}
+      {searchResults === null && view === "briefing" && connectionStatus !== "live" && (
+        <div className="px-6 md:px-10 py-8 text-sm text-[#6B8570]">
+          Briefing needs a live connection to the API — currently showing seed data.
         </div>
       )}
 
@@ -2293,6 +2616,7 @@ function ScoutDashboard() {
         />
       )}
       {dreamXIOpen && <DreamXIBuilder onClose={() => setDreamXIOpen(false)} />}
+      {clubCompareOpen && <ClubCompareModal allLeagueOptions={allLeagueOptions} onClose={() => setClubCompareOpen(false)} />}
       <CompareBar selected={compareList} onClear={() => setCompareList([])} onCompare={() => setComparing(true)} />
       {comparing && compareList.length >= 2 && (
         <ComparePanel players={compareList} onClose={() => setComparing(false)} />
