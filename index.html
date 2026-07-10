@@ -13,6 +13,7 @@
 <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
   body { background:#0E1A15; margin:0; font-family: 'Inter', sans-serif; }
   .font-display { font-family: 'Archivo Black', sans-serif; }
@@ -35,7 +36,7 @@
 <div id="root"></div>
 
 <script type="text/babel" data-presets="react">
-const { useState, useMemo, useEffect } = React;
+const { useState, useMemo, useEffect, useRef } = React;
 
 // Point this at your deployed api.py once it's live, e.g.
 // "https://your-scouting-api.onrender.com". Leave blank to run on
@@ -553,16 +554,107 @@ function Sparkline({ points, width = 200, height = 50 }) {
   );
 }
 
+// A fixed-size (1080x1350, portrait — reads well on Twitter/Instagram
+// feeds), branded card designed specifically to be exported as an image,
+// not for on-screen browsing. Kept visually simple (solid colors, no
+// gradients/blur) since html2canvas renders most reliably that way.
+function ShareCard({ p, forwardedRef }) {
+  const metricKeys = POSITION_METRIC_SETS[p.position] || DEFAULT_METRIC_SET;
+  return (
+    <div ref={forwardedRef} style={{
+      width: 1080, height: 1350, background: "#0E1A15", color: "#EDEDE3",
+      fontFamily: "'Inter', sans-serif", padding: 64, boxSizing: "border-box",
+      display: "flex", flexDirection: "column", alignItems: "center",
+      border: "2px solid #E3A857",
+    }}>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, letterSpacing: 4, color: "#E3A857", textTransform: "uppercase" }}>
+        ⚽ Cross-League Scouting Index
+      </div>
+
+      <div style={{
+        width: 220, height: 220, borderRadius: "50%", overflow: "hidden", marginTop: 48,
+        border: "3px solid #E3A857", display: "flex", alignItems: "center", justifyContent: "center",
+        background: "#152922",
+      }}>
+        {p.photoUrl ? (
+          <img src={p.photoUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        ) : (
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 64, color: "#6B8570" }}>
+            {(p.name || "?").split(" ").map(w => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()}
+          </span>
+        )}
+      </div>
+
+      <div style={{ fontFamily: "'Archivo Black', sans-serif", fontSize: 56, marginTop: 32, textAlign: "center", lineHeight: 1.1 }}>
+        {p.name}
+      </div>
+      <div style={{ fontSize: 26, color: "#9AAA9E", marginTop: 12 }}>
+        {p.club} · {p.league} · Age {p.age ?? "—"} · {p.posLabel}
+      </div>
+
+      <div style={{ marginTop: 44, textAlign: "center" }}>
+        <div style={{ fontFamily: "'Archivo Black', sans-serif", fontSize: 120, lineHeight: 1, color: potentialColor(p.potential) }}>
+          {p.potential ?? "—"}
+        </div>
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 22, letterSpacing: 3, color: "#6B8570", textTransform: "uppercase", marginTop: 4 }}>
+          Potential Index
+        </div>
+      </div>
+
+      <div style={{ width: 480, height: 340, marginTop: 32 }}>
+        <RadarChart metrics={p.radarMetrics || p.metrics} />
+      </div>
+
+      <div style={{ display: "flex", gap: 24, marginTop: 24, width: "100%", justifyContent: "center" }}>
+        {metricKeys.slice(0, 4).map(k => (
+          <div key={k} style={{ textAlign: "center", flex: 1, maxWidth: 200 }}>
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 34, color: "#E3A857" }}>
+              {metricLabel(p.metrics[k])}
+            </div>
+            <div style={{ fontSize: 16, color: "#6B8570", textTransform: "uppercase", letterSpacing: 1, marginTop: 4 }}>
+              {k}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginTop: "auto", fontFamily: "'IBM Plex Mono', monospace", fontSize: 16, color: "#4A5C52", letterSpacing: 1 }}>
+        Real ingested match data · not a projection
+      </div>
+    </div>
+  );
+}
+
 function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   const [tab, setTab] = useState("overview");
   const [details, setDetails] = useState(null); // full dossier: real notes + trend history
   const [noteText, setNoteText] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [shareCardOpen, setShareCardOpen] = useState(false);
+  const [exportingImage, setExportingImage] = useState(false);
+  const shareCardRef = useRef(null);
   const [similarPlayers, setSimilarPlayers] = useState(null);
   const [similarLoading, setSimilarLoading] = useState(false);
   const shortlisted = p.watchLevel === "shortlist";
   const realId = String(p.id).replace("live-", "");
+
+  const downloadShareCard = () => {
+    if (!shareCardRef.current || typeof html2canvas === "undefined") {
+      alert("Image export isn't available right now — check your connection and try again.");
+      return;
+    }
+    setExportingImage(true);
+    html2canvas(shareCardRef.current, { backgroundColor: "#0E1A15", scale: 2 })
+      .then(canvas => {
+        const link = document.createElement("a");
+        link.download = `${p.name.replace(/\s+/g, "_")}_scouting_card.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      })
+      .catch(() => alert("Image export failed — please try again."))
+      .finally(() => setExportingImage(false));
+  };
 
   useEffect(() => {
     if (!API_BASE_URL || !String(p.id).startsWith("live-")) return;
@@ -652,6 +744,9 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
         <div className="flex items-center justify-between no-print">
           <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">Scouting Dossier</div>
           <div className="flex items-center gap-3 mr-8">
+            <button onClick={() => setShareCardOpen(true)} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
+              📸 Share Card
+            </button>
             <button onClick={() => window.print()} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
               🖨 Print
             </button>
@@ -845,6 +940,30 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
           </div>
         )}
       </div>
+
+      {shareCardOpen && (
+        <div className="fixed inset-0 bg-black/85 flex flex-col items-center justify-center p-4 z-[60]" onClick={() => setShareCardOpen(false)}>
+          <div onClick={e => e.stopPropagation()} className="flex flex-col items-center">
+            <div style={{ width: 360, height: 450, overflow: "hidden", position: "relative" }}>
+              <div style={{ transform: "scale(0.3333)", transformOrigin: "top left" }}>
+                <ShareCard p={p} forwardedRef={shareCardRef} />
+              </div>
+            </div>
+            <div className="flex items-center gap-3 mt-5">
+              <button onClick={() => setShareCardOpen(false)} className="text-xs uppercase tracking-wide text-[#9AAA9E] hover:text-[#EDEDE3] px-4 py-2">
+                Cancel
+              </button>
+              <button onClick={downloadShareCard} disabled={exportingImage}
+                className="text-xs uppercase tracking-wide px-5 py-2 bg-[#E3A857] text-[#0E1A15] font-bold disabled:opacity-50">
+                {exportingImage ? "Exporting…" : "⬇ Download Image"}
+              </button>
+            </div>
+            <div className="text-[10px] text-[#6B8570] mt-3 max-w-xs text-center">
+              Downloads a high-resolution PNG, ready to share.
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
