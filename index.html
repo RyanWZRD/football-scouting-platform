@@ -3042,6 +3042,10 @@ function ScoutDashboard() {
                 <button onClick={() => setStandingsOpen(true)} className="hover:text-[#E3A857]">🏆 Standings</button>
                 <button onClick={() => setLiveScoresOpen(true)} className="hover:text-[#E3A857]">🔴 Live</button>
                 <button onClick={() => setTeamOfSeasonOpen(true)} className="hover:text-[#E3A857]">🌟 Team of Season</button>
+                <a href="https://talksport.com" target="_blank" rel="noopener noreferrer"
+                  className="hover:text-[#E3A857] flex items-center gap-1">
+                  🎙️ Listen Live
+                </a>
               </>
             )}
             {connectionStatus === "live" && dataStatus?.last_updated && (
