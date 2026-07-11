@@ -23,6 +23,7 @@ import time
 import argparse
 import requests
 import psycopg2
+from psycopg2.extras import execute_values
 
 API_BASE = "https://v3.football.api-sports.io"
 API_KEY = os.environ.get("FOOTBALL_API_KEY")
@@ -156,7 +157,13 @@ def upsert_players_for_club(conn, club_external_id, season, db_club_id, max_page
     """Team-scoped player pull — naturally bounded to that club's actual
     current squad (typically 1-2 pages of 20), so max_pages=5 (~100
     players) is a generous ceiling that should never realistically bind,
-    unlike the old league-wide pull."""
+    unlike the old league-wide pull.
+
+    Writes are batched per page (one round-trip for ~20 players, not 20
+    individual round-trips) — this was the real cause of runs taking
+    2+ hours on GitHub Actions vs ~20 minutes locally: many small
+    sequential writes compound badly under higher network latency to
+    the database, regardless of how fast any single write actually is."""
     page = 1
     total_players = 0
     while True:
@@ -167,26 +174,31 @@ def upsert_players_for_club(conn, club_external_id, season, db_club_id, max_page
             break
         if not data:
             break
+
+        rows = []
         for entry in data:
             p = entry["player"]
             stats = entry["statistics"][0] if entry["statistics"] else {}
+            rows.append((
+                str(p["id"]), fix_mojibake(p["name"]), p.get("birth", {}).get("date"),
+                stats.get("games", {}).get("position"), db_club_id, p.get("photo"),
+            ))
+
+        if rows:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
+                execute_values(cur, """
                     INSERT INTO players
                         (external_id, full_name, date_of_birth, primary_position, current_club_id, photo_url)
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    VALUES %s
                     ON CONFLICT (external_id) DO UPDATE SET
                         full_name = EXCLUDED.full_name,
                         current_club_id = EXCLUDED.current_club_id,
                         photo_url = EXCLUDED.photo_url,
                         updated_at = now()
-                    """,
-                    (str(p["id"]), fix_mojibake(p["name"]), p.get("birth", {}).get("date"),
-                     stats.get("games", {}).get("position"), db_club_id, p.get("photo")),
-                )
+                """, rows)
             conn.commit()
-            total_players += 1
+            total_players += len(rows)
+
         if page >= data.__len__() and len(data) < 20:
             break
         page += 1
