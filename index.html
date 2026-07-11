@@ -1095,6 +1095,7 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
   const topRated = withRating[0];
 
   const [record, setRecord] = useState(null);
+  const [homeAway, setHomeAway] = useState(null);
   useEffect(() => {
     if (!API_BASE_URL) return;
     const params = new URLSearchParams({ club: clubName, league: leagueName });
@@ -1102,6 +1103,10 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
       .then(res => res.ok ? res.json() : null)
       .then(data => setRecord(data))
       .catch(() => setRecord(null));
+    fetch(`${API_BASE_URL}/clubs/home-away?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setHomeAway(data))
+      .catch(() => setHomeAway(null));
   }, [clubName, leagueName]);
 
   return (
@@ -1134,6 +1139,24 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
                   <span className="text-[#EDEDE3]">{topRated.name} ({topRated.metrics["Rating"].raw.toFixed(1)})</span>
                 </button>
               )}
+            </div>
+          </div>
+        )}
+
+        {homeAway && homeAway.home?.played > 0 && (
+          <div className="mt-3 border border-[#2C4A3B] p-4">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Home vs Away</div>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <div className="text-[#6B8570] text-xs mb-1">Home</div>
+                <span className="font-plexmono text-[#EDEDE3]">{homeAway.home.won}W {homeAway.home.drawn}D {homeAway.home.lost}L</span>
+                <span className="text-[#6B8570] text-xs ml-2">({homeAway.home.gf}-{homeAway.home.ga})</span>
+              </div>
+              <div>
+                <div className="text-[#6B8570] text-xs mb-1">Away</div>
+                <span className="font-plexmono text-[#EDEDE3]">{homeAway.away.won}W {homeAway.away.drawn}D {homeAway.away.lost}L</span>
+                <span className="text-[#6B8570] text-xs ml-2">({homeAway.away.gf}-{homeAway.away.ga})</span>
+              </div>
             </div>
           </div>
         )}
@@ -1427,11 +1450,14 @@ function ExploreView({ onSelectPlayer }) {
       { key: "tacklers", title: "🛡 Most Tackles", sort: "tackles", statField: "tackles" },
       { key: "young", title: "🔮 Best U21 Prospects", sort: "potential", maxAge: 21, statField: "potential_index" },
       { key: "carded", title: "🟨 Most Cards", sort: "yellow_cards", statField: "yellow_cards" },
+      { key: "ironman", title: "🏃 Iron Man (Most Minutes)", sort: "minutes_played", statField: "minutes_played" },
+      { key: "hiddengems", title: "💎 Hidden Gems (Outside Top 5)", sort: "potential", excludeTop5: true, statField: "potential_index" },
     ];
     specs.forEach(spec => {
       const params = new URLSearchParams({ sort: spec.sort, limit: "8" });
       if (spec.position) params.set("position", spec.position);
       if (spec.maxAge) params.set("max_age", String(spec.maxAge));
+      if (spec.excludeTop5) params.set("exclude_top5", "true");
       fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
         .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
         .then(rows => setBoards(prev => ({ ...prev, [spec.key]: { ...spec, rows } })))
@@ -1456,7 +1482,7 @@ function ExploreView({ onSelectPlayer }) {
       .catch(() => setBoards(prev => ({ ...prev, debuts: { title: "🌟 Recent Debuts", statField: "debut", rows: [] } })));
   }, []);
 
-  const order = ["scorers", "assists", "keepers", "tacklers", "young", "improved", "carded", "cleansheets", "debuts"];
+  const order = ["scorers", "assists", "keepers", "tacklers", "young", "improved", "carded", "cleansheets", "debuts", "ironman", "hiddengems"];
 
   return (
     <div className="px-6 md:px-10 py-8 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-8">
@@ -2557,6 +2583,7 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
   const [transfers, setTransfers] = useState(null);
   const [shortlistHighlights, setShortlistHighlights] = useState(null);
   const [shortlistAlerts, setShortlistAlerts] = useState(null);
+  const [shortlistInjuries, setShortlistInjuries] = useState(null);
 
   useEffect(() => {
     if (!API_BASE_URL) return;
@@ -2573,6 +2600,14 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
       .then(res => res.ok ? res.json() : [])
       .then(rows => setShortlistAlerts(rows))
       .catch(() => setShortlistAlerts([]));
+    // Broader fetch (not limited to top 5) so an injured player isn't
+    // missed just because they rank outside the potential-sorted Highlights.
+    // Uses data /players already returns — no new backend endpoint needed.
+    const injuryParams = new URLSearchParams({ shortlist_only: "true", limit: "50", sort: "potential" });
+    fetch(`${API_BASE_URL}/players?${injuryParams.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setShortlistInjuries(rows.filter(r => r.injury_type)))
+      .catch(() => setShortlistInjuries([]));
   }, []);
 
   const Section = ({ title, children }) => (
@@ -2613,6 +2648,21 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
             } />
         ))}
       </Section>
+
+      {shortlistInjuries && shortlistInjuries.length > 0 && (
+        <Section title="🩹 Shortlist Injury Watch">
+          {shortlistInjuries.map(row => (
+            <PlayerRow key={row.id} name={row.full_name} club={row.club} league={null} photoUrl={row.photo_url}
+              onClick={() => onSelectPlayer({ league_display: row.league_display, club: row.club, id: row.id })}
+              rightExtra={
+                <span className="text-xs text-right shrink-0">
+                  <span className="text-[#E36B57]">{row.injury_type}</span>
+                  {row.reported_date && <><br /><span className="text-[#6B8570]">as of {new Date(row.reported_date).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</span></>}
+                </span>
+              } />
+          ))}
+        </Section>
+      )}
 
       <Section title="🏆 Top Prospects Right Now">
         {topProspects.slice(0, 5).map(p => (
