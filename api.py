@@ -266,24 +266,27 @@ def shortlist_alerts(limit: int = Query(10, le=30), authorized: bool = Depends(c
     conn = get_conn()
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT DISTINCT ON (p.id)
-                p.id, p.full_name, p.photo_url, cl.name AS club,
-                pms.rating, pms.goals, pms.assists, m.match_date,
-                CASE WHEN m.home_club_id = pms.club_id THEN away_cl.name ELSE home_cl.name END AS opponent
-            FROM players p
-            LEFT JOIN clubs cl ON cl.id = p.current_club_id
-            JOIN LATERAL (
-                SELECT watch_level FROM scout_notes sn
-                WHERE sn.player_id = p.id
-                ORDER BY created_at DESC LIMIT 1
-            ) latest_note ON true
-            JOIN player_match_stats pms ON pms.player_id = p.id
-            JOIN matches m ON m.id = pms.match_id
-            LEFT JOIN clubs home_cl ON home_cl.id = m.home_club_id
-            LEFT JOIN clubs away_cl ON away_cl.id = m.away_club_id
-            WHERE latest_note.watch_level = 'shortlist'
-              AND (pms.rating >= 7.5 OR pms.goals >= 1 OR pms.assists >= 1)
-            ORDER BY p.id, m.match_date DESC
+            SELECT * FROM (
+                SELECT DISTINCT ON (p.id)
+                    p.id, p.full_name, p.photo_url, cl.name AS club,
+                    pms.rating, pms.goals, pms.assists, m.match_date,
+                    CASE WHEN m.home_club_id = pms.club_id THEN away_cl.name ELSE home_cl.name END AS opponent
+                FROM players p
+                LEFT JOIN clubs cl ON cl.id = p.current_club_id
+                JOIN LATERAL (
+                    SELECT watch_level FROM scout_notes sn
+                    WHERE sn.player_id = p.id
+                    ORDER BY created_at DESC LIMIT 1
+                ) latest_note ON true
+                JOIN player_match_stats pms ON pms.player_id = p.id
+                JOIN matches m ON m.id = pms.match_id
+                LEFT JOIN clubs home_cl ON home_cl.id = m.home_club_id
+                LEFT JOIN clubs away_cl ON away_cl.id = m.away_club_id
+                WHERE latest_note.watch_level = 'shortlist'
+                  AND (pms.rating >= 7.5 OR pms.goals >= 1 OR pms.assists >= 1)
+                ORDER BY p.id, m.match_date DESC
+            ) per_player_latest
+            ORDER BY match_date DESC
             LIMIT %s
         """, (limit,))
         rows = cur.fetchall()
