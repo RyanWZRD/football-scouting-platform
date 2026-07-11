@@ -387,6 +387,44 @@ def debut_tracker(limit: int = Query(10, le=30), authorized: bool = Depends(chec
     return rows
 
 
+@app.get("/clubs/home-away")
+def home_away_split(club: str, league: str, authorized: bool = Depends(check_api_key)):
+    """A club's record split by home vs away — free, derived entirely from
+    existing match results."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        def split_record(is_home):
+            side = "home" if is_home else "away"
+            other = "away" if is_home else "home"
+            cur.execute(f"""
+                SELECT COUNT(*) AS played,
+                    SUM(CASE WHEN {side}_score > {other}_score THEN 1 ELSE 0 END) AS won,
+                    SUM(CASE WHEN {side}_score = {other}_score THEN 1 ELSE 0 END) AS drawn,
+                    SUM(CASE WHEN {side}_score < {other}_score THEN 1 ELSE 0 END) AS lost,
+                    SUM({side}_score) AS gf, SUM({other}_score) AS ga
+                FROM matches m
+                JOIN clubs c ON c.id = m.{side}_club_id
+                WHERE m.league_id = %s AND m.status = 'finished' AND c.name = %s
+            """, (league_id, club))
+            return cur.fetchone()
+
+        home_record = split_record(True)
+        away_record = split_record(False)
+    conn.close()
+    return {"home": home_record, "away": away_record}
+
+
 @app.get("/transfers")
 def recent_transfers(limit: int = Query(20, le=100), authorized: bool = Depends(check_api_key)):
     """Recent club changes, detected automatically by a database trigger
@@ -670,8 +708,9 @@ def list_players(
     shortlist_only: bool = False,
     sort: str = Query("potential", enum=[
         "potential", "age", "name", "goals", "assists", "tackles",
-        "interceptions", "saves", "yellow_cards", "duel_win_pct", "pass_accuracy_pct",
+        "interceptions", "saves", "yellow_cards", "minutes_played", "duel_win_pct", "pass_accuracy_pct",
     ]),
+    exclude_top5: bool = False,
     season: Optional[str] = None,
     limit: int = Query(50, le=5000),
     authorized: bool = Depends(check_api_key),
@@ -793,6 +832,8 @@ def list_players(
         params.append(f"%{search}%")
     if shortlist_only:
         filters.append("latest_note.watch_level = 'shortlist'")
+    if exclude_top5:
+        filters.append("l.is_top5 = false")
 
     if filters:
         base_query += " WHERE " + " AND ".join(filters)
@@ -807,6 +848,7 @@ def list_players(
         "interceptions": "stats.interceptions DESC NULLS LAST",
         "saves": "stats.saves DESC NULLS LAST",
         "yellow_cards": "stats.yellow_cards DESC NULLS LAST",
+        "minutes_played": "stats.minutes_played DESC NULLS LAST",
         "duel_win_pct": "duel_win_pct DESC NULLS LAST",
         "pass_accuracy_pct": "pass_accuracy_pct DESC NULLS LAST",
     }
