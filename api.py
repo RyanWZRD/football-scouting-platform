@@ -176,6 +176,121 @@ def live_scores(authorized: bool = Depends(check_api_key)):
     return {"matches": matches, "cached": False}
 
 
+@app.get("/clubs/record")
+def club_record(club: str, league: str, authorized: bool = Depends(check_api_key)):
+    """This club's W-D-L record this season, derived from existing match
+    results — same logic as /standings, scoped to one club."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        cur.execute("""
+            WITH club_matches AS (
+                SELECT home_club_id AS club_id, home_score AS gf, away_score AS ga,
+                    CASE WHEN home_score > away_score THEN 1 ELSE 0 END AS win,
+                    CASE WHEN home_score = away_score THEN 1 ELSE 0 END AS draw,
+                    CASE WHEN home_score < away_score THEN 1 ELSE 0 END AS loss
+                FROM matches m JOIN clubs c ON c.id = m.home_club_id
+                WHERE m.league_id = %s AND m.status = 'finished' AND c.name = %s
+                UNION ALL
+                SELECT away_club_id, away_score, home_score,
+                    CASE WHEN away_score > home_score THEN 1 ELSE 0 END,
+                    CASE WHEN away_score = home_score THEN 1 ELSE 0 END,
+                    CASE WHEN away_score < home_score THEN 1 ELSE 0 END
+                FROM matches m JOIN clubs c ON c.id = m.away_club_id
+                WHERE m.league_id = %s AND m.status = 'finished' AND c.name = %s
+            )
+            SELECT COUNT(*) AS played, SUM(win) AS won, SUM(draw) AS drawn, SUM(loss) AS lost,
+                   SUM(gf) AS gf, SUM(ga) AS ga
+            FROM club_matches
+        """, (league_id, club, league_id, club))
+        record = cur.fetchone()
+    conn.close()
+    return record
+
+
+@app.get("/players/most-improved")
+def most_improved(limit: int = Query(10, le=50), authorized: bool = Depends(check_api_key)):
+    """Players whose potential score has risen the most since trend
+    tracking began — genuinely unique, using accumulated history data
+    (needs 2+ tracked snapshots per player to show anything)."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH bounds AS (
+                SELECT player_id, MIN(computed_at) AS first_at, MAX(computed_at) AS last_at
+                FROM player_potential_history
+                GROUP BY player_id
+                HAVING COUNT(*) >= 2
+            ),
+            first_vals AS (
+                SELECT DISTINCT ON (h.player_id) h.player_id, h.potential_index AS first_val
+                FROM player_potential_history h JOIN bounds b ON b.player_id = h.player_id AND h.computed_at = b.first_at
+            ),
+            last_vals AS (
+                SELECT DISTINCT ON (h.player_id) h.player_id, h.potential_index AS last_val
+                FROM player_potential_history h JOIN bounds b ON b.player_id = h.player_id AND h.computed_at = b.last_at
+            )
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club,
+                   l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display,
+                   fv.first_val, lv.last_val, (lv.last_val - fv.first_val) AS delta
+            FROM first_vals fv
+            JOIN last_vals lv ON lv.player_id = fv.player_id
+            JOIN players p ON p.id = fv.player_id
+            LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            LEFT JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (lv.last_val - fv.first_val) > 0
+            ORDER BY delta DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/shortlist/alerts")
+def shortlist_alerts(limit: int = Query(10, le=30), authorized: bool = Depends(check_api_key)):
+    """Currently-shortlisted players who just had a standout match (high
+    rating, a goal, or an assist) — surfaces what actually deserves your
+    attention rather than making you check every player individually."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT DISTINCT ON (p.id)
+                p.id, p.full_name, p.photo_url, cl.name AS club,
+                pms.rating, pms.goals, pms.assists, m.match_date,
+                CASE WHEN m.home_club_id = pms.club_id THEN away_cl.name ELSE home_cl.name END AS opponent
+            FROM players p
+            LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT watch_level FROM scout_notes sn
+                WHERE sn.player_id = p.id
+                ORDER BY created_at DESC LIMIT 1
+            ) latest_note ON true
+            JOIN player_match_stats pms ON pms.player_id = p.id
+            JOIN matches m ON m.id = pms.match_id
+            LEFT JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            LEFT JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            WHERE latest_note.watch_level = 'shortlist'
+              AND (pms.rating >= 7.5 OR pms.goals >= 1 OR pms.assists >= 1)
+            ORDER BY p.id, m.match_date DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return sorted(rows, key=lambda r: r["match_date"], reverse=True)
+
+
 @app.get("/transfers")
 def recent_transfers(limit: int = Query(20, le=100), authorized: bool = Depends(check_api_key)):
     """Recent club changes, detected automatically by a database trigger
