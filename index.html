@@ -1153,10 +1153,18 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
           </div>
         </div>
 
-        {byPosition.map(group => (
+        {byPosition.map(group => {
+          const threshold = group.pos === "Goalkeeper" ? 2 : 4;
+          const isThin = group.list.length <= threshold && group.pos !== "Other / Unknown";
+          return (
           <div key={group.pos} className="mt-5">
-            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2 flex items-center gap-2">
               {group.pos} ({group.list.length})
+              {isThin && (
+                <span className="text-[#E36B57] normal-case tracking-normal" title="Thin squad depth in this position">
+                  ⚠ Thin depth
+                </span>
+              )}
             </div>
             <div className="space-y-1">
               {group.list.map(p => (
@@ -1173,7 +1181,8 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
               ))}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -1417,6 +1426,7 @@ function ExploreView({ onSelectPlayer }) {
       { key: "keepers", title: "🧤 Most Saves", sort: "saves", position: "Goalkeeper", statField: "saves" },
       { key: "tacklers", title: "🛡 Most Tackles", sort: "tackles", statField: "tackles" },
       { key: "young", title: "🔮 Best U21 Prospects", sort: "potential", maxAge: 21, statField: "potential_index" },
+      { key: "carded", title: "🟨 Most Cards", sort: "yellow_cards", statField: "yellow_cards" },
     ];
     specs.forEach(spec => {
       const params = new URLSearchParams({ sort: spec.sort, limit: "8" });
@@ -1434,9 +1444,19 @@ function ExploreView({ onSelectPlayer }) {
       .then(res => res.ok ? res.json() : [])
       .then(rows => setBoards(prev => ({ ...prev, improved: { title: "📈 Most Improved", statField: "delta", rows: rows.map(r => ({ ...r, id: r.id, full_name: r.full_name, photo_url: r.photo_url, club: r.club })) } })))
       .catch(() => setBoards(prev => ({ ...prev, improved: { title: "📈 Most Improved", statField: "delta", rows: [] } })));
+
+    fetch(`${API_BASE_URL}/players/clean-sheets?limit=8`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setBoards(prev => ({ ...prev, cleansheets: { title: "🧤 Clean Sheets", statField: "clean_sheets", rows } })))
+      .catch(() => setBoards(prev => ({ ...prev, cleansheets: { title: "🧤 Clean Sheets", statField: "clean_sheets", rows: [] } })));
+
+    fetch(`${API_BASE_URL}/players/debuts?limit=8`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setBoards(prev => ({ ...prev, debuts: { title: "🌟 Recent Debuts", statField: "debut", rows: rows.map(r => ({ ...r, full_name: r.full_name, club: r.club })) } })))
+      .catch(() => setBoards(prev => ({ ...prev, debuts: { title: "🌟 Recent Debuts", statField: "debut", rows: [] } })));
   }, []);
 
-  const order = ["scorers", "assists", "keepers", "tacklers", "young", "improved"];
+  const order = ["scorers", "assists", "keepers", "tacklers", "young", "improved", "carded", "cleansheets", "debuts"];
 
   return (
     <div className="px-6 md:px-10 py-8 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-8">
@@ -1463,12 +1483,14 @@ function ExploreView({ onSelectPlayer }) {
                     <span className="truncate">{row.full_name}</span>
                     <span className="text-[#6B8570] text-xs shrink-0">· {row.club}</span>
                   </span>
-                  <span className="font-plexmono text-[#E3A857] shrink-0 pl-2">
+                  <span className="font-plexmono text-[#E3A857] shrink-0 pl-2 text-xs">
                     {board.statField === "potential_index"
                       ? Math.round(row.potential_index ?? 0)
                       : board.statField === "delta"
                         ? `+${Math.round(row.delta)}`
-                        : (row[board.statField] ?? 0)}
+                        : board.statField === "debut"
+                          ? new Date(row.match_date).toLocaleDateString(undefined, { day: "numeric", month: "short" })
+                          : (row[board.statField] ?? 0)}
                   </span>
                 </button>
               ))}
@@ -1583,6 +1605,101 @@ function DreamXIPitch({ slots, formationSlots, formationName, forwardedRef, size
       </div>
       <div style={{ marginTop: 12 * size, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 * size, color: "#4A5C52", textAlign: "center", letterSpacing: 1 }}>
         Cross-League Scouting Index · Built from real ingested data
+      </div>
+    </div>
+  );
+}
+
+function TeamOfSeasonModal({ allLeagueOptions, onClose }) {
+  const [league, setLeague] = useState("");
+  const [formation, setFormation] = useState("4-3-3");
+  const [pool, setPool] = useState(null);
+  const [exporting, setExporting] = useState(false);
+  const pitchRef = useRef(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !league) { setPool(null); return; }
+    setPool(null);
+    const params = new URLSearchParams({ league });
+    fetch(`${API_BASE_URL}/team-of-season?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setPool(data))
+      .catch(() => setPool(null));
+  }, [league]);
+
+  // Auto-assign top-ranked players per position into whichever slots the
+  // selected formation needs — e.g. 4-3-3 takes the top 4 defenders, top 3
+  // midfielders, top 3 forwards from the ranked pool the backend returned.
+  const slots = {};
+  if (pool) {
+    const used = { Goalkeeper: 0, Defender: 0, Midfielder: 0, Attacker: 0 };
+    const posForLabel = { GK: "Goalkeeper", DEF: "Defender", MID: "Midfielder", FWD: "Attacker" };
+    FORMATIONS[formation].forEach(slot => {
+      const pos = posForLabel[slot.label];
+      const candidate = pool[pos]?.[used[pos]];
+      if (candidate) {
+        slots[slot.id] = { id: candidate.id, name: candidate.full_name, photoUrl: candidate.photo_url, potential: candidate.potential_index != null ? Math.round(candidate.potential_index) : null };
+        used[pos]++;
+      }
+    });
+  }
+
+  const downloadImage = () => {
+    if (!pitchRef.current || typeof html2canvas === "undefined") {
+      alert("Image export isn't available right now — check your connection and try again.");
+      return;
+    }
+    setExporting(true);
+    html2canvas(pitchRef.current, { backgroundColor: "#0E1A15", scale: 2, useCORS: true })
+      .then(canvas => {
+        const link = document.createElement("a");
+        link.download = `${league.replace(/\s+/g, "_")}_team_of_season.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      })
+      .catch(() => alert("Image export failed — please try again."))
+      .finally(() => setExporting(false));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🌟 Team of the Season</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+          <select value={league} onChange={e => setLeague(e.target.value)}
+            className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none text-[#EDEDE3]">
+            <option value="">Select a league...</option>
+            {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+          <select value={formation} onChange={e => setFormation(e.target.value)}
+            className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none text-[#EDEDE3]">
+            {FORMATION_NAMES.map(f => <option key={f} value={f}>{f}</option>)}
+          </select>
+        </div>
+
+        {!league && <div className="text-sm text-[#6B8570] text-center py-8">Select a league — auto-built from real potential scores, not manually picked.</div>}
+        {league && pool === null && <div className="text-sm text-[#6B8570] text-center py-8">Loading…</div>}
+
+        {pool && (
+          <>
+            <div style={{ maxWidth: 300, margin: "0 auto", overflowX: "auto" }}>
+              <DreamXIPitch slots={slots} formationSlots={FORMATIONS[formation]} formationName={`${league} · ${formation}`} size={300 / 600} />
+            </div>
+            <div style={{ position: "fixed", top: 0, left: -99999 }}>
+              <DreamXIPitch slots={slots} formationSlots={FORMATIONS[formation]} formationName={`${league} · ${formation}`} forwardedRef={pitchRef} size={1} />
+            </div>
+            <div className="text-center mt-4">
+              <button onClick={downloadImage} disabled={exporting}
+                className="text-xs uppercase tracking-wide px-5 py-2 bg-[#E3A857] text-[#0E1A15] font-bold disabled:opacity-50">
+                {exporting ? "Exporting…" : "⬇ Download Image"}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -2576,6 +2693,7 @@ function ScoutDashboard() {
   const [fixturesOpen, setFixturesOpen] = useState(false);
   const [standingsOpen, setStandingsOpen] = useState(false);
   const [liveScoresOpen, setLiveScoresOpen] = useState(false);
+  const [teamOfSeasonOpen, setTeamOfSeasonOpen] = useState(false);
   const [deepLinkPlayerId, setDeepLinkPlayerId] = useState(() => new URLSearchParams(window.location.search).get("player"));
   const [livePlayers, setLivePlayers] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState(API_BASE_URL ? "connecting" : "offline");
@@ -2923,6 +3041,7 @@ function ScoutDashboard() {
                 <button onClick={() => setFixturesOpen(true)} className="hover:text-[#E3A857]">📅 Fixtures</button>
                 <button onClick={() => setStandingsOpen(true)} className="hover:text-[#E3A857]">🏆 Standings</button>
                 <button onClick={() => setLiveScoresOpen(true)} className="hover:text-[#E3A857]">🔴 Live</button>
+                <button onClick={() => setTeamOfSeasonOpen(true)} className="hover:text-[#E3A857]">🌟 Team of Season</button>
               </>
             )}
             {connectionStatus === "live" && dataStatus?.last_updated && (
@@ -3304,6 +3423,7 @@ function ScoutDashboard() {
       {fixturesOpen && <FixturesModal allLeagueOptions={allLeagueOptions} onClose={() => setFixturesOpen(false)} />}
       {standingsOpen && <StandingsModal allLeagueOptions={allLeagueOptions} onClose={() => setStandingsOpen(false)} />}
       {liveScoresOpen && <LiveScoresModal onClose={() => setLiveScoresOpen(false)} />}
+      {teamOfSeasonOpen && <TeamOfSeasonModal allLeagueOptions={allLeagueOptions} onClose={() => setTeamOfSeasonOpen(false)} />}
       <CompareBar selected={compareList} onClear={() => setCompareList([])} onCompare={() => setComparing(true)} />
       {comparing && compareList.length >= 2 && (
         <ComparePanel players={compareList} onClose={() => setComparing(false)} />
