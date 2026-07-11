@@ -827,6 +827,39 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   };
 
   const [projection, setProjection] = useState(null);
+  const [biography, setBiography] = useState(null);
+  const [loadingBio, setLoadingBio] = useState(false);
+  const loadBiography = () => {
+    if (!API_BASE_URL) return;
+    setLoadingBio(true);
+    fetch(`${API_BASE_URL}/players/${realId}/biography`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setBiography(data))
+      .catch(() => setBiography({ found: false }))
+      .finally(() => setLoadingBio(false));
+  };
+  const [news, setNews] = useState(null);
+  const [loadingNews, setLoadingNews] = useState(false);
+  const loadNews = () => {
+    if (!API_BASE_URL) return;
+    setLoadingNews(true);
+    fetch(`${API_BASE_URL}/players/${realId}/news?limit=5`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setNews(data))
+      .catch(() => setNews([]))
+      .finally(() => setLoadingNews(false));
+  };
+  const [highlights, setHighlights] = useState(null);
+  const [loadingHighlights, setLoadingHighlights] = useState(false);
+  const loadHighlights = () => {
+    if (!API_BASE_URL) return;
+    setLoadingHighlights(true);
+    fetch(`${API_BASE_URL}/players/${realId}/highlights`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setHighlights(data))
+      .catch(() => setHighlights({ found: false }))
+      .finally(() => setLoadingHighlights(false));
+  };
   const [ratingForm, setRatingForm] = useState({ technical: 5, physical: 5, mental: 5, tactical: 5, notes: "" });
   const [savingRating, setSavingRating] = useState(false);
 
@@ -990,6 +1023,80 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
 
         {tab === "overview" && (
           <>
+            {biography === null && (
+              <div className="mt-5 text-center">
+                <button onClick={loadBiography} disabled={loadingBio}
+                  className="text-xs uppercase tracking-wide px-4 py-2 border border-[#2C4A3B] text-[#9AAA9E] hover:border-[#E3A857] hover:text-[#E3A857] disabled:opacity-50">
+                  {loadingBio ? "Searching Wikipedia…" : "📖 Load Biography"}
+                </button>
+              </div>
+            )}
+            {biography?.found === false && (
+              <div className="mt-5 text-center text-xs text-[#6B8570]">No Wikipedia biography found for this player.</div>
+            )}
+            {biography?.found && (
+              <div className="mt-5 border-b border-[#2C4A3B] pb-4 flex gap-3">
+                {biography.thumbnail_url && (
+                  <img src={biography.thumbnail_url} alt="" style={{ width: 70, height: 70, objectFit: "cover", flexShrink: 0 }} />
+                )}
+                <div>
+                  <p className="text-sm text-[#C9C08A] leading-relaxed">{biography.summary}</p>
+                  {biography.wikipedia_url && (
+                    <a href={biography.wikipedia_url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#6B8570] hover:text-[#E3A857] mt-1 inline-block">
+                      Read more on Wikipedia →
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {news === null && (
+              <div className="text-center mb-4">
+                <button onClick={loadNews} disabled={loadingNews}
+                  className="text-xs uppercase tracking-wide px-4 py-2 border border-[#2C4A3B] text-[#9AAA9E] hover:border-[#E3A857] hover:text-[#E3A857] disabled:opacity-50">
+                  {loadingNews ? "Fetching…" : "📰 Load Recent News"}
+                </button>
+              </div>
+            )}
+            {news?.length === 0 && <div className="text-xs text-[#6B8570] text-center mb-4">No recent news found.</div>}
+            {news?.length > 0 && (
+              <div className="mb-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">📰 Recent News</div>
+                {news.map((n, i) => (
+                  <a key={i} href={n.link} target="_blank" rel="noopener noreferrer"
+                    className="block text-sm text-[#EDEDE3] hover:text-[#E3A857] py-1.5 border-b border-[#1C2E26]">
+                    {n.title}
+                    <div className="text-[10px] text-[#6B8570]">{n.source}</div>
+                  </a>
+                ))}
+              </div>
+            )}
+
+            {highlights === null && (
+              <div className="text-center mb-4">
+                <button onClick={loadHighlights} disabled={loadingHighlights}
+                  className="text-xs uppercase tracking-wide px-4 py-2 border border-[#2C4A3B] text-[#9AAA9E] hover:border-[#E3A857] hover:text-[#E3A857] disabled:opacity-50">
+                  {loadingHighlights ? "Searching YouTube…" : "🎥 Load Highlight Video"}
+                </button>
+              </div>
+            )}
+            {highlights?.message && (
+              <div className="text-xs text-[#6B8570] text-center mb-4">{highlights.message}</div>
+            )}
+            {highlights?.found === false && !highlights?.message && (
+              <div className="text-xs text-[#6B8570] text-center mb-4">No highlight video found.</div>
+            )}
+            {highlights?.found && (
+              <div className="mb-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🎥 {highlights.title}</div>
+                <div style={{ position: "relative", paddingBottom: "56.25%", height: 0 }}>
+                  <iframe
+                    src={`https://www.youtube.com/embed/${highlights.video_id}`}
+                    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
+                    allowFullScreen title="Highlight video" />
+                </div>
+              </div>
+            )}
             {p.injury && (
               <div className="mt-5 border border-[#E36B57] bg-[#2A1712] px-4 py-3 text-sm">
                 <span className="text-[#E36B57] font-bold">🩹 {p.injury.type}</span>
@@ -1105,7 +1212,8 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
                   🌍 International Caps
                 </div>
                 {details.international_caps.map((c, i) => (
-                  <div key={i} className="text-sm text-[#EDEDE3] mt-1">
+                  <div key={i} className="text-sm text-[#EDEDE3] mt-1 flex items-center gap-2">
+                    {c.flag_url && <img src={c.flag_url} alt={c.team_name} style={{ width: 20, height: 14, objectFit: "cover", border: "1px solid #2C4A3B" }} />}
                     {c.team_name} <span className="text-[#6B8570] text-xs">· {c.competition_name}</span>
                     <span className="font-plexmono text-[#E3A857] ml-2">{c.appearances ?? "?"} caps</span>
                     {c.goals > 0 && <span className="text-[#6B8570] text-xs ml-2">{c.goals}⚽</span>}
