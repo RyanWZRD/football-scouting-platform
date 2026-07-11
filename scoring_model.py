@@ -106,18 +106,25 @@ def age_adjustment(date_of_birth, season):
 
 
 def qualitative_component(conn, player_id):
-    """Returns None if no real scout_notes entry exists — the caller then
-    excludes this component entirely rather than defaulting to a fake
-    neutral score that would artificially cap everyone's potential index."""
     with conn.cursor() as cur:
+        cur.execute(
+            "SELECT technical, physical, mental, tactical FROM player_scout_ratings "
+            "WHERE player_id = %s ORDER BY created_at DESC LIMIT 1",
+            (player_id,),
+        )
+        rating_row = cur.fetchone()
+        if rating_row:
+            avg_rating = sum(rating_row) / len(rating_row)
+            return (avg_rating - 1) / 9 * 100
+
         cur.execute(
             "SELECT watch_level FROM scout_notes WHERE player_id = %s ORDER BY created_at DESC LIMIT 1",
             (player_id,),
         )
         row = cur.fetchone()
     if not row:
-        return None  # no scouting action of any kind on record
-    return WATCH_LEVEL_SCORE.get(row[0], 50)  # a real note with an unmapped level -> neutral
+        return None
+    return WATCH_LEVEL_SCORE.get(row[0], 50)
 
 
 def compute_stat_percentiles(cols, rows):
