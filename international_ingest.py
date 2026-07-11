@@ -95,7 +95,7 @@ def run(season, offset, limit):
             no_caps += 1
             continue
 
-        caps_rows = []
+        caps_by_key = {}
         for stat in data[0].get("statistics", []):
             team_name = stat.get("team", {}).get("name")
             league_name = stat.get("league", {}).get("name", "")
@@ -106,27 +106,41 @@ def run(season, offset, limit):
 
             games = stat.get("games", {})
             goals = stat.get("goals", {})
-            caps_rows.append((
-                db_id, team_name, league_name,
-                games.get("appearences"), goals.get("total"), goals.get("assists"),
-                games.get("minutes"), str(season),
-            ))
+            key = (team_name, league_name)
+            # A player can occasionally have TWO statistics entries for the
+            # same team+competition (e.g. a group-stage/playoff split that
+            # API-Football tags identically) — keep whichever has more
+            # appearances rather than trying to insert both, which Postgres
+            # correctly rejects as a duplicate within one batch statement.
+            appearances = games.get("appearences") or 0
+            if key not in caps_by_key or appearances > (caps_by_key[key][3] or 0):
+                caps_by_key[key] = (
+                    db_id, team_name, league_name,
+                    appearances, goals.get("total"), goals.get("assists"),
+                    games.get("minutes"), str(season),
+                )
+        caps_rows = list(caps_by_key.values())
 
         if caps_rows:
-            with conn.cursor() as cur:
-                execute_values(cur, """
-                    INSERT INTO player_international_caps
-                        (player_id, team_name, competition_name, appearances, goals, assists, minutes_played, season)
-                    VALUES %s
-                    ON CONFLICT (player_id, team_name, competition_name, season) DO UPDATE SET
-                        appearances = EXCLUDED.appearances,
-                        goals = EXCLUDED.goals,
-                        assists = EXCLUDED.assists,
-                        minutes_played = EXCLUDED.minutes_played,
-                        ingested_at = now()
-                """, caps_rows)
-            conn.commit()
-            updated += 1
+            try:
+                with conn.cursor() as cur:
+                    execute_values(cur, """
+                        INSERT INTO player_international_caps
+                            (player_id, team_name, competition_name, appearances, goals, assists, minutes_played, season)
+                        VALUES %s
+                        ON CONFLICT (player_id, team_name, competition_name, season) DO UPDATE SET
+                            appearances = EXCLUDED.appearances,
+                            goals = EXCLUDED.goals,
+                            assists = EXCLUDED.assists,
+                            minutes_played = EXCLUDED.minutes_played,
+                            ingested_at = now()
+                    """, caps_rows)
+                conn.commit()
+                updated += 1
+            except Exception as e:
+                conn.rollback()
+                print(f"  skipped {name} (id {external_id}) due to a data issue: {e}")
+                no_caps += 1
         else:
             no_caps += 1
 
