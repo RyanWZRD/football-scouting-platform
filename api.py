@@ -36,6 +36,7 @@ import requests
 DATABASE_URL = os.environ.get("DATABASE_URL")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 FOOTBALL_API_KEY = os.environ.get("FOOTBALL_API_KEY")  # for on-demand match event lookups
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")  # for real embedded highlights (free tier, ~100 searches/day)
 
 # Simple shared-secret protection. Set this in Render's environment variables
 # and pass the same value as a header from your dashboard: X-API-Key: <value>
@@ -124,6 +125,31 @@ def data_status():
 
 # Our 17 tracked league external IDs, for filtering the global live-scores response
 TRACKED_LEAGUE_IDS = {39, 140, 78, 135, 61, 88, 94, 203, 71, 98, 253, 179, 62, 40, 144, 262, 128}
+
+
+def get_flag_url(cur, country_name):
+    """Cached flag lookup — checks our own table first, only ever calls
+    the free REST Countries API (no key needed) for a country we've
+    genuinely never seen before, then caches it permanently."""
+    cur.execute("SELECT flag_url FROM country_flags WHERE country_name = %s", (country_name,))
+    row = cur.fetchone()
+    if row:
+        return row["flag_url"]
+    try:
+        resp = requests.get(f"https://restcountries.com/v3.1/name/{country_name}", params={"fields": "flags"}, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            flag_url = data[0].get("flags", {}).get("png") if data else None
+        else:
+            flag_url = None
+    except Exception:
+        flag_url = None
+    cur.execute(
+        "INSERT INTO country_flags (country_name, flag_url) VALUES (%s, %s) "
+        "ON CONFLICT (country_name) DO UPDATE SET flag_url = EXCLUDED.flag_url",
+        (country_name, flag_url),
+    )
+    return flag_url
 
 
 def classify_archetype(position, pr):
@@ -1426,6 +1452,176 @@ def match_events(match_id: int, authorized: bool = Depends(check_api_key)):
     return {"events": events, "cached": False}
 
 
+@app.get("/players/{player_id}/biography")
+def player_biography(player_id: int, authorized: bool = Depends(check_api_key)):
+    """A player's real Wikipedia biography — career narrative, honors,
+    background — genuinely new context beyond raw stats. Free, no API key
+    needed. On-demand and cached permanently, same pattern as match events.
+    Our stored names are often abbreviated (e.g. 'N. Woltemade'), so this
+    uses Wikipedia's own search first to find the right page, then fetches
+    its summary — more robust than guessing an exact title."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM player_biography_cache WHERE player_id = %s", (player_id,))
+        cached = cur.fetchone()
+        if cached:
+            conn.close()
+            return dict(cached)
+
+        cur.execute("SELECT full_name FROM players WHERE id = %s", (player_id,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Player not found")
+        full_name = row["full_name"]
+
+    headers = {"User-Agent": "CrossLeagueScoutingIndex/1.0 (personal scouting tool)"}
+    try:
+        search_resp = requests.get(
+            "https://en.wikipedia.org/w/api.php",
+            params={"action": "query", "list": "search", "srsearch": f"{full_name} footballer",
+                    "format": "json", "srlimit": 1},
+            headers=headers, timeout=8,
+        )
+        search_results = search_resp.json().get("query", {}).get("search", [])
+    except Exception:
+        search_results = []
+
+    result = {"player_id": player_id, "found": False, "wikipedia_title": None,
+              "summary": None, "thumbnail_url": None, "wikipedia_url": None}
+
+    if search_results:
+        title = search_results[0]["title"]
+        try:
+            summary_resp = requests.get(
+                f"https://en.wikipedia.org/api/rest_v1/page/summary/{title.replace(' ', '_')}",
+                headers=headers, timeout=8,
+            )
+            if summary_resp.status_code == 200:
+                data = summary_resp.json()
+                result = {
+                    "player_id": player_id, "found": True, "wikipedia_title": title,
+                    "summary": data.get("extract"),
+                    "thumbnail_url": data.get("thumbnail", {}).get("source"),
+                    "wikipedia_url": data.get("content_urls", {}).get("desktop", {}).get("page"),
+                }
+        except Exception:
+            pass
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO player_biography_cache
+                (player_id, wikipedia_title, summary, thumbnail_url, wikipedia_url, found)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (player_id) DO UPDATE SET
+                wikipedia_title = EXCLUDED.wikipedia_title, summary = EXCLUDED.summary,
+                thumbnail_url = EXCLUDED.thumbnail_url, wikipedia_url = EXCLUDED.wikipedia_url,
+                found = EXCLUDED.found, cached_at = now()
+        """, (player_id, result["wikipedia_title"], result["summary"],
+              result["thumbnail_url"], result["wikipedia_url"], result["found"]))
+    conn.commit()
+    conn.close()
+    return result
+
+
+@app.get("/players/{player_id}/news")
+def player_news(player_id: int, limit: int = Query(5, le=15), authorized: bool = Depends(check_api_key)):
+    """Real, current news headlines for a player via Google News RSS —
+    free, no API key needed, no 'developer use only' restriction (unlike
+    NewsAPI.org's free tier, which explicitly forbids production use).
+    Deliberately NOT cached — news is inherently time-sensitive, so this
+    fetches genuinely fresh results every time it's requested."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT full_name FROM players WHERE id = %s", (player_id,))
+        row = cur.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    import xml.etree.ElementTree as ET
+    query = requests.utils.quote(f"{row['full_name']} football")
+    try:
+        resp = requests.get(
+            f"https://news.google.com/rss/search?q={query}&hl=en-GB&gl=GB&ceid=GB:en",
+            headers={"User-Agent": "CrossLeagueScoutingIndex/1.0"}, timeout=8,
+        )
+        root = ET.fromstring(resp.content)
+        items = []
+        for item in root.findall(".//item")[:limit]:
+            items.append({
+                "title": item.findtext("title"),
+                "link": item.findtext("link"),
+                "published": item.findtext("pubDate"),
+                "source": item.findtext("source"),
+            })
+        return items
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch news: {e}")
+
+
+@app.get("/players/{player_id}/highlights")
+def player_highlights(player_id: int, authorized: bool = Depends(check_api_key)):
+    """A real embedded highlight video, not just a search link — uses
+    YouTube's Data API (free tier, ~100 searches/day, so this is cached
+    permanently once found rather than re-searched on every view). Needs
+    YOUTUBE_API_KEY configured on the server — returns a clear message if
+    it isn't, rather than failing silently."""
+    if not YOUTUBE_API_KEY:
+        return {"found": False, "message": "YOUTUBE_API_KEY not configured on the server yet."}
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM player_highlights_cache WHERE player_id = %s", (player_id,))
+        cached = cur.fetchone()
+        if cached:
+            conn.close()
+            return dict(cached)
+
+        cur.execute("SELECT full_name FROM players WHERE id = %s", (player_id,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Player not found")
+        full_name = row["full_name"]
+
+    result = {"player_id": player_id, "found": False, "video_id": None, "title": None, "thumbnail_url": None}
+    try:
+        resp = requests.get(
+            "https://www.googleapis.com/youtube/v3/search",
+            params={
+                "part": "snippet", "q": f"{full_name} highlights", "type": "video",
+                "maxResults": 1, "order": "relevance", "key": YOUTUBE_API_KEY,
+            },
+            timeout=8,
+        )
+        items = resp.json().get("items", [])
+        if items:
+            snippet = items[0]["snippet"]
+            result = {
+                "player_id": player_id, "found": True,
+                "video_id": items[0]["id"]["videoId"],
+                "title": snippet["title"],
+                "thumbnail_url": snippet["thumbnails"]["medium"]["url"],
+            }
+    except Exception:
+        pass
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO player_highlights_cache (player_id, video_id, title, thumbnail_url, found)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (player_id) DO UPDATE SET
+                video_id = EXCLUDED.video_id, title = EXCLUDED.title,
+                thumbnail_url = EXCLUDED.thumbnail_url, found = EXCLUDED.found, cached_at = now()
+        """, (player_id, result["video_id"], result["title"], result["thumbnail_url"], result["found"]))
+    conn.commit()
+    conn.close()
+    return result
+
+
 @app.get("/standings")
 def standings(league: str, authorized: bool = Depends(check_api_key)):
     """Full league table (P/W/D/L/GF/GA/GD/Pts), computed entirely from
@@ -1923,6 +2119,9 @@ def player_dossier(player_id: int, authorized: bool = Depends(check_api_key)):
             ORDER BY appearances DESC NULLS LAST
         """, (player_id,))
         international_caps = cur.fetchall()
+        for cap in international_caps:
+            cap["flag_url"] = get_flag_url(cur, cap["team_name"])
+        conn.commit()  # persist any newly-cached flags from get_flag_url
 
     conn.close()
     return {
