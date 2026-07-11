@@ -1085,6 +1085,25 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
   const otherPos = players.filter(p => !POSITION_ORDER.includes(p.position));
   if (otherPos.length > 0) byPosition.push({ pos: "Other / Unknown", list: otherPos });
 
+  // Season Review — top scorer/rated computed client-side from data already
+  // in hand (free, no new fetch); W-D-L record needs a small dedicated fetch.
+  const withGoals = players.filter(p => (p.seasonTotals?.["Goals"] ?? 0) > 0)
+    .sort((a, b) => b.seasonTotals["Goals"] - a.seasonTotals["Goals"]);
+  const topScorer = withGoals[0];
+  const withRating = players.filter(p => p.metrics?.["Rating"]?.raw > 0)
+    .sort((a, b) => b.metrics["Rating"].raw - a.metrics["Rating"].raw);
+  const topRated = withRating[0];
+
+  const [record, setRecord] = useState(null);
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    const params = new URLSearchParams({ club: clubName, league: leagueName });
+    fetch(`${API_BASE_URL}/clubs/record?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setRecord(data))
+      .catch(() => setRecord(null));
+  }, [clubName, leagueName]);
+
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50" onClick={onClose}>
       <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[90vh] overflow-y-auto p-4 sm:p-8 relative"
@@ -1093,6 +1112,31 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
         <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">Squad Profile</div>
         <h2 className="text-3xl text-[#EDEDE3] font-display mt-2">{clubName}</h2>
         <div className="text-[#9AAA9E] mt-1">{leagueName}</div>
+
+        {record && record.played > 0 && (
+          <div className="mt-4 border border-[#2C4A3B] p-4">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Season Record</div>
+            <div className="flex items-center gap-4 text-sm">
+              <span className="font-plexmono text-[#EDEDE3]">{record.won}W {record.drawn}D {record.lost}L</span>
+              <span className="text-[#6B8570]">·</span>
+              <span className="text-[#9AAA9E]">{record.gf}-{record.ga} goals</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3 mt-3 text-xs">
+              {topScorer && (
+                <button onClick={() => onSelectPlayer(topScorer)} className="text-left hover:text-[#E3A857]">
+                  <span className="text-[#6B8570]">Top Scorer: </span>
+                  <span className="text-[#EDEDE3]">{topScorer.name} ({topScorer.seasonTotals["Goals"]})</span>
+                </button>
+              )}
+              {topRated && (
+                <button onClick={() => onSelectPlayer(topRated)} className="text-left hover:text-[#E3A857]">
+                  <span className="text-[#6B8570]">Top Rated: </span>
+                  <span className="text-[#EDEDE3]">{topRated.name} ({topRated.metrics["Rating"].raw.toFixed(1)})</span>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-3 gap-4 mt-6 border-b border-[#2C4A3B] pb-4">
           <div>
@@ -1383,9 +1427,16 @@ function ExploreView({ onSelectPlayer }) {
         .then(rows => setBoards(prev => ({ ...prev, [spec.key]: { ...spec, rows } })))
         .catch(() => setBoards(prev => ({ ...prev, [spec.key]: { ...spec, rows: [] } })));
     });
+
+    // Most Improved has a different shape (delta, not a simple sorted
+    // column) so it's fetched from its own dedicated endpoint.
+    fetch(`${API_BASE_URL}/players/most-improved?limit=8`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setBoards(prev => ({ ...prev, improved: { title: "📈 Most Improved", statField: "delta", rows: rows.map(r => ({ ...r, id: r.id, full_name: r.full_name, photo_url: r.photo_url, club: r.club })) } })))
+      .catch(() => setBoards(prev => ({ ...prev, improved: { title: "📈 Most Improved", statField: "delta", rows: [] } })));
   }, []);
 
-  const order = ["scorers", "assists", "keepers", "tacklers", "young"];
+  const order = ["scorers", "assists", "keepers", "tacklers", "young", "improved"];
 
   return (
     <div className="px-6 md:px-10 py-8 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-8">
@@ -1397,7 +1448,11 @@ function ExploreView({ onSelectPlayer }) {
               {board ? board.title : "Loading…"}
             </div>
             {!board && <div className="text-xs text-[#6B8570]">Fetching leaderboard…</div>}
-            {board?.rows.length === 0 && <div className="text-xs text-[#6B8570]">No data yet.</div>}
+            {board?.rows.length === 0 && (
+              <div className="text-xs text-[#6B8570]">
+                {key === "improved" ? "Not enough trend history yet — needs a few more nightly runs." : "No data yet."}
+              </div>
+            )}
             <div>
               {board?.rows.map((row, i) => (
                 <button key={row.id} onClick={() => onSelectPlayer(row)}
@@ -1411,7 +1466,9 @@ function ExploreView({ onSelectPlayer }) {
                   <span className="font-plexmono text-[#E3A857] shrink-0 pl-2">
                     {board.statField === "potential_index"
                       ? Math.round(row.potential_index ?? 0)
-                      : (row[board.statField] ?? 0)}
+                      : board.statField === "delta"
+                        ? `+${Math.round(row.delta)}`
+                        : (row[board.statField] ?? 0)}
                   </span>
                 </button>
               ))}
@@ -1888,9 +1945,55 @@ function LiveScoresModal({ onClose }) {
   );
 }
 
+function StandingsCard({ league, table, forwardedRef }) {
+  return (
+    <div ref={forwardedRef} style={{
+      width: 700, background: "#0E1A15", color: "#EDEDE3", fontFamily: "'Inter', sans-serif",
+      padding: 40, boxSizing: "border-box", border: "2px solid #E3A857",
+    }}>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 16, letterSpacing: 3, color: "#E3A857", textTransform: "uppercase", textAlign: "center" }}>
+        ⚽ Cross-League Scouting Index
+      </div>
+      <div style={{ fontFamily: "'Archivo Black', sans-serif", fontSize: 30, textAlign: "center", marginTop: 12 }}>
+        {league}
+      </div>
+      <table style={{ width: "100%", marginTop: 28, fontSize: 15, borderCollapse: "collapse" }}>
+        <thead>
+          <tr style={{ color: "#6B8570", textTransform: "uppercase", fontSize: 12, borderBottom: "1px solid #2C4A3B" }}>
+            <th style={{ textAlign: "left", padding: "8px 4px" }}>#</th>
+            <th style={{ textAlign: "left", padding: "8px 4px" }}>Club</th>
+            <th style={{ padding: "8px 4px" }}>P</th><th style={{ padding: "8px 4px" }}>W</th>
+            <th style={{ padding: "8px 4px" }}>D</th><th style={{ padding: "8px 4px" }}>L</th>
+            <th style={{ padding: "8px 4px" }}>GD</th><th style={{ padding: "8px 4px", color: "#E3A857" }}>Pts</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(table || []).map((row, i) => (
+            <tr key={row.club} style={{ borderBottom: "1px solid #1C2E26" }}>
+              <td style={{ padding: "7px 4px", color: "#6B8570" }}>{i + 1}</td>
+              <td style={{ padding: "7px 4px" }}>{row.club}</td>
+              <td style={{ textAlign: "center", padding: "7px 4px" }}>{row.played}</td>
+              <td style={{ textAlign: "center", padding: "7px 4px" }}>{row.won}</td>
+              <td style={{ textAlign: "center", padding: "7px 4px" }}>{row.drawn}</td>
+              <td style={{ textAlign: "center", padding: "7px 4px" }}>{row.lost}</td>
+              <td style={{ textAlign: "center", padding: "7px 4px" }}>{row.gd > 0 ? `+${row.gd}` : row.gd}</td>
+              <td style={{ textAlign: "center", padding: "7px 4px", fontFamily: "'IBM Plex Mono', monospace", fontWeight: "bold", color: "#E3A857" }}>{row.points}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "#4A5C52", textAlign: "center", marginTop: 20 }}>
+        Real ingested match data · not a projection
+      </div>
+    </div>
+  );
+}
+
 function StandingsModal({ allLeagueOptions, onClose }) {
   const [league, setLeague] = useState("");
   const [table, setTable] = useState(null);
+  const [exporting, setExporting] = useState(false);
+  const cardRef = useRef(null);
 
   useEffect(() => {
     if (!API_BASE_URL || !league) { setTable(null); return; }
@@ -1902,12 +2005,36 @@ function StandingsModal({ allLeagueOptions, onClose }) {
       .catch(() => setTable([]));
   }, [league]);
 
+  const downloadImage = () => {
+    if (!cardRef.current || typeof html2canvas === "undefined") {
+      alert("Image export isn't available right now — check your connection and try again.");
+      return;
+    }
+    setExporting(true);
+    html2canvas(cardRef.current, { backgroundColor: "#0E1A15", scale: 2 })
+      .then(canvas => {
+        const link = document.createElement("a");
+        link.download = `${league.replace(/\s+/g, "_")}_standings.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      })
+      .catch(() => alert("Image export failed — please try again."))
+      .finally(() => setExporting(false));
+  };
+
   return (
     <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
       <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🏆 Standings</div>
-          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+          <div className="flex items-center gap-3">
+            {table?.length > 0 && (
+              <button onClick={downloadImage} disabled={exporting} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] disabled:opacity-50">
+                {exporting ? "Exporting…" : "📸 Export Image"}
+              </button>
+            )}
+            <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+          </div>
         </div>
 
         <select value={league} onChange={e => setLeague(e.target.value)}
@@ -1915,6 +2042,12 @@ function StandingsModal({ allLeagueOptions, onClose }) {
           <option value="">Select a league...</option>
           {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
         </select>
+        {/* Hidden, full-size, untransformed — the only thing html2canvas ever captures */}
+        {table?.length > 0 && (
+          <div style={{ position: "fixed", top: 0, left: -99999 }}>
+            <StandingsCard league={league} table={table} forwardedRef={cardRef} />
+          </div>
+        )}
 
         {!league && <div className="text-sm text-[#6B8570]">Select a league to see its table.</div>}
         {league && table === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
@@ -1961,12 +2094,61 @@ function StandingsModal({ allLeagueOptions, onClose }) {
   );
 }
 
+function FixturesCard({ league, club, fixturesList, forwardedRef }) {
+  return (
+    <div ref={forwardedRef} style={{
+      width: 700, background: "#0E1A15", color: "#EDEDE3", fontFamily: "'Inter', sans-serif",
+      padding: 40, boxSizing: "border-box", border: "2px solid #E3A857",
+    }}>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 16, letterSpacing: 3, color: "#E3A857", textTransform: "uppercase", textAlign: "center" }}>
+        ⚽ Cross-League Scouting Index
+      </div>
+      <div style={{ fontFamily: "'Archivo Black', sans-serif", fontSize: 28, textAlign: "center", marginTop: 12 }}>
+        {league}{club ? ` · ${club}` : ""}
+      </div>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "#6B8570", textAlign: "center", marginTop: 4, textTransform: "uppercase", letterSpacing: 1 }}>
+        Recent Results
+      </div>
+      <div style={{ marginTop: 24 }}>
+        {(fixturesList || []).map(f => (
+          <div key={f.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #1C2E26", fontSize: 16 }}>
+            <span style={{ color: "#6B8570", fontSize: 13, width: 90 }}>{new Date(f.match_date).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</span>
+            <span style={{ flex: 1, textAlign: "center" }}>{f.home_club} <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#E3A857", fontWeight: "bold" }}>{f.home_score}–{f.away_score}</span> {f.away_club}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "#4A5C52", textAlign: "center", marginTop: 20 }}>
+        Real ingested match data · not a projection
+      </div>
+    </div>
+  );
+}
+
 function FixturesModal({ allLeagueOptions, onClose }) {
   const [league, setLeague] = useState("");
   const [club, setClub] = useState("");
   const [clubs, setClubs] = useState([]);
   const [mode, setMode] = useState("upcoming"); // "upcoming" | "results"
   const [selectedMatch, setSelectedMatch] = useState(null);
+  const [exporting, setExporting] = useState(false);
+  const fixturesCardRef = useRef(null);
+
+  const downloadFixturesImage = () => {
+    if (!fixturesCardRef.current || typeof html2canvas === "undefined") {
+      alert("Image export isn't available right now — check your connection and try again.");
+      return;
+    }
+    setExporting(true);
+    html2canvas(fixturesCardRef.current, { backgroundColor: "#0E1A15", scale: 2 })
+      .then(canvas => {
+        const link = document.createElement("a");
+        link.download = `${league.replace(/\s+/g, "_")}_results.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      })
+      .catch(() => alert("Image export failed — please try again."))
+      .finally(() => setExporting(false));
+  };
   const [fixturesList, setFixturesList] = useState(null);
 
   useEffect(() => {
@@ -1998,8 +2180,20 @@ function FixturesModal({ allLeagueOptions, onClose }) {
       <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📅 Fixtures</div>
-          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+          <div className="flex items-center gap-3">
+            {mode === "results" && fixturesList?.length > 0 && (
+              <button onClick={downloadFixturesImage} disabled={exporting} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] disabled:opacity-50">
+                {exporting ? "Exporting…" : "📸 Export Image"}
+              </button>
+            )}
+            <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+          </div>
         </div>
+        {mode === "results" && fixturesList?.length > 0 && (
+          <div style={{ position: "fixed", top: 0, left: -99999 }}>
+            <FixturesCard league={league} club={club} fixturesList={fixturesList} forwardedRef={fixturesCardRef} />
+          </div>
+        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
           <select value={league} onChange={e => setLeague(e.target.value)}
@@ -2245,6 +2439,7 @@ function ClubCompareModal({ allLeagueOptions, onClose }) {
 function BriefingView({ movers, topProspects, onSelectPlayer }) {
   const [transfers, setTransfers] = useState(null);
   const [shortlistHighlights, setShortlistHighlights] = useState(null);
+  const [shortlistAlerts, setShortlistAlerts] = useState(null);
 
   useEffect(() => {
     if (!API_BASE_URL) return;
@@ -2257,6 +2452,10 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
       .then(res => res.ok ? res.json() : [])
       .then(rows => setShortlistHighlights(rows))
       .catch(() => setShortlistHighlights([]));
+    fetch(`${API_BASE_URL}/shortlist/alerts?limit=5`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setShortlistAlerts(rows))
+      .catch(() => setShortlistAlerts([]));
   }, []);
 
   const Section = ({ title, children }) => (
@@ -2279,6 +2478,25 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
 
   return (
     <div className="px-6 md:px-10 py-8 grid grid-cols-1 md:grid-cols-2 gap-x-10">
+      <Section title="🎯 Shortlist Alerts — Standout Performances">
+        {shortlistAlerts === null && <div className="text-xs text-[#6B8570]">Loading…</div>}
+        {shortlistAlerts?.length === 0 && <div className="text-xs text-[#6B8570]">No standout performances from your shortlist yet.</div>}
+        {shortlistAlerts?.map(a => (
+          <PlayerRow key={a.id} name={a.full_name} club={a.club} league={null} photoUrl={a.photo_url}
+            onClick={() => onSelectPlayer({ club: a.club, id: a.id })}
+            rightExtra={
+              <span className="text-xs text-right shrink-0">
+                <span className="text-[#E3A857]">
+                  {a.goals > 0 && `⚽${a.goals > 1 ? a.goals : ""} `}
+                  {a.assists > 0 && `🅰${a.assists > 1 ? a.assists : ""} `}
+                  {a.rating && `${a.rating}★`}
+                </span>
+                <br /><span className="text-[#6B8570]">vs {a.opponent}</span>
+              </span>
+            } />
+        ))}
+      </Section>
+
       <Section title="🏆 Top Prospects Right Now">
         {topProspects.slice(0, 5).map(p => (
           <PlayerRow key={p.id} name={p.name} club={p.club} league={p.league} potential={p.potential} photoUrl={p.photoUrl}
