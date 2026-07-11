@@ -294,6 +294,99 @@ def shortlist_alerts(limit: int = Query(10, le=30), authorized: bool = Depends(c
     return sorted(rows, key=lambda r: r["match_date"], reverse=True)
 
 
+@app.get("/team-of-season")
+def team_of_season(league: str, authorized: bool = Depends(check_api_key)):
+    """Top-ranked players by potential per position within a league —
+    enough per position (up to 8) to fill any formation, letting the
+    frontend slot them in based on whichever formation is selected."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        result = {}
+        for position, take in [("Goalkeeper", 3), ("Defender", 8), ("Midfielder", 8), ("Attacker", 6)]:
+            cur.execute("""
+                SELECT p.id, p.full_name, p.photo_url, pps.potential_index
+                FROM players p
+                JOIN clubs cl ON cl.id = p.current_club_id
+                LEFT JOIN LATERAL (
+                    SELECT potential_index FROM player_potential_scores
+                    WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+                ) pps ON true
+                WHERE cl.league_id = %s AND p.primary_position = %s AND pps.potential_index IS NOT NULL
+                ORDER BY pps.potential_index DESC
+                LIMIT %s
+            """, (league_id, position, take))
+            result[position] = cur.fetchall()
+    conn.close()
+    return result
+
+
+@app.get("/players/clean-sheets")
+def clean_sheets(limit: int = Query(8, le=20), authorized: bool = Depends(check_api_key)):
+    """Goalkeepers ranked by clean sheets this season (matches with 0 goals
+    conceded, playing at least 60 minutes to count as a real appearance).
+    Free — derived entirely from existing match_stats data."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club,
+                   COUNT(*) AS clean_sheets
+            FROM player_match_stats pms
+            JOIN players p ON p.id = pms.player_id
+            LEFT JOIN clubs cl ON cl.id = pms.club_id
+            WHERE p.primary_position = 'Goalkeeper'
+              AND pms.goals_conceded = 0 AND pms.minutes_played >= 60
+            GROUP BY p.id, p.full_name, p.photo_url, cl.name
+            ORDER BY clean_sheets DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/players/debuts")
+def debut_tracker(limit: int = Query(10, le=30), authorized: bool = Depends(check_api_key)):
+    """Players with exactly ONE match appearance this season — a genuine
+    debut, not just someone with limited minutes. Ordered by most recent."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH single_appearance AS (
+                SELECT pms.player_id, MIN(pms.id) AS stat_id, COUNT(*) AS appearances
+                FROM player_match_stats pms
+                WHERE pms.minutes_played > 0
+                GROUP BY pms.player_id
+                HAVING COUNT(*) = 1
+            )
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club,
+                   l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display,
+                   m.match_date, pms.minutes_played, pms.rating
+            FROM single_appearance sa
+            JOIN player_match_stats pms ON pms.id = sa.stat_id
+            JOIN players p ON p.id = sa.player_id
+            JOIN matches m ON m.id = pms.match_id
+            LEFT JOIN clubs cl ON cl.id = pms.club_id
+            LEFT JOIN leagues l ON l.id = m.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            ORDER BY m.match_date DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 @app.get("/transfers")
 def recent_transfers(limit: int = Query(20, le=100), authorized: bool = Depends(check_api_key)):
     """Recent club changes, detected automatically by a database trigger
@@ -577,7 +670,7 @@ def list_players(
     shortlist_only: bool = False,
     sort: str = Query("potential", enum=[
         "potential", "age", "name", "goals", "assists", "tackles",
-        "interceptions", "saves", "duel_win_pct", "pass_accuracy_pct",
+        "interceptions", "saves", "yellow_cards", "duel_win_pct", "pass_accuracy_pct",
     ]),
     season: Optional[str] = None,
     limit: int = Query(50, le=5000),
@@ -713,6 +806,7 @@ def list_players(
         "tackles": "stats.tackles DESC NULLS LAST",
         "interceptions": "stats.interceptions DESC NULLS LAST",
         "saves": "stats.saves DESC NULLS LAST",
+        "yellow_cards": "stats.yellow_cards DESC NULLS LAST",
         "duel_win_pct": "duel_win_pct DESC NULLS LAST",
         "pass_accuracy_pct": "pass_accuracy_pct DESC NULLS LAST",
     }
