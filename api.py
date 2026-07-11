@@ -21,6 +21,7 @@ Endpoints:
 import os
 import json
 import time
+from datetime import datetime
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -123,6 +124,51 @@ def data_status():
 
 # Our 17 tracked league external IDs, for filtering the global live-scores response
 TRACKED_LEAGUE_IDS = {39, 140, 78, 135, 61, 88, 94, 203, 71, 98, 253, 179, 62, 40, 144, 262, 128}
+
+
+def classify_archetype(position, pr):
+    """Shared, single source of truth for archetype rules — used by both
+    the player dossier and Team of the Season, so the two never drift out
+    of sync with slightly different logic. `pr` is a dict of percentile
+    ranks (0-100) on: goals, assists, key_passes, defensive, take_ons, pass_acc."""
+    if position == "Attacker":
+        if pr["goals"] >= 70 and pr["key_passes"] < 50 and pr["take_ons"] < 50:
+            return "Poacher"
+        elif pr["assists"] >= 65 or pr["key_passes"] >= 70:
+            return "Creator"
+        elif pr["take_ons"] >= 70:
+            return "Dribbler / Winger"
+        return "All-Round Forward"
+    elif position == "Midfielder":
+        if pr["defensive"] >= 70 and (pr["goals"] + pr["assists"]) < 80:
+            return "Defensive Midfielder"
+        elif pr["key_passes"] >= 70 and pr["pass_acc"] >= 60:
+            return "Playmaker"
+        elif pr["defensive"] >= 55 and (pr["goals"] >= 50 or pr["assists"] >= 50):
+            return "Box-to-Box Midfielder"
+        return "All-Round Midfielder"
+    elif position == "Defender":
+        if pr["pass_acc"] >= 70 and pr["defensive"] < 60:
+            return "Ball-Playing Defender"
+        elif pr["defensive"] >= 65:
+            return "Stopper"
+        return "All-Round Defender"
+    elif position == "Goalkeeper":
+        return "Sweeper-Keeper" if pr["pass_acc"] >= 65 else "Shot-Stopper"
+    return None
+
+
+def percentile_rank(target_val, all_vals):
+    """What percentage of a peer group a value beats — used for archetype
+    classification. Returns a neutral 50 if we can't compute it honestly
+    (missing data), rather than a misleadingly confident number."""
+    if target_val is None or not all_vals:
+        return 50
+    below = sum(1 for v in all_vals if v is not None and v < target_val)
+    comparable = [v for v in all_vals if v is not None]
+    return round((below / len(comparable)) * 100, 1) if comparable else 50
+
+
 
 # Simple in-memory cache — protects against rapid repeated calls (e.g. quick
 # tab-switching) from each triggering a fresh API-Football request. Resets
@@ -298,7 +344,9 @@ def shortlist_alerts(limit: int = Query(10, le=30), authorized: bool = Depends(c
 def team_of_season(league: str, authorized: bool = Depends(check_api_key)):
     """Top-ranked players by potential per position within a league —
     enough per position (up to 8) to fill any formation, letting the
-    frontend slot them in based on whichever formation is selected."""
+    frontend slot them in based on whichever formation is selected. Each
+    candidate also includes their Tactical Archetype, computed against a
+    shared peer group per position (fetched once, not once per candidate)."""
     conn = get_conn()
     with conn.cursor() as cur:
         cur.execute("""
@@ -326,7 +374,44 @@ def team_of_season(league: str, authorized: bool = Depends(check_api_key)):
                 ORDER BY pps.potential_index DESC
                 LIMIT %s
             """, (league_id, position, take))
-            result[position] = cur.fetchall()
+            candidates = cur.fetchall()
+
+            # Peer group fetched ONCE per position, shared across all of
+            # this position's candidates — much cheaper than recomputing
+            # per player, and archetype rules are identical to the dossier's.
+            cur.execute("""
+                SELECT player_id,
+                       SUM(goals) * 90.0 / NULLIF(SUM(minutes_played), 0) AS goals_p90,
+                       SUM(assists) * 90.0 / NULLIF(SUM(minutes_played), 0) AS assists_p90,
+                       SUM(key_passes) * 90.0 / NULLIF(SUM(minutes_played), 0) AS key_passes_p90,
+                       SUM(tackles + interceptions) * 90.0 / NULLIF(SUM(minutes_played), 0) AS defensive_p90,
+                       SUM(take_ons_attempted) * 90.0 / NULLIF(SUM(minutes_played), 0) AS take_ons_p90,
+                       AVG(NULLIF(passes_completed, 0)::float / NULLIF(passes_attempted, 0)) * 100 AS pass_acc
+                FROM player_match_stats pms
+                JOIN players p3 ON p3.id = pms.player_id
+                WHERE p3.primary_position = %s
+                GROUP BY player_id
+                HAVING SUM(minutes_played) >= 450
+            """, (position,))
+            peer_rows = cur.fetchall()
+            peer_by_id = {r["player_id"]: r for r in peer_rows}
+
+            for c in candidates:
+                target_row = peer_by_id.get(c["id"])
+                if target_row and len(peer_rows) >= 10:
+                    pr = {
+                        "goals": percentile_rank(target_row["goals_p90"], [r["goals_p90"] for r in peer_rows]),
+                        "assists": percentile_rank(target_row["assists_p90"], [r["assists_p90"] for r in peer_rows]),
+                        "key_passes": percentile_rank(target_row["key_passes_p90"], [r["key_passes_p90"] for r in peer_rows]),
+                        "defensive": percentile_rank(target_row["defensive_p90"], [r["defensive_p90"] for r in peer_rows]),
+                        "take_ons": percentile_rank(target_row["take_ons_p90"], [r["take_ons_p90"] for r in peer_rows]),
+                        "pass_acc": percentile_rank(target_row["pass_acc"], [r["pass_acc"] for r in peer_rows]),
+                    }
+                    c["archetype"] = classify_archetype(position, pr)
+                else:
+                    c["archetype"] = None
+
+            result[position] = candidates
     conn.close()
     return result
 
@@ -387,6 +472,27 @@ def debut_tracker(limit: int = Query(10, le=30), authorized: bool = Depends(chec
     return rows
 
 
+@app.get("/players/most-capped")
+def most_capped(limit: int = Query(8, le=20), authorized: bool = Depends(check_api_key)):
+    """Players with the most real international caps — genuinely new data,
+    a quality signal completely separate from club performance."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club,
+                   pic.team_name, SUM(pic.appearances) AS total_caps
+            FROM player_international_caps pic
+            JOIN players p ON p.id = pic.player_id
+            LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            GROUP BY p.id, p.full_name, p.photo_url, cl.name, pic.team_name
+            ORDER BY total_caps DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 @app.get("/clubs/home-away")
 def home_away_split(club: str, league: str, authorized: bool = Depends(check_api_key)):
     """A club's record split by home vs away — free, derived entirely from
@@ -423,6 +529,744 @@ def home_away_split(club: str, league: str, authorized: bool = Depends(check_api
         away_record = split_record(False)
     conn.close()
     return {"home": home_record, "away": away_record}
+
+
+@app.get("/players/{player_id}/projection")
+def player_projection(player_id: int, authorized: bool = Depends(check_api_key)):
+    """A simple linear-trend projection from accumulated potential-score
+    history. Deliberately conservative about confidence — trend tracking
+    only recently began, so early results should read as illustrative,
+    not a real prediction. Returns available=False until there's enough
+    history for this to mean anything at all."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT potential_index, computed_at FROM player_potential_history
+            WHERE player_id = %s ORDER BY computed_at ASC
+        """, (player_id,))
+        points = cur.fetchall()
+    conn.close()
+
+    if len(points) < 5:
+        return {"available": False, "days_tracked": 0, "points_tracked": len(points)}
+
+    first_at = points[0]["computed_at"]
+    xs = [(p["computed_at"] - first_at).total_seconds() / 86400 for p in points]
+    ys = [p["potential_index"] for p in points]
+    n = len(points)
+    sum_x, sum_y = sum(xs), sum(ys)
+    sum_xy = sum(x * y for x, y in zip(xs, ys))
+    sum_x2 = sum(x * x for x in xs)
+    denom = (n * sum_x2 - sum_x ** 2)
+    if denom == 0:
+        return {"available": False, "days_tracked": 0, "points_tracked": len(points)}
+    slope = (n * sum_xy - sum_x * sum_y) / denom
+    intercept = (sum_y - slope * sum_x) / n
+
+    days_tracked = xs[-1]
+    projected_90d = max(0, min(100, intercept + slope * (xs[-1] + 90)))
+    confidence = "low" if days_tracked < 14 else "moderate" if days_tracked < 30 else "reasonable"
+
+    return {
+        "available": True,
+        "current": ys[-1],
+        "projected_90d": round(projected_90d, 1),
+        "days_tracked": round(days_tracked, 1),
+        "points_tracked": n,
+        "confidence": confidence,
+    }
+
+
+@app.get("/players/breakout-candidates")
+def breakout_candidates(limit: int = Query(10, le=30), authorized: bool = Depends(check_api_key)):
+    """A composite signal combining several things separately: rising
+    trend, youth relative to current quality, and strong per-90 output
+    despite limited minutes (a real debut-era efficiency signal, not
+    padded by a huge sample). Computed in clear Python steps rather than
+    one dense SQL query, specifically so the logic is easy to review.
+
+    Weights: 40% current potential (a real floor of quality), 20% youth
+    bonus (age <=23 scaled), 20% recent trend improvement (if tracked),
+    20% output-per-90 efficiency at limited minutes (rewards flashes of
+    real quality, not just accumulated stats over a full season)."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club,
+                   l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display,
+                   pps.potential_index, p.date_of_birth,
+                   stats.goals, stats.assists, stats.minutes_played
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            LEFT JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            LEFT JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            LEFT JOIN LATERAL (
+                SELECT SUM(goals) AS goals, SUM(assists) AS assists, SUM(minutes_played) AS minutes_played
+                FROM player_match_stats WHERE player_id = p.id
+            ) stats ON true
+            WHERE pps.potential_index IS NOT NULL AND stats.minutes_played BETWEEN 180 AND 1500
+        """)
+        candidates = cur.fetchall()
+
+        cur.execute("""
+            SELECT player_id,
+                   (SELECT potential_index FROM player_potential_history h2
+                    WHERE h2.player_id = h1.player_id ORDER BY computed_at ASC LIMIT 1) AS earliest_val,
+                   (SELECT potential_index FROM player_potential_history h2
+                    WHERE h2.player_id = h1.player_id ORDER BY computed_at DESC LIMIT 1) AS latest_val
+            FROM player_potential_history h1
+            GROUP BY player_id
+        """)
+        trend_by_player = {row["player_id"]: (row["latest_val"] - row["earliest_val"]) for row in cur.fetchall()}
+    conn.close()
+
+    scored = []
+    for c in candidates:
+        age = None
+        if c["date_of_birth"]:
+            age = (datetime.now().date() - c["date_of_birth"]).days / 365.25
+        age_bonus = max(0, min(100, (23 - age) * (100 / 7))) if age is not None else 0  # scaled so age 16 (youngest realistic pro) ≈ 100, age 23+ = 0
+
+        trend_delta = trend_by_player.get(c["id"], 0)
+        trend_bonus = max(0, min(100, trend_delta * 5))  # a +20 potential swing maxes this out
+
+        minutes = c["minutes_played"] or 1
+        output_per90 = ((c["goals"] or 0) + (c["assists"] or 0)) * 90 / minutes
+        efficiency_bonus = min(100, output_per90 * 50)  # ~2 contributions per 90 maxes this out
+
+        breakout_score = (
+            (c["potential_index"] or 0) * 0.4
+            + age_bonus * 0.2
+            + trend_bonus * 0.2
+            + efficiency_bonus * 0.2
+        )
+        scored.append({**c, "breakout_score": round(breakout_score, 1)})
+
+    scored.sort(key=lambda r: r["breakout_score"], reverse=True)
+    return scored[:limit]
+
+
+@app.get("/clubs/tactical-fit")
+def tactical_fit(club: str, league: str, limit: int = Query(10, le=30), authorized: bool = Depends(check_api_key)):
+    """Infers a club's real playing style from their own squad's average
+    per-90 numbers — possession tendency (pass accuracy, pass volume) and
+    combativeness (tackles+interceptions per 90) — then ranks OTHER
+    players across the database by how closely their own profile matches
+    it. A genuinely different kind of insight than raw ability: who would
+    actually suit THIS club's system, not just who's good in general.
+
+    Deliberately simple, 2-axis similarity (euclidean distance) rather
+    than an opaque black-box score — the two axes are visible in the
+    response so the fit is explainable, not just a mystery number."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        # Club's own squad profile — averaged across players with a
+        # meaningful sample (180+ minutes), so one cameo doesn't skew it.
+        cur.execute("""
+            SELECT AVG(stats.pass_accuracy_pct) AS avg_pass_acc,
+                   AVG((stats.tackles + stats.interceptions) * 90.0 / NULLIF(stats.minutes_played, 0)) AS avg_combativeness
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT SUM(tackles) AS tackles, SUM(interceptions) AS interceptions,
+                       SUM(minutes_played) AS minutes_played,
+                       AVG(pass_accuracy_pct) AS pass_accuracy_pct
+                FROM player_match_stats WHERE player_id = p.id
+            ) stats ON true
+            WHERE cl.name = %s AND cl.league_id = %s AND stats.minutes_played >= 180
+        """, (club, league_id))
+        club_profile = cur.fetchone()
+
+        if not club_profile or club_profile["avg_pass_acc"] is None:
+            conn.close()
+            return {"club_profile": None, "candidates": []}
+
+        # Every tracked player's own profile, same two axes, excluding
+        # this club's own players (no point suggesting a transfer target
+        # who's already there).
+        cur.execute("""
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club, p.primary_position,
+                   AVG(stats.pass_accuracy_pct) AS pass_acc,
+                   AVG((stats.tackles + stats.interceptions) * 90.0 / NULLIF(stats.minutes_played, 0)) AS combativeness,
+                   pps.potential_index
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT SUM(tackles) AS tackles, SUM(interceptions) AS interceptions,
+                       SUM(minutes_played) AS minutes_played,
+                       AVG(pass_accuracy_pct) AS pass_accuracy_pct
+                FROM player_match_stats WHERE player_id = p.id
+            ) stats ON true
+            LEFT JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE stats.minutes_played >= 450 AND cl.name != %s AND pps.potential_index IS NOT NULL
+            GROUP BY p.id, p.full_name, p.photo_url, cl.name, p.primary_position, pps.potential_index
+            HAVING AVG(stats.pass_accuracy_pct) IS NOT NULL
+        """, (club,))
+        candidates = cur.fetchall()
+    conn.close()
+
+    target_pass = club_profile["avg_pass_acc"]
+    target_comb = club_profile["avg_combativeness"] or 0
+
+    # Z-score normalize both axes across the candidate pool before
+    # computing distance — pass accuracy (~0-100 range) and combativeness
+    # (~0-10 range) are on very different scales, so a raw euclidean
+    # distance would let pass accuracy dominate almost entirely even when
+    # both differences are equally realistic. Normalizing first means each
+    # axis contributes based on how many standard deviations away it is,
+    # not its raw numeric size.
+    pass_vals = [c["pass_acc"] for c in candidates if c["pass_acc"] is not None]
+    comb_vals = [c["combativeness"] or 0 for c in candidates]
+    pass_mean, pass_std = (sum(pass_vals) / len(pass_vals), (sum((v - sum(pass_vals) / len(pass_vals)) ** 2 for v in pass_vals) / len(pass_vals)) ** 0.5) if pass_vals else (0, 1)
+    comb_mean, comb_std = (sum(comb_vals) / len(comb_vals), (sum((v - sum(comb_vals) / len(comb_vals)) ** 2 for v in comb_vals) / len(comb_vals)) ** 0.5) if comb_vals else (0, 1)
+    pass_std = pass_std or 1  # avoid division by zero if every candidate is identical
+    comb_std = comb_std or 1
+
+    scored = []
+    for c in candidates:
+        pass_diff = ((c["pass_acc"] or 0) - target_pass) / pass_std
+        comb_diff = ((c["combativeness"] or 0) - target_comb) / comb_std
+        distance = (pass_diff ** 2 + comb_diff ** 2) ** 0.5
+        scored.append({**c, "fit_distance": round(distance, 2)})
+
+    scored.sort(key=lambda r: r["fit_distance"])
+    return {
+        "club_profile": {"avg_pass_accuracy": round(target_pass, 1), "avg_combativeness": round(target_comb, 2)},
+        "candidates": scored[:limit],
+    }
+
+
+@app.get("/clubs/recruitment-priorities")
+def recruitment_priorities(club: str, league: str, limit: int = Query(10, le=30), authorized: bool = Depends(check_api_key)):
+    """The genuine synthesis feature — combines tactical fit, raw ability,
+    how much we actually trust that ability (confidence), and upside (youth)
+    into ONE ranked, actionable list: who should this club realistically be
+    looking at right now. Weights: 35% tactical fit, 35% potential, 15%
+    confidence, 15% youth — deliberately balanced so no single factor alone
+    can carry a recommendation (a great tactical fit with almost no real
+    minutes still won't rank highly, and vice versa)."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        cur.execute("""
+            SELECT AVG(stats.pass_accuracy_pct) AS avg_pass_acc,
+                   AVG((stats.tackles + stats.interceptions) * 90.0 / NULLIF(stats.minutes_played, 0)) AS avg_combativeness
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT SUM(tackles) AS tackles, SUM(interceptions) AS interceptions,
+                       SUM(minutes_played) AS minutes_played,
+                       AVG(pass_accuracy_pct) AS pass_accuracy_pct
+                FROM player_match_stats WHERE player_id = p.id
+            ) stats ON true
+            WHERE cl.name = %s AND cl.league_id = %s AND stats.minutes_played >= 180
+        """, (club, league_id))
+        club_profile = cur.fetchone()
+        if not club_profile or club_profile["avg_pass_acc"] is None:
+            conn.close()
+            return {"club_profile": None, "candidates": []}
+
+        cur.execute("""
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club, p.primary_position, p.date_of_birth,
+                   AVG(stats.pass_accuracy_pct) AS pass_acc,
+                   AVG((stats.tackles + stats.interceptions) * 90.0 / NULLIF(stats.minutes_played, 0)) AS combativeness,
+                   SUM(stats.minutes_played) AS total_minutes,
+                   pps.potential_index
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT SUM(tackles) AS tackles, SUM(interceptions) AS interceptions,
+                       SUM(minutes_played) AS minutes_played,
+                       AVG(pass_accuracy_pct) AS pass_accuracy_pct
+                FROM player_match_stats WHERE player_id = p.id
+            ) stats ON true
+            LEFT JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE stats.minutes_played >= 450 AND cl.name != %s AND pps.potential_index IS NOT NULL
+            GROUP BY p.id, p.full_name, p.photo_url, cl.name, p.primary_position, p.date_of_birth, pps.potential_index
+            HAVING AVG(stats.pass_accuracy_pct) IS NOT NULL
+        """, (club,))
+        candidates = cur.fetchall()
+    conn.close()
+
+    target_pass = club_profile["avg_pass_acc"]
+    target_comb = club_profile["avg_combativeness"] or 0
+
+    pass_vals = [c["pass_acc"] for c in candidates if c["pass_acc"] is not None]
+    comb_vals = [c["combativeness"] or 0 for c in candidates]
+    pass_mean = sum(pass_vals) / len(pass_vals) if pass_vals else 0
+    pass_std = ((sum((v - pass_mean) ** 2 for v in pass_vals) / len(pass_vals)) ** 0.5) if pass_vals else 1
+    comb_mean = sum(comb_vals) / len(comb_vals) if comb_vals else 0
+    comb_std = ((sum((v - comb_mean) ** 2 for v in comb_vals) / len(comb_vals)) ** 0.5) if comb_vals else 1
+    pass_std = pass_std or 1
+    comb_std = comb_std or 1
+
+    scored = []
+    for c in candidates:
+        pass_diff = ((c["pass_acc"] or 0) - target_pass) / pass_std
+        comb_diff = ((c["combativeness"] or 0) - target_comb) / comb_std
+        distance = (pass_diff ** 2 + comb_diff ** 2) ** 0.5
+        fit_score = max(0, 100 - distance * 25)
+
+        minutes = c["total_minutes"] or 0
+        confidence_bonus = 100 if minutes >= 1800 else 75 if minutes >= 900 else 50 if minutes >= 300 else 25
+
+        age = (datetime.now().date() - c["date_of_birth"]).days / 365.25 if c["date_of_birth"] else None
+        youth_bonus = max(0, min(100, (23 - age) * (100 / 7))) if age is not None else 50
+
+        composite = (
+            fit_score * 0.35
+            + (c["potential_index"] or 0) * 0.35
+            + confidence_bonus * 0.15
+            + youth_bonus * 0.15
+        )
+        scored.append({
+            "id": c["id"], "full_name": c["full_name"], "photo_url": c["photo_url"],
+            "club": c["club"], "position": c["primary_position"],
+            "potential_index": round(c["potential_index"], 1) if c["potential_index"] else None,
+            "priority_score": round(composite, 1),
+        })
+
+    scored.sort(key=lambda r: r["priority_score"], reverse=True)
+    return {
+        "club_profile": {"avg_pass_accuracy": round(target_pass, 1), "avg_combativeness": round(target_comb, 2)},
+        "candidates": scored[:limit],
+    }
+
+
+def detect_squad_needs(cur, club, league_id):
+    """Which position groups are genuinely thin for a club — same
+    thresholds as the client-side depth warning already shown in Club
+    Profile, kept consistent so the two never disagree with each other."""
+    cur.execute("""
+        SELECT p.primary_position, COUNT(*) AS n
+        FROM players p
+        JOIN clubs cl ON cl.id = p.current_club_id
+        WHERE cl.name = %s AND cl.league_id = %s AND p.primary_position IS NOT NULL
+        GROUP BY p.primary_position
+    """, (club, league_id))
+    counts = {r["primary_position"]: r["n"] for r in cur.fetchall()}
+    thresholds = {"Goalkeeper": 2, "Defender": 4, "Midfielder": 4, "Attacker": 4}
+    return [pos for pos, threshold in thresholds.items() if counts.get(pos, 0) <= threshold]
+
+
+class IntelligenceFeedRequest(BaseModel):
+    favorites: list  # [{"club": str, "league": str}, ...]
+
+
+@app.post("/intelligence-feed")
+def intelligence_feed(body: IntelligenceFeedRequest, authorized: bool = Depends(check_api_key)):
+    """The genuine synthesis feature: for every club you've favorited,
+    automatically detects real squad needs (thin positions) and
+    cross-references them against actual recruitment candidates who fit
+    BOTH that specific position AND the club's tactical style — not just
+    generically good players. This is the first feature that reasons
+    across several other features rather than being a standalone signal."""
+    conn = get_conn()
+    results = []
+    with conn.cursor() as cur:
+        for fav in body.favorites[:10]:  # cap to keep this fast and bounded
+            club, league = fav.get("club"), fav.get("league")
+            if not club or not league:
+                continue
+
+            cur.execute("""
+                SELECT l.id FROM leagues l
+                LEFT JOIN countries co ON co.id = l.country_id
+                WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+            """, (league,))
+            row = cur.fetchone()
+            if not row:
+                continue
+            league_id = row["id"]
+
+            needs = detect_squad_needs(cur, club, league_id)
+            if not needs:
+                continue
+
+            # Club's own tactical profile, same logic as recruitment-priorities.
+            cur.execute("""
+                SELECT AVG(stats.pass_accuracy_pct) AS avg_pass_acc,
+                       AVG((stats.tackles + stats.interceptions) * 90.0 / NULLIF(stats.minutes_played, 0)) AS avg_combativeness
+                FROM players p
+                JOIN clubs cl ON cl.id = p.current_club_id
+                JOIN LATERAL (
+                    SELECT SUM(tackles) AS tackles, SUM(interceptions) AS interceptions,
+                           SUM(minutes_played) AS minutes_played, AVG(pass_accuracy_pct) AS pass_accuracy_pct
+                    FROM player_match_stats WHERE player_id = p.id
+                ) stats ON true
+                WHERE cl.name = %s AND cl.league_id = %s AND stats.minutes_played >= 180
+            """, (club, league_id))
+            club_profile = cur.fetchone()
+            if not club_profile or club_profile["avg_pass_acc"] is None:
+                continue
+            target_pass = club_profile["avg_pass_acc"]
+            target_comb = club_profile["avg_combativeness"] or 0
+
+            club_recommendations = []
+            for position in needs:
+                cur.execute("""
+                    SELECT p.id, p.full_name, p.photo_url, cl.name AS club,
+                           AVG(stats.pass_accuracy_pct) AS pass_acc,
+                           AVG((stats.tackles + stats.interceptions) * 90.0 / NULLIF(stats.minutes_played, 0)) AS combativeness,
+                           pps.potential_index
+                    FROM players p
+                    JOIN clubs cl ON cl.id = p.current_club_id
+                    JOIN LATERAL (
+                        SELECT SUM(tackles) AS tackles, SUM(interceptions) AS interceptions,
+                               SUM(minutes_played) AS minutes_played, AVG(pass_accuracy_pct) AS pass_accuracy_pct
+                        FROM player_match_stats WHERE player_id = p.id
+                    ) stats ON true
+                    LEFT JOIN LATERAL (
+                        SELECT potential_index FROM player_potential_scores
+                        WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+                    ) pps ON true
+                    WHERE stats.minutes_played >= 450 AND cl.name != %s
+                      AND p.primary_position = %s AND pps.potential_index IS NOT NULL
+                    GROUP BY p.id, p.full_name, p.photo_url, cl.name, pps.potential_index
+                    HAVING AVG(stats.pass_accuracy_pct) IS NOT NULL
+                """, (club, position))
+                candidates = cur.fetchall()
+                if not candidates:
+                    continue
+
+                pass_vals = [c["pass_acc"] for c in candidates if c["pass_acc"] is not None]
+                comb_vals = [c["combativeness"] or 0 for c in candidates]
+                pass_mean = sum(pass_vals) / len(pass_vals) if pass_vals else 0
+                pass_std = ((sum((v - pass_mean) ** 2 for v in pass_vals) / len(pass_vals)) ** 0.5) if pass_vals else 1
+                comb_mean = sum(comb_vals) / len(comb_vals) if comb_vals else 0
+                comb_std = ((sum((v - comb_mean) ** 2 for v in comb_vals) / len(comb_vals)) ** 0.5) if comb_vals else 1
+                pass_std = pass_std or 1
+                comb_std = comb_std or 1
+
+                best = None
+                best_score = -1
+                for c in candidates:
+                    pass_diff = ((c["pass_acc"] or 0) - target_pass) / pass_std
+                    comb_diff = ((c["combativeness"] or 0) - target_comb) / comb_std
+                    distance = (pass_diff ** 2 + comb_diff ** 2) ** 0.5
+                    fit_score = max(0, 100 - distance * 25)
+                    composite = fit_score * 0.5 + (c["potential_index"] or 0) * 0.5
+                    if composite > best_score:
+                        best_score = composite
+                        best = c
+
+                if best:
+                    club_recommendations.append({
+                        "position_needed": position,
+                        "player": {"id": best["id"], "full_name": best["full_name"], "photo_url": best["photo_url"], "club": best["club"]},
+                        "match_score": round(best_score, 1),
+                    })
+
+            if club_recommendations:
+                results.append({"club": club, "league": league, "needs": needs, "recommendations": club_recommendations})
+
+    conn.close()
+    return results
+
+
+@app.get("/scout/track-record")
+def scout_track_record(authorized: bool = Depends(check_api_key)):
+    """The first feature about YOUR judgment, not the players' — for every
+    player you've ever shortlisted, checks whether their potential has
+    genuinely risen since you flagged them, and whether they've since
+    moved clubs (a real signal someone else noticed them too). Honest
+    caveat: trend history only recently started being tracked, so the
+    'delta since shortlisting' will be small/near-zero for most players
+    right now — this becomes genuinely meaningful over the coming weeks
+    as both shortlisting activity and trend history accumulate."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH first_shortlisted AS (
+                SELECT player_id, MIN(created_at) AS shortlisted_at
+                FROM scout_notes WHERE watch_level = 'shortlist'
+                GROUP BY player_id
+            )
+            SELECT fs.player_id, fs.shortlisted_at, p.full_name, p.photo_url, cl.name AS club,
+                   pps.potential_index AS current_potential,
+                   (SELECT h.potential_index FROM player_potential_history h
+                    WHERE h.player_id = fs.player_id AND h.computed_at >= fs.shortlisted_at
+                    ORDER BY h.computed_at ASC LIMIT 1) AS potential_at_shortlisting,
+                   (SELECT COUNT(*) FROM player_club_transfers t
+                    WHERE t.player_id = fs.player_id AND t.changed_at > fs.shortlisted_at) AS transfers_since
+            FROM first_shortlisted fs
+            JOIN players p ON p.id = fs.player_id
+            LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            LEFT JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = fs.player_id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            ORDER BY fs.shortlisted_at DESC
+        """)
+        rows = cur.fetchall()
+    conn.close()
+
+    players = []
+    deltas = []
+    for r in rows:
+        delta = None
+        if r["current_potential"] is not None and r["potential_at_shortlisting"] is not None:
+            delta = round(r["current_potential"] - r["potential_at_shortlisting"], 1)
+            deltas.append(delta)
+        players.append({
+            "id": r["player_id"], "full_name": r["full_name"], "photo_url": r["photo_url"], "club": r["club"],
+            "shortlisted_at": r["shortlisted_at"],
+            "current_potential": round(r["current_potential"], 1) if r["current_potential"] is not None else None,
+            "delta_since_shortlisting": delta,
+            "moved_clubs_since": r["transfers_since"] > 0,
+        })
+
+    summary = {
+        "total_shortlisted": len(players),
+        "with_trend_data": len(deltas),
+        "avg_delta": round(sum(deltas) / len(deltas), 1) if deltas else None,
+        "risen_count": sum(1 for d in deltas if d > 0),
+        "moved_clubs_count": sum(1 for p in players if p["moved_clubs_since"]),
+    }
+    return {"summary": summary, "players": players}
+
+
+@app.get("/scout/discovery")
+def scout_discovery(limit: int = Query(10, le=30), authorized: bool = Depends(check_api_key)):
+    """A genuine recommendation engine: infers a real scouting profile from
+    everyone you've already shortlisted (typical position, age range,
+    potential tier), then searches for players who match that SAME
+    profile but aren't shortlisted yet. Not generic 'best players' — this
+    is shaped by your own demonstrated taste. Needs at least 3 shortlisted
+    players with real position/age data to infer a meaningful profile."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT DISTINCT ON (p.id) p.id, p.primary_position, p.date_of_birth, pps.potential_index
+            FROM players p
+            JOIN LATERAL (
+                SELECT watch_level FROM scout_notes sn
+                WHERE sn.player_id = p.id ORDER BY created_at DESC LIMIT 1
+            ) latest_note ON true
+            LEFT JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE latest_note.watch_level = 'shortlist'
+        """)
+        shortlisted = cur.fetchall()
+
+        usable = [s for s in shortlisted if s["primary_position"] and s["date_of_birth"] and s["potential_index"] is not None]
+        if len(usable) < 3:
+            conn.close()
+            return {"profile": None, "discoveries": [],
+                    "message": f"Shortlist {3 - len(usable)} more player{'s' if 3 - len(usable) != 1 else ''} with known position/age to unlock this — needs a real pattern to learn from."}
+
+        # Infer the profile: most common position, age range, potential tier.
+        position_counts = {}
+        for s in usable:
+            position_counts[s["primary_position"]] = position_counts.get(s["primary_position"], 0) + 1
+        top_position = max(position_counts, key=position_counts.get)
+
+        ages = [(datetime.now().date() - s["date_of_birth"]).days / 365.25 for s in usable]
+        avg_age = sum(ages) / len(ages)
+        age_min, age_max = max(15, avg_age - 4), avg_age + 4
+
+        potentials = [s["potential_index"] for s in usable]
+        avg_potential = sum(potentials) / len(potentials)
+        potential_floor = max(0, avg_potential - 15)  # a reasonable band around your historical picks
+
+        already_shortlisted_ids = {s["id"] for s in shortlisted}
+
+        cur.execute("""
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club,
+                   l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display,
+                   pps.potential_index, p.date_of_birth
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            LEFT JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE p.primary_position = %s AND pps.potential_index >= %s
+              AND p.date_of_birth IS NOT NULL
+            ORDER BY pps.potential_index DESC
+            LIMIT 200
+        """, (top_position, potential_floor))
+        candidates = cur.fetchall()
+    conn.close()
+
+    discoveries = []
+    for c in candidates:
+        if c["id"] in already_shortlisted_ids:
+            continue
+        age = (datetime.now().date() - c["date_of_birth"]).days / 365.25
+        if not (age_min <= age <= age_max):
+            continue
+        discoveries.append({
+            "id": c["id"], "full_name": c["full_name"], "photo_url": c["photo_url"],
+            "club": c["club"], "league": c["league_display"],
+            "potential_index": round(c["potential_index"], 1), "age": round(age, 1),
+        })
+        if len(discoveries) >= limit:
+            break
+
+    return {
+        "profile": {
+            "typical_position": top_position,
+            "typical_age_range": f"{round(age_min)}-{round(age_max)}",
+            "typical_potential_tier": round(avg_potential, 1),
+            "based_on": len(usable),
+        },
+        "discoveries": discoveries,
+    }
+
+
+@app.get("/leagues/strength")
+def league_strength(authorized: bool = Depends(check_api_key)):
+    """Average potential score per tracked league — genuine meta-context
+    for comparing quality across your 17 leagues, not just within one.
+    Requires 20+ scored players in a league to appear, so a league that's
+    barely been ingested yet doesn't show a misleadingly high/low average
+    from a tiny, unrepresentative sample."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display,
+                   AVG(pps.potential_index) AS avg_potential, COUNT(*) AS scored_players
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            GROUP BY league_display
+            HAVING COUNT(*) >= 20
+            ORDER BY avg_potential DESC
+        """)
+        rows = cur.fetchall()
+    conn.close()
+    return [{"league": r["league_display"], "avg_potential": round(r["avg_potential"], 1), "scored_players": r["scored_players"]} for r in rows]
+
+
+@app.get("/clubs/continuity")
+def squad_continuity(limit: int = Query(15, le=50), authorized: bool = Depends(check_api_key)):
+    """Which clubs have retained their core vs churned heavily, using the
+    real transfer log. Honest caveat: this log was only recently cleaned
+    of historical noise (see earlier in the build), so early results will
+    be sparse — it gets more meaningful as more genuine transfers happen
+    and get tracked going forward."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT cl.name AS club, COUNT(*) FILTER (WHERE t.new_club_id = cl.id) AS arrivals,
+                   COUNT(*) FILTER (WHERE t.old_club_id = cl.id) AS departures
+            FROM clubs cl
+            LEFT JOIN player_club_transfers t ON t.new_club_id = cl.id OR t.old_club_id = cl.id
+            GROUP BY cl.name
+            HAVING COUNT(*) > 0
+            ORDER BY (COUNT(*) FILTER (WHERE t.new_club_id = cl.id) + COUNT(*) FILTER (WHERE t.old_club_id = cl.id)) DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/leagues/table-predictor")
+def table_predictor(league: str, authorized: bool = Depends(check_api_key)):
+    """An illustrative alternate table ranked purely by squad quality
+    (average potential score), shown alongside each club's REAL current
+    league position for honest comparison — deliberately NOT a real
+    forecast. Squad quality alone doesn't determine outcomes: form,
+    injuries, tactics, and management all matter enormously and none of
+    that is in this data. This is here to spot over/under-performers
+    relative to squad quality, not to predict results."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        cur.execute("""
+            SELECT cl.name AS club, AVG(pps.potential_index) AS avg_potential, COUNT(*) AS squad_size
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE cl.league_id = %s
+            GROUP BY cl.name
+            HAVING COUNT(*) >= 8
+            ORDER BY avg_potential DESC
+        """, (league_id,))
+        squad_ranking = cur.fetchall()
+
+        cur.execute("""
+            WITH club_matches AS (
+                SELECT home_club_id AS club_id,
+                    CASE WHEN home_score > away_score THEN 3 WHEN home_score = away_score THEN 1 ELSE 0 END AS pts
+                FROM matches WHERE league_id = %s AND status = 'finished'
+                UNION ALL
+                SELECT away_club_id,
+                    CASE WHEN away_score > home_score THEN 3 WHEN away_score = home_score THEN 1 ELSE 0 END AS pts
+                FROM matches WHERE league_id = %s AND status = 'finished'
+            )
+            SELECT c.name AS club, SUM(pts) AS points
+            FROM club_matches cm JOIN clubs c ON c.id = cm.club_id
+            GROUP BY c.name ORDER BY points DESC
+        """, (league_id, league_id))
+        real_table = {r["club"]: i + 1 for i, r in enumerate(cur.fetchall())}
+    conn.close()
+
+    result = []
+    for i, r in enumerate(squad_ranking):
+        real_pos = real_table.get(r["club"])
+        result.append({
+            "club": r["club"], "squad_quality_rank": i + 1,
+            "avg_potential": round(r["avg_potential"], 1),
+            "real_table_position": real_pos,
+            "delta": (real_pos - (i + 1)) if real_pos else None,  # positive = overperforming their squad quality
+        })
+    return result
 
 
 @app.get("/transfers")
@@ -913,6 +1757,173 @@ def player_dossier(player_id: int, authorized: bool = Depends(check_api_key)):
         """, (player_id,))
         history = cur.fetchall()
 
+        cur.execute("""
+            SELECT id, technical, physical, mental, tactical, notes, created_at
+            FROM player_scout_ratings
+            WHERE player_id = %s
+            ORDER BY created_at DESC
+        """, (player_id,))
+        scout_ratings = cur.fetchall()
+
+        # Positional versatility — real per-match position data, already
+        # captured during ingestion but never surfaced until now.
+        cur.execute("""
+            SELECT position_played, COUNT(*) AS matches
+            FROM player_match_stats
+            WHERE player_id = %s AND position_played IS NOT NULL AND minutes_played > 0
+            GROUP BY position_played
+            ORDER BY matches DESC
+        """, (player_id,))
+        positions_played = cur.fetchall()
+
+        # Consistency — rating variance across real matches. Needs a
+        # minimum sample (5+) to mean anything; STDDEV_SAMP returns NULL
+        # for n<2 in Postgres, and a single-match sample is meaningless
+        # regardless, so we gate in Python below.
+        cur.execute("""
+            SELECT AVG(rating) AS avg_rating, STDDEV_SAMP(rating) AS rating_stddev, COUNT(*) AS matches
+            FROM player_match_stats
+            WHERE player_id = %s AND rating IS NOT NULL AND rating > 0
+        """, (player_id,))
+        consistency_row = cur.fetchone()
+        consistency = None
+        if consistency_row and consistency_row["matches"] >= 5:
+            consistency = {
+                "avg_rating": round(consistency_row["avg_rating"], 2),
+                "stddev": round(consistency_row["rating_stddev"], 2) if consistency_row["rating_stddev"] is not None else 0,
+                "matches": consistency_row["matches"],
+            }
+
+        # Scouting Confidence — an honesty layer on the potential score
+        # itself. A rating built on 2,000 real minutes deserves more trust
+        # than one built on 90 minutes of a single substitute cameo, even
+        # if the number looks identical. Uses TRUE total minutes (no
+        # rating filter) — a match without a recorded rating still counts
+        # as real minutes played.
+        cur.execute("""
+            SELECT SUM(minutes_played) AS total_minutes
+            FROM player_match_stats WHERE player_id = %s
+        """, (player_id,))
+        minutes_row = cur.fetchone()
+        total_minutes = (minutes_row["total_minutes"] if minutes_row else None) or 0
+        if total_minutes >= 1800:
+            confidence_tier = "high"
+        elif total_minutes >= 900:
+            confidence_tier = "good"
+        elif total_minutes >= 300:
+            confidence_tier = "moderate"
+        else:
+            confidence_tier = "low"
+        scouting_confidence = {"tier": confidence_tier, "minutes": total_minutes}
+
+        # Tactical Archetype — classifies WHAT KIND of player this is
+        # (Playmaker, Poacher, Ball-Playing Defender, etc.), not just their
+        # broad position. Computed on-demand against real same-position
+        # peers (450+ minutes each, so the peer group itself is meaningful)
+        # using percentile rank on a handful of per-90 stats, then simple,
+        # transparent threshold rules — not a black-box model, so the
+        # reasoning stays explainable. Only computed if the player
+        # themselves has 450+ minutes, so a tiny sample doesn't get a
+        # confident-sounding label it hasn't earned.
+        archetype = None
+        position = player.get("primary_position")
+        if position and total_minutes >= 450:
+            cur.execute("""
+                SELECT player_id,
+                       SUM(goals) * 90.0 / NULLIF(SUM(minutes_played), 0) AS goals_p90,
+                       SUM(assists) * 90.0 / NULLIF(SUM(minutes_played), 0) AS assists_p90,
+                       SUM(key_passes) * 90.0 / NULLIF(SUM(minutes_played), 0) AS key_passes_p90,
+                       SUM(tackles + interceptions) * 90.0 / NULLIF(SUM(minutes_played), 0) AS defensive_p90,
+                       SUM(take_ons_attempted) * 90.0 / NULLIF(SUM(minutes_played), 0) AS take_ons_p90,
+                       AVG(NULLIF(passes_completed, 0)::float / NULLIF(passes_attempted, 0)) * 100 AS pass_acc
+                FROM player_match_stats pms
+                JOIN players p3 ON p3.id = pms.player_id
+                WHERE p3.primary_position = %s
+                GROUP BY player_id
+                HAVING SUM(minutes_played) >= 450
+            """, (position,))
+            peer_rows = cur.fetchall()
+
+            target_row = next((r for r in peer_rows if r["player_id"] == player_id), None)
+            if target_row and len(peer_rows) >= 10:  # need a real peer group to rank against
+                pr = {
+                    "goals": percentile_rank(target_row["goals_p90"], [r["goals_p90"] for r in peer_rows]),
+                    "assists": percentile_rank(target_row["assists_p90"], [r["assists_p90"] for r in peer_rows]),
+                    "key_passes": percentile_rank(target_row["key_passes_p90"], [r["key_passes_p90"] for r in peer_rows]),
+                    "defensive": percentile_rank(target_row["defensive_p90"], [r["defensive_p90"] for r in peer_rows]),
+                    "take_ons": percentile_rank(target_row["take_ons_p90"], [r["take_ons_p90"] for r in peer_rows]),
+                    "pass_acc": percentile_rank(target_row["pass_acc"], [r["pass_acc"] for r in peer_rows]),
+                }
+                archetype = classify_archetype(position, pr)
+
+        # League-Adjusted Rating — a second, cross-league-normalized score.
+        # Deliberately conservative: only ever DEFLATES a score for a
+        # weaker league, never inflates one for a stronger league. Reason:
+        # our potential_index already ranks players by GLOBAL percentile
+        # (not within-league), so a strong-league player's high percentile
+        # is already fairly earned against tough competition — but a
+        # weak-league player's raw stats (goals, etc.) may be inflated
+        # simply by facing weaker opposition, which the global percentile
+        # doesn't fully correct for. This surfaces that gap explicitly
+        # rather than pretending a 75 means the same thing everywhere.
+        league_adjusted = None
+        if score and player.get("league") and player.get("club"):
+            cur.execute("""
+                SELECT l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display,
+                       AVG(pps.potential_index) AS avg_potential, COUNT(*) AS n
+                FROM players p2
+                JOIN clubs cl2 ON cl2.id = p2.current_club_id
+                JOIN leagues l ON l.id = cl2.league_id
+                LEFT JOIN countries co ON co.id = l.country_id
+                JOIN LATERAL (
+                    SELECT potential_index FROM player_potential_scores
+                    WHERE player_id = p2.id ORDER BY season DESC LIMIT 1
+                ) pps ON true
+                GROUP BY league_display
+                HAVING COUNT(*) >= 20
+            """)
+            league_averages = {r["league_display"]: r["avg_potential"] for r in cur.fetchall()}
+            this_league_avg = None
+            for name, avg in league_averages.items():
+                if player["league"] in name:
+                    this_league_avg = avg
+                    break
+            if this_league_avg and league_averages:
+                global_avg = sum(league_averages.values()) / len(league_averages)
+                factor = min(1.0, this_league_avg / global_avg) if global_avg > 0 else 1.0
+                league_adjusted = round(score["potential_index"] * factor, 1)
+
+        # Composite Scouting Grade — one letter grade synthesizing the raw
+        # rating with how much we actually trust it. A high score built on
+        # a tiny sample gets explicitly CAPPED, not just footnoted — the
+        # grade itself encodes "don't fully trust this yet," rather than
+        # showing an A+ next to a quiet asterisk nobody reads.
+        grade = None
+        if score and score.get("potential_index") is not None:
+            base = league_adjusted if league_adjusted is not None else score["potential_index"]
+            if base >= 90: raw_grade = "A+"
+            elif base >= 80: raw_grade = "A"
+            elif base >= 70: raw_grade = "B+"
+            elif base >= 60: raw_grade = "B"
+            elif base >= 50: raw_grade = "C+"
+            elif base >= 40: raw_grade = "C"
+            else: raw_grade = "D"
+
+            grade_order = ["D", "C", "C+", "B", "B+", "A", "A+"]
+            cap = {"low": "B", "moderate": "A", "good": "A+", "high": "A+"}[confidence_tier]
+            if grade_order.index(raw_grade) > grade_order.index(cap):
+                grade = cap
+            else:
+                grade = raw_grade
+
+        cur.execute("""
+            SELECT team_name, competition_name, appearances, goals, assists, minutes_played
+            FROM player_international_caps
+            WHERE player_id = %s
+            ORDER BY appearances DESC NULLS LAST
+        """, (player_id,))
+        international_caps = cur.fetchall()
+
     conn.close()
     return {
         "player": player,
@@ -920,6 +1931,14 @@ def player_dossier(player_id: int, authorized: bool = Depends(check_api_key)):
         "scout_notes": notes,
         "recent_matches": recent_matches,
         "history": history,
+        "scout_ratings": scout_ratings,
+        "positions_played": positions_played,
+        "consistency": consistency,
+        "scouting_confidence": scouting_confidence,
+        "league_adjusted_rating": league_adjusted,
+        "archetype": archetype,
+        "grade": grade,
+        "international_caps": international_caps,
     }
 
 
@@ -957,6 +1976,46 @@ def set_watch_level(player_id: int, body: WatchRequest, authorized: bool = Depen
     conn.commit()
     conn.close()
     return result
+
+
+class ScoutRatingRequest(BaseModel):
+    technical: int
+    physical: int
+    mental: int
+    tactical: int
+    notes: Optional[str] = None
+
+
+@app.post("/players/{player_id}/scout-rating")
+def save_scout_rating(player_id: int, body: ScoutRatingRequest, authorized: bool = Depends(check_api_key)):
+    """Structured 1-10 evaluation across four real scouting dimensions —
+    replaces the old blunt watch_level flag as the qualitative signal the
+    scoring model actually uses, once one exists for a player."""
+    for field, value in [("technical", body.technical), ("physical", body.physical),
+                          ("mental", body.mental), ("tactical", body.tactical)]:
+        if not (1 <= value <= 10):
+            raise HTTPException(status_code=400, detail=f"{field} must be between 1 and 10")
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM players WHERE id = %s", (player_id,))
+        if not cur.fetchone():
+            conn.close()
+            raise HTTPException(status_code=404, detail="Player not found")
+
+        cur.execute(
+            """
+            INSERT INTO player_scout_ratings (player_id, technical, physical, mental, tactical, notes)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id, technical, physical, mental, tactical, notes, created_at
+            """,
+            (player_id, body.technical, body.physical, body.mental, body.tactical, body.notes),
+        )
+        result = cur.fetchone()
+    conn.commit()
+    conn.close()
+    return result
+
 
 
 # ---------------------------------------------------------------------------
