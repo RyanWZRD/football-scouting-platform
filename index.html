@@ -558,6 +558,90 @@ function Sparkline({ points, width = 200, height = 50 }) {
 // feeds), branded card designed specifically to be exported as an image,
 // not for on-screen browsing. Kept visually simple (solid colors, no
 // gradients/blur) since html2canvas renders most reliably that way.
+function FullDossierCard({ p, details, forwardedRef }) {
+  const latestRating = details?.scout_ratings?.[0];
+  const recentNotes = (details?.scout_notes || []).slice(0, 3);
+  return (
+    <div ref={forwardedRef} style={{
+      width: 900, background: "#0E1A15", color: "#EDEDE3", fontFamily: "'Inter', sans-serif",
+      padding: 56, boxSizing: "border-box", border: "2px solid #E3A857",
+    }}>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 18, letterSpacing: 4, color: "#E3A857", textTransform: "uppercase", textAlign: "center" }}>
+        ⚽ Full Scouting Dossier
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 24, marginTop: 32 }}>
+        <div style={{ width: 120, height: 120, borderRadius: "50%", overflow: "hidden", border: "3px solid #E3A857", background: "#152922", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          {p.photoUrl ? (
+            <img src={API_BASE_URL ? `${API_BASE_URL}/image-proxy?url=${encodeURIComponent(p.photoUrl)}` : p.photoUrl}
+              crossOrigin="anonymous" alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          ) : (
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 36, color: "#6B8570" }}>
+              {(p.name || "?").split(" ").map(w => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase()}
+            </span>
+          )}
+        </div>
+        <div>
+          <div style={{ fontFamily: "'Archivo Black', sans-serif", fontSize: 38 }}>{p.name}</div>
+          <div style={{ fontSize: 18, color: "#9AAA9E", marginTop: 4 }}>{p.club} · {p.league} · Age {p.age ?? "—"} · {p.posLabel}</div>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 32, fontWeight: "bold", color: potentialColor(p.potential), marginTop: 8 }}>
+            {p.potential ?? "—"} <span style={{ fontSize: 14, color: "#6B8570", fontWeight: "normal" }}>POTENTIAL INDEX</span>
+          </div>
+        </div>
+      </div>
+
+      {p.seasonTotals && (
+        <>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "#6B8570", textTransform: "uppercase", letterSpacing: 1, marginTop: 32, marginBottom: 8 }}>
+            Season Totals ({p.appearances ?? "?"} appearances)
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 32px" }}>
+            {Object.entries(p.seasonTotals).map(([k, v]) => (
+              <div key={k} style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #2C4A3B", padding: "5px 0", fontSize: 15 }}>
+                <span style={{ color: "#6B8570" }}>{k}</span>
+                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: "bold" }}>{v}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {latestRating && (
+        <>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "#6B8570", textTransform: "uppercase", letterSpacing: 1, marginTop: 32, marginBottom: 8 }}>
+            Latest Scout Rating
+          </div>
+          <div style={{ display: "flex", gap: 24, fontSize: 15 }}>
+            <span>Technical: <b style={{ color: "#E3A857" }}>{latestRating.technical}/10</b></span>
+            <span>Physical: <b style={{ color: "#E3A857" }}>{latestRating.physical}/10</b></span>
+            <span>Mental: <b style={{ color: "#E3A857" }}>{latestRating.mental}/10</b></span>
+            <span>Tactical: <b style={{ color: "#E3A857" }}>{latestRating.tactical}/10</b></span>
+          </div>
+          {latestRating.notes && <div style={{ fontSize: 14, color: "#C9C08A", marginTop: 8, lineHeight: 1.5 }}>{latestRating.notes}</div>}
+        </>
+      )}
+
+      {recentNotes.length > 0 && (
+        <>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "#6B8570", textTransform: "uppercase", letterSpacing: 1, marginTop: 32, marginBottom: 8 }}>
+            Scout Notes
+          </div>
+          {recentNotes.map((n, i) => (
+            <div key={i} style={{ fontSize: 14, color: "#C9C08A", marginBottom: 8, lineHeight: 1.5, borderBottom: "1px solid #1C2E26", paddingBottom: 8 }}>
+              {n.note}
+              <div style={{ fontSize: 11, color: "#6B8570", marginTop: 2 }}>{new Date(n.created_at).toLocaleDateString()}</div>
+            </div>
+          ))}
+        </>
+      )}
+
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: "#4A5C52", textAlign: "center", marginTop: 32 }}>
+        Cross-League Scouting Index · Real ingested match data · Generated {new Date().toLocaleDateString()}
+      </div>
+    </div>
+  );
+}
+
 function ShareCard({ p, forwardedRef, variant = "overview", similarPlayers, noteText, scale = 1 }) {
   const metricKeys = POSITION_METRIC_SETS[p.position] || DEFAULT_METRIC_SET;
   const s = (n) => Math.round(n * scale);
@@ -723,12 +807,58 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
       .finally(() => setExportingImage(false));
   };
 
+  const [exportingDossier, setExportingDossier] = useState(false);
+  const fullDossierRef = useRef(null);
+  const downloadFullDossier = () => {
+    if (!fullDossierRef.current || typeof html2canvas === "undefined") {
+      alert("Image export isn't available right now — check your connection and try again.");
+      return;
+    }
+    setExportingDossier(true);
+    html2canvas(fullDossierRef.current, { backgroundColor: "#0E1A15", scale: 2, useCORS: true })
+      .then(canvas => {
+        const link = document.createElement("a");
+        link.download = `${p.name.replace(/\s+/g, "_")}_full_dossier.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      })
+      .catch(() => alert("Image export failed — please try again."))
+      .finally(() => setExportingDossier(false));
+  };
+
+  const [projection, setProjection] = useState(null);
+  const [ratingForm, setRatingForm] = useState({ technical: 5, physical: 5, mental: 5, tactical: 5, notes: "" });
+  const [savingRating, setSavingRating] = useState(false);
+
+  const saveScoutRating = () => {
+    if (!API_BASE_URL) return;
+    setSavingRating(true);
+    fetch(`${API_BASE_URL}/players/${realId}/scout-rating`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+      body: JSON.stringify(ratingForm),
+    })
+      .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
+      .then(() => {
+        setRatingForm({ technical: 5, physical: 5, mental: 5, tactical: 5, notes: "" });
+        return fetch(`${API_BASE_URL}/players/${realId}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} });
+      })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => { if (data) setDetails(data); })
+      .catch(() => alert("Couldn't save the rating — please try again."))
+      .finally(() => setSavingRating(false));
+  };
+
   useEffect(() => {
     if (!API_BASE_URL || !String(p.id).startsWith("live-")) return;
     fetch(`${API_BASE_URL}/players/${realId}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
       .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
       .then(data => setDetails(data))
       .catch(() => setDetails(null));
+    fetch(`${API_BASE_URL}/players/${realId}/projection`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setProjection(data))
+      .catch(() => setProjection(null));
   }, [p.id]);
 
   // Fetch a broad, position-matched pool and rank by similarity across all
@@ -814,6 +944,15 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
             <button onClick={() => setShareCardOpen(true)} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
               📸 Share Card
             </button>
+            <button onClick={downloadFullDossier} disabled={exportingDossier}
+              className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] disabled:opacity-50">
+              {exportingDossier ? "Exporting…" : "📄 Full Dossier"}
+            </button>
+            <a href={`https://www.youtube.com/results?search_query=${encodeURIComponent(p.name + " highlights")}`}
+              target="_blank" rel="noopener noreferrer"
+              className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
+              🎥 Highlights
+            </a>
             <button onClick={() => window.print()} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
               🖨 Print
             </button>
@@ -889,6 +1028,121 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
             {details?.history && details.history.length === 1 && (
               <div className="mt-4 border-b border-[#2C4A3B] pb-4 text-xs text-[#6B8570] italic">
                 Trend chart will appear once this player has been scored across multiple nightly refreshes.
+              </div>
+            )}
+
+            {projection?.available && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">
+                  90-Day Trajectory ({projection.confidence} confidence)
+                </div>
+                <div className="text-sm">
+                  <span className="text-[#EDEDE3] font-plexmono">{projection.current.toFixed(1)}</span>
+                  <span className="text-[#6B8570] mx-2">→</span>
+                  <span className="font-plexmono" style={{ color: projection.projected_90d > projection.current ? "#7FD99A" : projection.projected_90d < projection.current ? "#E36B57" : "#9AAA9E" }}>
+                    {projection.projected_90d.toFixed(1)}
+                  </span>
+                </div>
+                <div className="text-[10px] text-[#4A5C52] mt-1 italic">
+                  Simple trend line from {projection.points_tracked} data points over {projection.days_tracked} days — illustrative only, not a real prediction. Gets more meaningful as more history accumulates.
+                </div>
+              </div>
+            )}
+
+            {details?.grade && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">📋 Scouting Grade</div>
+                <div className="text-3xl font-bold font-plexmono" style={{
+                  color: details.grade.startsWith("A") ? "#7FD99A" : details.grade.startsWith("B") ? "#E3A857" : details.grade.startsWith("C") ? "#9AAA9E" : "#E36B57"
+                }}>{details.grade}</div>
+                <div className="text-[10px] text-[#4A5C52] mt-1 italic">
+                  Synthesizes rating with how much real data backs it up — a high score on a tiny sample is deliberately capped, not shown at full confidence.
+                </div>
+              </div>
+            )}
+
+            {details?.archetype && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">🎭 Tactical Archetype</div>
+                <div className="text-lg text-[#E3A857] font-display">{details.archetype}</div>
+                <div className="text-[10px] text-[#4A5C52] mt-1 italic">
+                  Based on real per-90 stat patterns vs same-position peers — a rule-based read, not a certainty.
+                </div>
+              </div>
+            )}
+
+            {details?.league_adjusted_rating != null && details.score?.potential_index != null && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">⚖️ League-Adjusted Rating</div>
+                <div className="text-sm">
+                  <span className="text-[#EDEDE3] font-plexmono">{details.score.potential_index.toFixed(1)}</span>
+                  <span className="text-[#6B8570] mx-2">→</span>
+                  <span className="font-plexmono text-[#E3A857]">{details.league_adjusted_rating}</span>
+                </div>
+                <div className="text-[10px] text-[#4A5C52] mt-1 italic">
+                  Adjusted for this league's overall strength relative to your other tracked leagues — a fairer cross-league comparison than the raw score alone.
+                </div>
+              </div>
+            )}
+
+            {details?.scouting_confidence && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">🎯 Scouting Confidence</div>
+                <div className="text-sm">
+                  <span className="capitalize font-plexmono" style={{
+                    color: details.scouting_confidence.tier === "high" ? "#7FD99A"
+                      : details.scouting_confidence.tier === "good" ? "#E3A857"
+                      : details.scouting_confidence.tier === "moderate" ? "#9AAA9E" : "#E36B57"
+                  }}>{details.scouting_confidence.tier}</span>
+                  <span className="text-[#6B8570] text-xs ml-2">({details.scouting_confidence.minutes} real minutes tracked)</span>
+                </div>
+              </div>
+            )}
+
+            {details?.international_caps?.length > 0 && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">
+                  🌍 International Caps
+                </div>
+                {details.international_caps.map((c, i) => (
+                  <div key={i} className="text-sm text-[#EDEDE3] mt-1">
+                    {c.team_name} <span className="text-[#6B8570] text-xs">· {c.competition_name}</span>
+                    <span className="font-plexmono text-[#E3A857] ml-2">{c.appearances ?? "?"} caps</span>
+                    {c.goals > 0 && <span className="text-[#6B8570] text-xs ml-2">{c.goals}⚽</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {details?.positions_played?.length > 1 && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">
+                  🔀 Positional Versatility
+                </div>
+                <div className="text-sm text-[#EDEDE3]">
+                  {details.positions_played.map((pp, i) => (
+                    <span key={pp.position_played}>
+                      {i > 0 && <span className="text-[#6B8570]"> · </span>}
+                      {pp.position_played} <span className="text-[#6B8570] text-xs">({pp.matches})</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {details?.consistency && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">
+                  📏 Consistency ({details.consistency.matches} matches)
+                </div>
+                <div className="text-sm text-[#EDEDE3]">
+                  Avg rating <span className="font-plexmono">{details.consistency.avg_rating}</span>
+                  <span className="text-[#6B8570] mx-2">·</span>
+                  Variance <span className="font-plexmono" style={{ color: details.consistency.stddev < 0.8 ? "#7FD99A" : details.consistency.stddev > 1.3 ? "#E36B57" : "#9AAA9E" }}>±{details.consistency.stddev}</span>
+                </div>
+                <div className="text-[10px] text-[#4A5C52] mt-1 italic">
+                  {details.consistency.stddev < 0.8 ? "Reliably consistent performer." : details.consistency.stddev > 1.3 ? "Streaky — big swings between matches." : "Moderate week-to-week variation."}
+                </div>
               </div>
             )}
 
@@ -979,6 +1233,42 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
 
         {tab === "notes" && (
           <div className="mt-5">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Structured Scout Report</div>
+            <div className="border border-[#2C4A3B] p-4 mb-4">
+              {["technical", "physical", "mental", "tactical"].map(dim => (
+                <div key={dim} className="flex items-center gap-3 mb-2">
+                  <span className="text-xs text-[#9AAA9E] w-20 capitalize shrink-0">{dim}</span>
+                  <input type="range" min="1" max="10" value={ratingForm[dim]}
+                    onChange={e => setRatingForm(prev => ({ ...prev, [dim]: parseInt(e.target.value) }))}
+                    className="flex-1" />
+                  <span className="text-sm font-plexmono text-[#E3A857] w-6 text-right shrink-0">{ratingForm[dim]}</span>
+                </div>
+              ))}
+              <textarea value={ratingForm.notes} onChange={e => setRatingForm(prev => ({ ...prev, notes: e.target.value }))}
+                placeholder="Context for this evaluation (optional)..." rows={2}
+                className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] outline-none focus:border-[#E3A857] resize-none mt-2" />
+              <button onClick={saveScoutRating} disabled={savingRating}
+                className="mt-2 text-xs uppercase tracking-wide px-4 py-2 bg-[#E3A857] text-[#0E1A15] font-bold disabled:opacity-40">
+                {savingRating ? "Saving..." : "Save Rating"}
+              </button>
+            </div>
+
+            {details?.scout_ratings?.length > 0 && (
+              <div className="mb-6">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Rating History</div>
+                {details.scout_ratings.map(r => (
+                  <div key={r.id} className="border-b border-[#2C4A3B] pb-2 mb-2">
+                    <div className="flex gap-4 text-xs font-plexmono text-[#EDEDE3]">
+                      <span>T:{r.technical}</span><span>P:{r.physical}</span><span>M:{r.mental}</span><span>Ta:{r.tactical}</span>
+                      <span className="text-[#E3A857]">avg {((r.technical + r.physical + r.mental + r.tactical) / 4).toFixed(1)}</span>
+                    </div>
+                    {r.notes && <p className="text-[#C9C08A] text-sm mt-1">{r.notes}</p>}
+                    <div className="text-[10px] text-[#6B8570] mt-1">{new Date(r.created_at).toLocaleDateString()}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Add a scout note</div>
             <textarea value={noteText} onChange={e => setNoteText(e.target.value)}
               placeholder="What did you see? Technical strengths, weaknesses, injury concerns, transfer chatter..."
@@ -1068,15 +1358,31 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
           </div>
         </div>
       )}
+
+      <div style={{ position: "fixed", top: 0, left: -99999, pointerEvents: "none" }}>
+        <FullDossierCard p={p} details={details} forwardedRef={fullDossierRef} />
+      </div>
     </div>
   );
 }
 
 function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer }) {
+  const [simulatorOpen, setSimulatorOpen] = useState(false);
   const scored = players.filter(p => p.potential != null);
   const avgPotential = scored.length ? Math.round(scored.reduce((s, p) => s + p.potential, 0) / scored.length) : null;
   const agesKnown = players.filter(p => p.age != null);
   const avgAge = agesKnown.length ? (agesKnown.reduce((s, p) => s + p.age, 0) / agesKnown.length).toFixed(1) : null;
+
+  // Squad Age Curve — free, purely a bucketing of data already in hand.
+  const AGE_BUCKETS = [
+    { label: "16-18", min: 16, max: 18 }, { label: "19-21", min: 19, max: 21 },
+    { label: "22-24", min: 22, max: 24 }, { label: "25-27", min: 25, max: 27 },
+    { label: "28-30", min: 28, max: 30 }, { label: "31+", min: 31, max: 99 },
+  ];
+  const ageCurve = AGE_BUCKETS.map(b => ({
+    ...b, count: agesKnown.filter(p => p.age >= b.min && p.age <= b.max).length,
+  }));
+  const maxBucketCount = Math.max(1, ...ageCurve.map(b => b.count));
 
   const POSITION_ORDER = ["Goalkeeper", "Defender", "Midfielder", "Attacker"];
   const byPosition = POSITION_ORDER
@@ -1096,6 +1402,7 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
 
   const [record, setRecord] = useState(null);
   const [homeAway, setHomeAway] = useState(null);
+  const [tacticalFit, setTacticalFit] = useState(null);
   useEffect(() => {
     if (!API_BASE_URL) return;
     const params = new URLSearchParams({ club: clubName, league: leagueName });
@@ -1107,6 +1414,10 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
       .then(res => res.ok ? res.json() : null)
       .then(data => setHomeAway(data))
       .catch(() => setHomeAway(null));
+    fetch(`${API_BASE_URL}/clubs/recruitment-priorities?${params.toString()}&limit=6`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setTacticalFit(data))
+      .catch(() => setTacticalFit(null));
   }, [clubName, leagueName]);
 
   return (
@@ -1116,7 +1427,12 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
         <button aria-label="Close" onClick={onClose} className="absolute top-5 right-5 text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
         <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">Squad Profile</div>
         <h2 className="text-3xl text-[#EDEDE3] font-display mt-2">{clubName}</h2>
-        <div className="text-[#9AAA9E] mt-1">{leagueName}</div>
+        <div className="flex items-center justify-between mt-1">
+          <div className="text-[#9AAA9E]">{leagueName}</div>
+          <button onClick={() => setSimulatorOpen(true)} className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
+            🔄 Simulate Transfer
+          </button>
+        </div>
 
         {record && record.played > 0 && (
           <div className="mt-4 border border-[#2C4A3B] p-4">
@@ -1157,6 +1473,21 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
                 <span className="font-plexmono text-[#EDEDE3]">{homeAway.away.won}W {homeAway.away.drawn}D {homeAway.away.lost}L</span>
                 <span className="text-[#6B8570] text-xs ml-2">({homeAway.away.gf}-{homeAway.away.ga})</span>
               </div>
+            </div>
+          </div>
+        )}
+
+        {agesKnown.length > 0 && (
+          <div className="mt-3 border border-[#2C4A3B] p-4">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-3">Squad Age Curve</div>
+            <div className="flex items-end gap-2" style={{ height: 80 }}>
+              {ageCurve.map(b => (
+                <div key={b.label} className="flex-1 flex flex-col items-center justify-end h-full">
+                  <div className="text-[10px] text-[#9AAA9E] mb-1">{b.count}</div>
+                  <div className="w-full bg-[#E3A857]" style={{ height: `${Math.max(4, (b.count / maxBucketCount) * 60)}px` }} />
+                  <div className="text-[10px] text-[#6B8570] mt-1">{b.label}</div>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -1206,6 +1537,141 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
           </div>
           );
         })}
+
+        {tacticalFit?.club_profile && tacticalFit.candidates?.length > 0 && (
+          <div className="mt-6 border-t border-[#2C4A3B] pt-5">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">
+              🎯 Recruitment Priorities
+            </div>
+            <div className="text-[11px] text-[#4A5C52] italic mb-3">
+              Combines tactical fit to this squad's real style (avg pass accuracy {tacticalFit.club_profile.avg_pass_accuracy}%, combativeness {tacticalFit.club_profile.avg_combativeness}), potential, confidence, and youth into one ranked recommendation — not just generically good, genuinely suited to this club right now.
+            </div>
+            <div className="space-y-1.5">
+              {tacticalFit.candidates.map((c, i) => (
+                <button key={c.id} onClick={() => onSelectPlayer({ club: c.club, id: c.id })}
+                  className="w-full flex items-center justify-between text-sm py-1.5 hover:bg-[#152922] text-left">
+                  <span className="flex items-center gap-2 text-[#EDEDE3] truncate">
+                    <span className="text-[#6B8570] w-4 shrink-0">{i + 1}.</span>
+                    <Avatar name={c.full_name} photoUrl={c.photo_url} size={24} />
+                    <span className="truncate">{c.full_name}</span>
+                    <span className="text-[#6B8570] text-xs shrink-0">· {c.club}</span>
+                  </span>
+                  <span className="font-plexmono text-[#E3A857] text-xs shrink-0">{c.priority_score}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+      {simulatorOpen && <TransferSimulatorModal squad={players} clubName={clubName} onClose={() => setSimulatorOpen(false)} />}
+    </div>
+  );
+}
+
+function TransferSimulatorModal({ squad, clubName, onClose }) {
+  const [playerOutId, setPlayerOutId] = useState("");
+  const [searchText, setSearchText] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [playerIn, setPlayerIn] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL || searchText.trim().length < 2) { setSearchResults([]); return; }
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams({ search: searchText.trim(), limit: "10" });
+      fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+        .then(res => res.ok ? res.json() : [])
+        .then(rows => setSearchResults(rows))
+        .catch(() => setSearchResults([]));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchText]);
+
+  const computeAvg = (list, key) => {
+    const known = list.filter(v => v[key] != null);
+    return known.length ? (known.reduce((s, v) => s + v[key], 0) / known.length) : null;
+  };
+
+  const beforeAge = computeAvg(squad, "age");
+  const beforePotential = computeAvg(squad.filter(p => p.potential != null).map(p => ({ potential: p.potential })), "potential");
+
+  let afterAge = beforeAge, afterPotential = beforePotential;
+  if (playerOutId && playerIn) {
+    const remaining = squad.filter(p => String(p.id) !== String(playerOutId));
+    const inAge = playerIn.date_of_birth ? (Date.now() - new Date(playerIn.date_of_birth).getTime()) / 3.15576e10 : null;
+    const inPotential = playerIn.potential_index ?? null;
+    const ageList = [...remaining.filter(p => p.age != null).map(p => p.age), ...(inAge != null ? [inAge] : [])];
+    const potList = [...remaining.filter(p => p.potential != null).map(p => p.potential), ...(inPotential != null ? [inPotential] : [])];
+    afterAge = ageList.length ? ageList.reduce((s, v) => s + v, 0) / ageList.length : null;
+    afterPotential = potList.length ? potList.reduce((s, v) => s + v, 0) / potList.length : null;
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[70]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-lg w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🔄 Transfer Simulator — {clubName}</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        <div className="text-xs uppercase tracking-wide text-[#6B8570] mb-1">Player Out</div>
+        <select value={playerOutId} onChange={e => setPlayerOutId(e.target.value)}
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none text-[#EDEDE3] mb-4">
+          <option value="">Select a player to remove...</option>
+          {squad.map(p => <option key={p.id} value={p.id}>{p.name} ({p.posLabel})</option>)}
+        </select>
+
+        <div className="text-xs uppercase tracking-wide text-[#6B8570] mb-1">Player In</div>
+        {!playerIn ? (
+          <>
+            <input value={searchText} onChange={e => setSearchText(e.target.value)}
+              placeholder="Search player name..."
+              className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none text-[#EDEDE3] mb-2" />
+            <div className="max-h-48 overflow-y-auto mb-4">
+              {searchResults.map(row => (
+                <button key={row.id} onClick={() => { setPlayerIn(row); setSearchText(""); setSearchResults([]); }}
+                  className="w-full flex items-center gap-2 text-sm py-2 px-2 hover:bg-[#152922] text-left">
+                  <Avatar name={row.full_name} photoUrl={row.photo_url} size={22} />
+                  <span className="text-[#EDEDE3] truncate">{row.full_name}</span>
+                  <span className="text-[#6B8570] text-xs truncate">· {row.club}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="flex items-center justify-between border border-[#E3A857] px-3 py-2 mb-4">
+            <span className="text-sm text-[#EDEDE3]">{playerIn.full_name} · {playerIn.club}</span>
+            <button onClick={() => setPlayerIn(null)} className="text-xs text-[#6B8570] hover:text-[#E36B57]">Change</button>
+          </div>
+        )}
+
+        <div className="border-t border-[#2C4A3B] pt-4 mt-2">
+          <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Squad Impact</div>
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <div className="text-[#6B8570] text-xs mb-1">Avg Age</div>
+              <span className="font-plexmono text-[#EDEDE3]">{beforeAge?.toFixed(1) ?? "—"}</span>
+              {playerOutId && playerIn && (
+                <>
+                  <span className="text-[#6B8570] mx-1">→</span>
+                  <span className="font-plexmono" style={{ color: afterAge < beforeAge ? "#7FD99A" : afterAge > beforeAge ? "#E36B57" : "#9AAA9E" }}>{afterAge?.toFixed(1) ?? "—"}</span>
+                </>
+              )}
+            </div>
+            <div>
+              <div className="text-[#6B8570] text-xs mb-1">Avg Potential</div>
+              <span className="font-plexmono text-[#EDEDE3]">{beforePotential?.toFixed(1) ?? "—"}</span>
+              {playerOutId && playerIn && (
+                <>
+                  <span className="text-[#6B8570] mx-1">→</span>
+                  <span className="font-plexmono" style={{ color: afterPotential > beforePotential ? "#7FD99A" : afterPotential < beforePotential ? "#E36B57" : "#9AAA9E" }}>{afterPotential?.toFixed(1) ?? "—"}</span>
+                </>
+              )}
+            </div>
+          </div>
+          {!(playerOutId && playerIn) && (
+            <div className="text-xs text-[#6B8570] mt-3">Pick both a player out and a player in to see the impact.</div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1480,9 +1946,19 @@ function ExploreView({ onSelectPlayer }) {
       .then(res => res.ok ? res.json() : [])
       .then(rows => setBoards(prev => ({ ...prev, debuts: { title: "🌟 Recent Debuts", statField: "debut", rows: rows.map(r => ({ ...r, full_name: r.full_name, club: r.club })) } })))
       .catch(() => setBoards(prev => ({ ...prev, debuts: { title: "🌟 Recent Debuts", statField: "debut", rows: [] } })));
+
+    fetch(`${API_BASE_URL}/players/breakout-candidates?limit=8`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setBoards(prev => ({ ...prev, breakout: { title: "🚀 Breakout Candidates", statField: "breakout_score", rows } })))
+      .catch(() => setBoards(prev => ({ ...prev, breakout: { title: "🚀 Breakout Candidates", statField: "breakout_score", rows: [] } })));
+
+    fetch(`${API_BASE_URL}/players/most-capped?limit=8`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setBoards(prev => ({ ...prev, mostcapped: { title: "🌍 Most Capped Internationally", statField: "total_caps", rows: rows.map(r => ({ ...r, club: `${r.team_name} · ${r.club}` })) } })))
+      .catch(() => setBoards(prev => ({ ...prev, mostcapped: { title: "🌍 Most Capped Internationally", statField: "total_caps", rows: [] } })));
   }, []);
 
-  const order = ["scorers", "assists", "keepers", "tacklers", "young", "improved", "carded", "cleansheets", "debuts", "ironman", "hiddengems"];
+  const order = ["scorers", "assists", "keepers", "tacklers", "young", "improved", "carded", "cleansheets", "debuts", "ironman", "hiddengems", "breakout", "mostcapped"];
 
   return (
     <div className="px-6 md:px-10 py-8 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-8">
@@ -1601,6 +2077,14 @@ function DreamXISlot({ slot, player, onClick, size = 1 }) {
       }}>
         {player ? player.name : slot.label}
       </div>
+      {player?.archetype && (
+        <div style={{
+          fontSize: 9 * size, color: "#E3A857", marginTop: 2, textAlign: "center", maxWidth: 90 * size,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
+          {player.archetype}
+        </div>
+      )}
     </div>
   );
 }
@@ -1664,7 +2148,7 @@ function TeamOfSeasonModal({ allLeagueOptions, onClose }) {
       const pos = posForLabel[slot.label];
       const candidate = pool[pos]?.[used[pos]];
       if (candidate) {
-        slots[slot.id] = { id: candidate.id, name: candidate.full_name, photoUrl: candidate.photo_url, potential: candidate.potential_index != null ? Math.round(candidate.potential_index) : null };
+        slots[slot.id] = { id: candidate.id, name: candidate.full_name, photoUrl: candidate.photo_url, potential: candidate.potential_index != null ? Math.round(candidate.potential_index) : null, archetype: candidate.archetype };
         used[pos]++;
       }
     });
@@ -2127,6 +2611,326 @@ function StandingsCard({ league, table, forwardedRef }) {
       </table>
       <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "#4A5C52", textAlign: "center", marginTop: 20 }}>
         Real ingested match data · not a projection
+      </div>
+    </div>
+  );
+}
+
+function DiscoveryEngineModal({ onClose, onSelectPlayer }) {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/scout/discovery?limit=12`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setData(d))
+      .catch(() => setData(null));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🔮 Discovery Engine</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        {data === null && <div className="text-sm text-[#6B8570]">Learning your scouting pattern…</div>}
+        {data?.profile === null && (
+          <div className="text-sm text-[#6B8570] text-center py-8">{data.message}</div>
+        )}
+
+        {data?.profile && (
+          <>
+            <div className="text-xs text-[#6B8570] mb-4 italic">
+              Based on {data.profile.based_on} shortlisted players: you tend toward {data.profile.typical_position}s, age {data.profile.typical_age_range}, around {data.profile.typical_potential_tier} potential. Here's who else fits that pattern — not shortlisted yet.
+            </div>
+            {data.discoveries.length === 0 && (
+              <div className="text-sm text-[#6B8570] text-center py-8">No new matches right now — you may have already found everyone who fits your pattern.</div>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {data.discoveries.map(d => (
+                <button key={d.id} onClick={() => onSelectPlayer({ league_display: d.league, club: d.club, id: d.id })}
+                  className="flex items-center gap-2 text-sm py-2 px-2 border border-[#2C4A3B] hover:border-[#E3A857] text-left">
+                  <Avatar name={d.full_name} photoUrl={d.photo_url} size={28} />
+                  <span className="flex-1 min-w-0">
+                    <div className="text-[#EDEDE3] truncate">{d.full_name}</div>
+                    <div className="text-[#6B8570] text-xs truncate">{d.club} · Age {d.age}</div>
+                  </span>
+                  <span className="font-plexmono text-[#E3A857] text-xs shrink-0">{d.potential_index}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ScoutReportCardModal({ onClose, onSelectPlayer }) {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/scout/track-record`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setData(d))
+      .catch(() => setData(null));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📊 Scout Report Card</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Your own track record — has your judgment on shortlisted players been validated by the data since? Trend history is still young, so this becomes more meaningful over the coming weeks.
+        </div>
+
+        {data === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {data?.summary?.total_shortlisted === 0 && (
+          <div className="text-sm text-[#6B8570] text-center py-8">Nothing shortlisted yet — nothing to grade you on!</div>
+        )}
+
+        {data?.summary?.total_shortlisted > 0 && (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6 border border-[#2C4A3B] p-4">
+              <div>
+                <div className="text-2xl font-bold text-[#EDEDE3] font-plexmono">{data.summary.total_shortlisted}</div>
+                <div className="text-[10px] text-[#6B8570] uppercase tracking-wide mt-1">Shortlisted</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold font-plexmono" style={{ color: data.summary.avg_delta > 0 ? "#7FD99A" : data.summary.avg_delta < 0 ? "#E36B57" : "#9AAA9E" }}>
+                  {data.summary.avg_delta != null ? (data.summary.avg_delta > 0 ? "+" : "") + data.summary.avg_delta : "—"}
+                </div>
+                <div className="text-[10px] text-[#6B8570] uppercase tracking-wide mt-1">Avg Potential Δ</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-[#7FD99A] font-plexmono">{data.summary.risen_count}</div>
+                <div className="text-[10px] text-[#6B8570] uppercase tracking-wide mt-1">Risen Since</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-[#E3A857] font-plexmono">{data.summary.moved_clubs_count}</div>
+                <div className="text-[10px] text-[#6B8570] uppercase tracking-wide mt-1">Moved Clubs</div>
+              </div>
+            </div>
+
+            {data.players.map(p => (
+              <button key={p.id} onClick={() => onSelectPlayer({ club: p.club, id: p.id })}
+                className="w-full flex items-center justify-between text-sm py-2 hover:bg-[#152922] text-left border-b border-[#1C2E26]">
+                <span className="flex items-center gap-2 text-[#EDEDE3] truncate">
+                  <Avatar name={p.full_name} photoUrl={p.photo_url} size={26} />
+                  <span className="truncate">{p.full_name}</span>
+                  <span className="text-[#6B8570] text-xs shrink-0">· {p.club}</span>
+                  {p.moved_clubs_since && <span className="text-[10px] text-[#E3A857] shrink-0">moved</span>}
+                </span>
+                <span className="font-plexmono text-xs shrink-0" style={{
+                  color: p.delta_since_shortlisting > 0 ? "#7FD99A" : p.delta_since_shortlisting < 0 ? "#E36B57" : "#9AAA9E"
+                }}>
+                  {p.delta_since_shortlisting != null ? (p.delta_since_shortlisting > 0 ? "+" : "") + p.delta_since_shortlisting : "no trend yet"}
+                </span>
+              </button>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function IntelligenceFeedModal({ onClose, onSelectPlayer }) {
+  const [feed, setFeed] = useState(null);
+  const [noFavorites, setNoFavorites] = useState(false);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    let favorites = [];
+    try { favorites = JSON.parse(localStorage.getItem("scoutindex_favorite_clubs_v1") || "[]"); } catch (e) { /* start empty */ }
+    if (!favorites.length) { setNoFavorites(true); return; }
+
+    fetch(`${API_BASE_URL}/intelligence-feed`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+      body: JSON.stringify({ favorites }),
+    })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setFeed(data))
+      .catch(() => setFeed([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🧠 Scout Intelligence Feed</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Cross-references genuine squad needs at your favorite clubs against real recruitment candidates who fit both the position and that club's tactical style — synthesized automatically, not something you had to go dig for.
+        </div>
+
+        {noFavorites && (
+          <div className="text-sm text-[#6B8570] text-center py-8">
+            ★ a few clubs as favorites first (from the main filter bar) — this feed is built around them.
+          </div>
+        )}
+        {!noFavorites && feed === null && <div className="text-sm text-[#6B8570]">Analyzing your favorite clubs…</div>}
+        {feed?.length === 0 && (
+          <div className="text-sm text-[#6B8570] text-center py-8">
+            No urgent squad needs detected at your favorited clubs right now — good sign, or just not enough data yet for them.
+          </div>
+        )}
+
+        {feed?.map(clubFeed => (
+          <div key={clubFeed.club} className="mb-6 border-b border-[#2C4A3B] pb-5">
+            <div className="text-sm text-[#E3A857] font-display mb-1">{clubFeed.club}</div>
+            <div className="text-[10px] text-[#6B8570] uppercase tracking-wide mb-3">
+              Thin: {clubFeed.needs.join(", ")}
+            </div>
+            {clubFeed.recommendations.map((rec, i) => (
+              <button key={i} onClick={() => onSelectPlayer({ club: rec.player.club, id: rec.player.id })}
+                className="w-full flex items-center justify-between text-sm py-2 hover:bg-[#152922] text-left border-t border-[#1C2E26]">
+                <span className="flex items-center gap-2 text-[#EDEDE3] truncate">
+                  <Avatar name={rec.player.full_name} photoUrl={rec.player.photo_url} size={26} />
+                  <span className="truncate">{rec.player.full_name}</span>
+                  <span className="text-[#6B8570] text-xs shrink-0">· {rec.player.club} · for {rec.position_needed}</span>
+                </span>
+                <span className="font-plexmono text-[#E3A857] text-xs shrink-0">{rec.match_score}</span>
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TablePredictorModal({ allLeagueOptions, onClose }) {
+  const [league, setLeague] = useState("");
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !league) { setRows(null); return; }
+    setRows(null);
+    const params = new URLSearchParams({ league });
+    fetch(`${API_BASE_URL}/leagues/table-predictor?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, [league]);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📈 Squad Quality vs Real Table</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Illustrative only — ranked purely by average squad potential, NOT a real prediction. Form, injuries, tactics, and management all matter enormously and none of that is captured here. Useful for spotting who's over/under-performing relative to squad quality, not for forecasting results.
+        </div>
+
+        <select value={league} onChange={e => setLeague(e.target.value)}
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none text-[#EDEDE3] mb-4">
+          <option value="">Select a league...</option>
+          {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+
+        {league && rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {league && rows?.length === 0 && <div className="text-sm text-[#6B8570]">Not enough data yet for this league.</div>}
+        {rows?.map(r => (
+          <div key={r.club} className="flex items-center justify-between text-sm py-2 border-b border-[#1C2E26]">
+            <span className="text-[#6B8570] w-6 shrink-0">{r.squad_quality_rank}.</span>
+            <span className="text-[#EDEDE3] flex-1 truncate">{r.club}</span>
+            <span className="font-plexmono text-[#E3A857] text-xs shrink-0 mr-3">{r.avg_potential}</span>
+            {r.real_table_position && (
+              <span className="text-xs shrink-0 font-plexmono" style={{
+                color: r.delta > 2 ? "#7FD99A" : r.delta < -2 ? "#E36B57" : "#9AAA9E"
+              }}>
+                real: #{r.real_table_position} {r.delta > 0 ? `(+${r.delta})` : r.delta < 0 ? `(${r.delta})` : ""}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LeagueStrengthModal({ onClose }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/leagues/strength`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  const maxAvg = rows?.length ? Math.max(...rows.map(r => r.avg_potential)) : 100;
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🌍 League Strength Index</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4">Average potential score across all scored players in each league — real meta-context for comparing quality across leagues, not just within one.</div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.map((r, i) => (
+          <div key={r.league} className="mb-2.5">
+            <div className="flex justify-between text-sm mb-1">
+              <span className="text-[#EDEDE3]">{i + 1}. {r.league}</span>
+              <span className="font-plexmono text-[#E3A857]">{r.avg_potential} <span className="text-[#6B8570] text-xs">({r.scored_players} players)</span></span>
+            </div>
+            <div className="h-1.5 bg-[#152922]">
+              <div className="h-full bg-[#E3A857]" style={{ width: `${(r.avg_potential / maxAvg) * 100}%` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SquadContinuityModal({ onClose }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/clubs/continuity?limit=15`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">♻️ Squad Continuity</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4">Real arrivals/departures tracked since your transfer log was cleaned up — sparse at first, gets more meaningful as more genuine transfers happen going forward.</div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.length === 0 && <div className="text-sm text-[#6B8570]">No tracked transfer activity yet.</div>}
+        {rows?.map(r => (
+          <div key={r.club} className="flex items-center justify-between text-sm py-2 border-b border-[#1C2E26]">
+            <span className="text-[#EDEDE3]">{r.club}</span>
+            <span className="font-plexmono text-xs">
+              <span className="text-[#7FD99A]">+{r.arrivals}</span>
+              <span className="text-[#6B8570] mx-1">/</span>
+              <span className="text-[#E36B57]">-{r.departures}</span>
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -2744,6 +3548,12 @@ function ScoutDashboard() {
   const [standingsOpen, setStandingsOpen] = useState(false);
   const [liveScoresOpen, setLiveScoresOpen] = useState(false);
   const [teamOfSeasonOpen, setTeamOfSeasonOpen] = useState(false);
+  const [leagueStrengthOpen, setLeagueStrengthOpen] = useState(false);
+  const [squadContinuityOpen, setSquadContinuityOpen] = useState(false);
+  const [tablePredictorOpen, setTablePredictorOpen] = useState(false);
+  const [intelligenceFeedOpen, setIntelligenceFeedOpen] = useState(false);
+  const [scoutReportCardOpen, setScoutReportCardOpen] = useState(false);
+  const [discoveryEngineOpen, setDiscoveryEngineOpen] = useState(false);
   const [deepLinkPlayerId, setDeepLinkPlayerId] = useState(() => new URLSearchParams(window.location.search).get("player"));
   const [livePlayers, setLivePlayers] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState(API_BASE_URL ? "connecting" : "offline");
@@ -3092,6 +3902,12 @@ function ScoutDashboard() {
                 <button onClick={() => setStandingsOpen(true)} className="hover:text-[#E3A857]">🏆 Standings</button>
                 <button onClick={() => setLiveScoresOpen(true)} className="hover:text-[#E3A857]">🔴 Live</button>
                 <button onClick={() => setTeamOfSeasonOpen(true)} className="hover:text-[#E3A857]">🌟 Team of Season</button>
+                <button onClick={() => setLeagueStrengthOpen(true)} className="hover:text-[#E3A857]">🌍 League Strength</button>
+                <button onClick={() => setSquadContinuityOpen(true)} className="hover:text-[#E3A857]">♻️ Continuity</button>
+                <button onClick={() => setTablePredictorOpen(true)} className="hover:text-[#E3A857]">📈 Table Predictor</button>
+                <button onClick={() => setIntelligenceFeedOpen(true)} className="hover:text-[#E3A857]">🧠 Intelligence Feed</button>
+                <button onClick={() => setScoutReportCardOpen(true)} className="hover:text-[#E3A857]">📊 My Report Card</button>
+                <button onClick={() => setDiscoveryEngineOpen(true)} className="hover:text-[#E3A857]">🔮 Discovery Engine</button>
                 <a href="https://talksport.com" target="_blank" rel="noopener noreferrer"
                   className="hover:text-[#E3A857] flex items-center gap-1">
                   🎙️ Listen Live
@@ -3478,6 +4294,40 @@ function ScoutDashboard() {
       {standingsOpen && <StandingsModal allLeagueOptions={allLeagueOptions} onClose={() => setStandingsOpen(false)} />}
       {liveScoresOpen && <LiveScoresModal onClose={() => setLiveScoresOpen(false)} />}
       {teamOfSeasonOpen && <TeamOfSeasonModal allLeagueOptions={allLeagueOptions} onClose={() => setTeamOfSeasonOpen(false)} />}
+      {leagueStrengthOpen && <LeagueStrengthModal onClose={() => setLeagueStrengthOpen(false)} />}
+      {squadContinuityOpen && <SquadContinuityModal onClose={() => setSquadContinuityOpen(false)} />}
+      {tablePredictorOpen && <TablePredictorModal allLeagueOptions={allLeagueOptions} onClose={() => setTablePredictorOpen(false)} />}
+      {intelligenceFeedOpen && (
+        <IntelligenceFeedModal
+          onClose={() => setIntelligenceFeedOpen(false)}
+          onSelectPlayer={(row) => {
+            setIntelligenceFeedOpen(false);
+            if (row.club) setClub(row.club);
+            setDeepLinkPlayerId(String(row.id));
+          }}
+        />
+      )}
+      {scoutReportCardOpen && (
+        <ScoutReportCardModal
+          onClose={() => setScoutReportCardOpen(false)}
+          onSelectPlayer={(row) => {
+            setScoutReportCardOpen(false);
+            if (row.club) setClub(row.club);
+            setDeepLinkPlayerId(String(row.id));
+          }}
+        />
+      )}
+      {discoveryEngineOpen && (
+        <DiscoveryEngineModal
+          onClose={() => setDiscoveryEngineOpen(false)}
+          onSelectPlayer={(row) => {
+            setDiscoveryEngineOpen(false);
+            if (row.league_display) setLeague(row.league_display);
+            if (row.club) setClub(row.club);
+            setDeepLinkPlayerId(String(row.id));
+          }}
+        />
+      )}
       <CompareBar selected={compareList} onClear={() => setCompareList([])} onCompare={() => setComparing(true)} />
       {comparing && compareList.length >= 2 && (
         <ComparePanel players={compareList} onClose={() => setComparing(false)} />
