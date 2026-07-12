@@ -130,7 +130,30 @@ TRACKED_LEAGUE_IDS = {39, 140, 78, 135, 61, 88, 94, 203, 71, 98, 253, 179, 62, 4
 def get_flag_url(cur, country_name):
     """Cached flag lookup — checks our own table first, only ever calls
     the free REST Countries API (no key needed) for a country we've
-    genuinely never seen before, then caches it permanently."""
+    genuinely never seen before, then caches it permanently.
+
+    Special-cased for the UK home nations: REST Countries is built on
+    ISO 3166-1 (sovereign states only), so England/Scotland/Wales/N.
+    Ireland don't exist there as separate entries — only "United
+    Kingdom" does. In football specifically that's a real problem, since
+    these compete internationally with their own distinct flags, not a
+    shared UK one. Bypassed here with known, reliable flag URLs instead
+    of ever hitting REST Countries for these four."""
+    UK_HOME_NATIONS = {
+        "England": "https://flagcdn.com/w80/gb-eng.png",
+        "Scotland": "https://flagcdn.com/w80/gb-sct.png",
+        "Wales": "https://flagcdn.com/w80/gb-wls.png",
+        "Northern Ireland": "https://flagcdn.com/w80/gb-nir.png",
+    }
+    if country_name in UK_HOME_NATIONS:
+        flag_url = UK_HOME_NATIONS[country_name]
+        cur.execute(
+            "INSERT INTO country_flags (country_name, flag_url) VALUES (%s, %s) "
+            "ON CONFLICT (country_name) DO UPDATE SET flag_url = EXCLUDED.flag_url",
+            (country_name, flag_url),
+        )
+        return flag_url
+
     cur.execute("SELECT flag_url FROM country_flags WHERE country_name = %s", (country_name,))
     row = cur.fetchone()
     if row:
