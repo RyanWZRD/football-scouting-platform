@@ -126,6 +126,38 @@ def upsert_league(conn, league_id, season):
         return cur.fetchone()[0]
 
 
+def get_or_create_countries(conn, names):
+    """Batch-resolve a set of country names to their countries.id, creating
+    any that don't exist yet. One round-trip for the whole page of players
+    rather than one per player — same batching principle as the player
+    writes below, and for the same reason (many small sequential writes
+    is what caused the 2+ hour ingest runs in the first place).
+
+    Returns a dict of {name: id}. Players with no nationality in the API
+    response (name=None) are simply not looked up and resolve to None
+    via the calling code's .get().
+    """
+    clean_names = {fix_mojibake(n) for n in names if n}
+    if not clean_names:
+        return {}
+    with conn.cursor() as cur:
+        execute_values(
+            cur,
+            """
+            INSERT INTO countries (name) VALUES %s
+            ON CONFLICT (name) DO NOTHING
+            """,
+            [(n,) for n in clean_names],
+        )
+        cur.execute(
+            "SELECT id, name FROM countries WHERE name = ANY(%s)",
+            (list(clean_names),),
+        )
+        rows = cur.fetchall()
+    conn.commit()
+    return {name: cid for cid, name in rows}
+
+
 def fetch_current_clubs(league_external_id, season):
     """The authoritative list of clubs actually in this league for this
     season — via /teams, not incidentally discovered through player data."""
@@ -175,25 +207,33 @@ def upsert_players_for_club(conn, club_external_id, season, db_club_id, max_page
         if not data:
             break
 
+        # Resolve every nationality on this page in one round-trip before
+        # building rows, rather than looking each one up player-by-player.
+        nationality_names = [entry["player"].get("nationality") for entry in data]
+        country_lookup = get_or_create_countries(conn, nationality_names)
+
         rows = []
         for entry in data:
             p = entry["player"]
             stats = entry["statistics"][0] if entry["statistics"] else {}
+            nationality_id = country_lookup.get(fix_mojibake(p.get("nationality")))
             rows.append((
                 str(p["id"]), fix_mojibake(p["name"]), p.get("birth", {}).get("date"),
                 stats.get("games", {}).get("position"), db_club_id, p.get("photo"),
+                nationality_id,
             ))
 
         if rows:
             with conn.cursor() as cur:
                 execute_values(cur, """
                     INSERT INTO players
-                        (external_id, full_name, date_of_birth, primary_position, current_club_id, photo_url)
+                        (external_id, full_name, date_of_birth, primary_position, current_club_id, photo_url, nationality_id)
                     VALUES %s
                     ON CONFLICT (external_id) DO UPDATE SET
                         full_name = EXCLUDED.full_name,
                         current_club_id = EXCLUDED.current_club_id,
                         photo_url = EXCLUDED.photo_url,
+                        nationality_id = EXCLUDED.nationality_id,
                         updated_at = now()
                 """, rows)
             conn.commit()
