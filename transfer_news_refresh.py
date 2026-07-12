@@ -1,0 +1,68 @@
+"""
+Fetches general football transfer news via Google News RSS (free, no API
+key, no daily quota cap) and caches it in the database. Run every 5
+minutes by a dedicated GitHub Actions workflow, separate from the main
+nightly pipeline — this means the Transfer Centre is always showing data
+that's at most 5 minutes old, whether or not anyone has the app open.
+
+Usage:
+    export DATABASE_URL=...
+    python transfer_news_refresh.py
+"""
+
+import os
+import requests
+import psycopg2
+import xml.etree.ElementTree as ET
+
+DATABASE_URL = os.environ.get("DATABASE_URL")
+HEADERS = {"User-Agent": "CrossLeagueScoutingIndex/1.0 (personal scouting tool)"}
+MAX_STORED = 100  # keep the cache table bounded — old headlines get pruned
+
+
+def run():
+    conn = psycopg2.connect(DATABASE_URL)
+    try:
+        resp = requests.get(
+            "https://news.google.com/rss/search?q=football+transfer&hl=en-GB&gl=GB&ceid=GB:en",
+            headers=HEADERS, timeout=10,
+        )
+        root = ET.fromstring(resp.content)
+        items = root.findall(".//item")
+    except Exception as e:
+        print(f"Failed to fetch transfer news: {e}")
+        conn.close()
+        return
+
+    new_count = 0
+    with conn.cursor() as cur:
+        for item in items:
+            headline = item.findtext("title")
+            link = item.findtext("link")
+            source = item.findtext("source")
+            published = item.findtext("pubDate")
+            if not headline or not link:
+                continue
+            cur.execute(
+                "INSERT INTO transfer_news_cache (headline, link, source, published) "
+                "VALUES (%s, %s, %s, %s) ON CONFLICT (link) DO NOTHING",
+                (headline, link, source, published),
+            )
+            if cur.rowcount > 0:
+                new_count += 1
+        conn.commit()
+
+        # Keep the table bounded — prune anything beyond the most recent MAX_STORED.
+        cur.execute("""
+            DELETE FROM transfer_news_cache WHERE id NOT IN (
+                SELECT id FROM transfer_news_cache ORDER BY fetched_at DESC LIMIT %s
+            )
+        """, (MAX_STORED,))
+        conn.commit()
+
+    print(f"Fetched {len(items)} headlines, {new_count} genuinely new.")
+    conn.close()
+
+
+if __name__ == "__main__":
+    run()
