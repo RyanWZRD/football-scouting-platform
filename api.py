@@ -123,6 +123,57 @@ def data_status():
     return {"last_updated": row["last_updated"], "scored_players": count_row["cnt"]}
 
 
+@app.get("/pipeline-health")
+def pipeline_health(authorized: bool = Depends(check_api_key)):
+    """A real operational view: live API-Football quota, data freshness,
+    and whether the most recent matches ingested are genuinely recent
+    (a proxy for 'is fixtures_ingest.py keeping up', not a guarantee).
+    Honest scope limit: there's no error-logging table, so this can't
+    show recent failures directly — only what CAN be checked: current
+    state, not history of what went wrong."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT MAX(computed_at) AS scored_at FROM player_potential_scores")
+        scored_at = cur.fetchone()["scored_at"]
+
+        cur.execute("SELECT MAX(match_date) AS most_recent_match FROM matches WHERE status = 'finished'")
+        most_recent_match = cur.fetchone()["most_recent_match"]
+
+        cur.execute("SELECT MAX(fetched_at) AS transfer_news_at FROM transfer_news_cache")
+        transfer_news_row = cur.fetchone()
+        transfer_news_at = transfer_news_row["transfer_news_at"] if transfer_news_row else None
+
+        cur.execute("SELECT count(*) AS cnt FROM players")
+        total_players = cur.fetchone()["cnt"]
+
+    quota = None
+    if FOOTBALL_API_KEY:
+        try:
+            resp = requests.get(
+                "https://v3.football.api-sports.io/status",
+                headers={"x-apisports-key": FOOTBALL_API_KEY}, timeout=8,
+            )
+            if resp.status_code == 200:
+                data = resp.json().get("response", {})
+                requests_info = data.get("requests", {})
+                quota = {
+                    "used_today": requests_info.get("current"),
+                    "daily_limit": requests_info.get("limit_day"),
+                    "subscription_active": data.get("subscription", {}).get("active"),
+                }
+        except Exception:
+            quota = None
+
+    conn.close()
+    return {
+        "quota": quota,
+        "scoring_last_run": scored_at,
+        "most_recent_finished_match": most_recent_match,
+        "transfer_news_last_refreshed": transfer_news_at,
+        "total_players_tracked": total_players,
+    }
+
+
 # Our 17 tracked league external IDs, for filtering the global live-scores response
 TRACKED_LEAGUE_IDS = {39, 140, 78, 135, 61, 88, 94, 203, 71, 98, 253, 179, 62, 40, 144, 262, 128}
 
@@ -624,6 +675,24 @@ def player_projection(player_id: int, authorized: bool = Depends(check_api_key))
         "points_tracked": n,
         "confidence": confidence,
     }
+
+
+@app.get("/players/{player_id}/season-history")
+def player_season_history(player_id: int, authorized: bool = Depends(check_api_key)):
+    """Real multi-year career output — season-by-season totals for
+    players run through historical_seasons_ingest.py. Empty until that's
+    been run; not every player will have data going back multiple years."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT season, club_name, league_name, appearances, minutes_played, goals, assists, avg_rating
+            FROM player_season_history
+            WHERE player_id = %s
+            ORDER BY season DESC
+        """, (player_id,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
 
 
 @app.get("/players/breakout-candidates")
@@ -1248,6 +1317,51 @@ def league_strength(authorized: bool = Depends(check_api_key)):
         rows = cur.fetchall()
     conn.close()
     return [{"league": r["league_display"], "avg_potential": round(r["avg_potential"], 1), "scored_players": r["scored_players"]} for r in rows]
+
+
+@app.get("/clubs/underdogs")
+def underdog_index(limit: int = Query(15, le=50), authorized: bool = Depends(check_api_key)):
+    """A genuine 'moneyball' signal: which clubs are producing squad
+    quality meaningfully above their own league's average — real
+    overperformance relative to context, not just 'good in absolute
+    terms' (which just re-surfaces big clubs in strong leagues).
+    Requires 8+ scored players at a club to appear, avoiding a
+    misleading result from a tiny sample."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH club_avg AS (
+                SELECT cl.id AS club_id, cl.name AS club, l.id AS league_id,
+                       l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display,
+                       AVG(pps.potential_index) AS club_avg_potential, COUNT(*) AS squad_size
+                FROM players p
+                JOIN clubs cl ON cl.id = p.current_club_id
+                JOIN leagues l ON l.id = cl.league_id
+                LEFT JOIN countries co ON co.id = l.country_id
+                JOIN LATERAL (
+                    SELECT potential_index FROM player_potential_scores
+                    WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+                ) pps ON true
+                GROUP BY cl.id, cl.name, l.id, l.name, league_display
+                HAVING COUNT(*) >= 8
+            ),
+            league_avg AS (
+                SELECT league_id, AVG(club_avg_potential) AS league_avg_potential
+                FROM club_avg
+                GROUP BY league_id
+            )
+            SELECT ca.club, ca.league_display, ca.squad_size,
+                   ROUND(ca.club_avg_potential::numeric, 1) AS club_avg_potential,
+                   ROUND(la.league_avg_potential::numeric, 1) AS league_avg_potential,
+                   ROUND((ca.club_avg_potential - la.league_avg_potential)::numeric, 1) AS overperformance
+            FROM club_avg ca
+            JOIN league_avg la ON la.league_id = ca.league_id
+            ORDER BY overperformance DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
 
 
 @app.get("/clubs/continuity")
@@ -2139,15 +2253,29 @@ def player_dossier(player_id: int, authorized: bool = Depends(check_api_key)):
         scout_ratings = cur.fetchall()
 
         # Positional versatility — real per-match position data, already
-        # captured during ingestion but never surfaced until now.
+        # captured during ingestion but never surfaced until now. Now
+        # includes avg rating per position too — a genuine quality
+        # signal, since playing 3 positions competently is worth more
+        # than playing 3 positions poorly.
         cur.execute("""
-            SELECT position_played, COUNT(*) AS matches
+            SELECT position_played, COUNT(*) AS matches, AVG(rating) AS avg_rating
             FROM player_match_stats
             WHERE player_id = %s AND position_played IS NOT NULL AND minutes_played > 0
             GROUP BY position_played
             ORDER BY matches DESC
         """, (player_id,))
         positions_played = cur.fetchall()
+        for pp in positions_played:
+            pp["avg_rating"] = round(pp["avg_rating"], 2) if pp["avg_rating"] is not None else None
+
+        # Versatility Value — a genuine composite: rewards BOTH genuine
+        # breadth (multiple real positions) AND maintaining real quality
+        # across them, not just showing up somewhere different once.
+        versatility_value = None
+        rated_positions = [pp for pp in positions_played if pp["avg_rating"] is not None]
+        if len(rated_positions) >= 2:
+            avg_rating_across = sum(pp["avg_rating"] for pp in rated_positions) / len(rated_positions)
+            versatility_value = round(len(rated_positions) * avg_rating_across, 1)
 
         # Consistency — rating variance across real matches. Needs a
         # minimum sample (5+) to mean anything; STDDEV_SAMP returns NULL
@@ -2309,6 +2437,7 @@ def player_dossier(player_id: int, authorized: bool = Depends(check_api_key)):
         "history": history,
         "scout_ratings": scout_ratings,
         "positions_played": positions_played,
+        "versatility_value": versatility_value,
         "consistency": consistency,
         "scouting_confidence": scouting_confidence,
         "league_adjusted_rating": league_adjusted,
