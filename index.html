@@ -4558,28 +4558,41 @@ function ScoutDashboard() {
                   {moreMenuOpen && (
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setMoreMenuOpen(false)}></div>
-                      <div className="absolute left-0 top-full mt-2 z-50 bg-[#152922] border border-[#2C4A3B] shadow-lg py-2 w-56 normal-case tracking-normal">
+                      <div className="absolute left-0 top-full mt-2 z-50 bg-[#152922] border border-[#2C4A3B] shadow-lg py-2 w-64 max-h-[80vh] overflow-y-auto normal-case tracking-normal">
                         {[
-                          ["🔄", "Transfers", setTransfersOpen],
-                          ["🏆", "Standings", setStandingsOpen],
-                          ["🌟", "Team of Season", setTeamOfSeasonOpen],
-                          ["🌍", "League Strength", setLeagueStrengthOpen],
-                          ["♻️", "Continuity", setSquadContinuityOpen],
-                          ["📈", "Table Predictor", setTablePredictorOpen],
-                          ["🧠", "Intelligence Feed", setIntelligenceFeedOpen],
-                          ["📊", "My Report Card", setScoutReportCardOpen],
-                          ["🔮", "Discovery Engine", setDiscoveryEngineOpen],
-                          ["🔄", "Transfer Centre", setTransferCentreOpen],
-                          ["🎯", "Underdog Index", setUnderdogIndexOpen],
-                          ["🩺", "Pipeline Health", setPipelineHealthOpen],
-                          ["🔍", "Position Scarcity", setPositionScarcityOpen],
-                          ["🏗️", "Rebuild Radar", setRebuildRadarOpen],
-                          ["📄", "League Report", setLeagueReportOpen],
-                        ].map(([icon, label, setter]) => (
-                          <button key={label} onClick={() => { setter(true); setMoreMenuOpen(false); }}
-                            className="w-full text-left px-4 py-2 text-xs text-[#9AAA9E] hover:text-[#E3A857] hover:bg-[#0E1A15] flex items-center gap-2">
-                            <span>{icon}</span> {label}
-                          </button>
+                          { section: "Data & Results", items: [
+                            ["🔄", "Transfers", setTransfersOpen],
+                            ["🏆", "Standings", setStandingsOpen],
+                            ["📈", "Table Predictor", setTablePredictorOpen],
+                            ["📄", "League Report", setLeagueReportOpen],
+                          ]},
+                          { section: "Scouting Intelligence", items: [
+                            ["🧠", "Intelligence Feed", setIntelligenceFeedOpen],
+                            ["🔮", "Discovery Engine", setDiscoveryEngineOpen],
+                            ["📊", "My Report Card", setScoutReportCardOpen],
+                            ["🎯", "Underdog Index", setUnderdogIndexOpen],
+                            ["🔍", "Position Scarcity", setPositionScarcityOpen],
+                          ]},
+                          { section: "Club Analysis", items: [
+                            ["🌟", "Team of Season", setTeamOfSeasonOpen],
+                            ["🌍", "League Strength", setLeagueStrengthOpen],
+                            ["♻️", "Continuity", setSquadContinuityOpen],
+                            ["🏗️", "Rebuild Radar", setRebuildRadarOpen],
+                          ]},
+                          { section: "Live & Operations", items: [
+                            ["🔄", "Transfer Centre", setTransferCentreOpen],
+                            ["🩺", "Pipeline Health", setPipelineHealthOpen],
+                          ]},
+                        ].map(group => (
+                          <div key={group.section}>
+                            <div className="px-4 pt-2 pb-1 text-[9px] uppercase tracking-wide text-[#4A5C52]">{group.section}</div>
+                            {group.items.map(([icon, label, setter]) => (
+                              <button key={label} onClick={() => { setter(true); setMoreMenuOpen(false); }}
+                                className="w-full text-left px-4 py-2 text-xs text-[#9AAA9E] hover:text-[#E3A857] hover:bg-[#0E1A15] flex items-center gap-2">
+                                <span>{icon}</span> {label}
+                              </button>
+                            ))}
+                          </div>
                         ))}
                         <a href="https://talksport.com" target="_blank" rel="noopener noreferrer"
                           onClick={() => setMoreMenuOpen(false)}
