@@ -1573,6 +1573,7 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
   const [homeAway, setHomeAway] = useState(null);
   const [tacticalFit, setTacticalFit] = useState(null);
   const [balance, setBalance] = useState(null);
+  const [manager, setManager] = useState(null);
   useEffect(() => {
     if (!API_BASE_URL) return;
     const params = new URLSearchParams({ club: clubName, league: leagueName });
@@ -1592,6 +1593,10 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
       .then(res => res.ok ? res.json() : null)
       .then(data => setBalance(data))
       .catch(() => setBalance(null));
+    fetch(`${API_BASE_URL}/clubs/manager?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setManager(data))
+      .catch(() => setManager(null));
   }, [clubName, leagueName]);
 
   return (
@@ -1607,6 +1612,20 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
             🔄 Simulate Transfer
           </button>
         </div>
+
+        {manager && (
+          <div className="mt-4 flex items-center gap-3 border border-[#2C4A3B] p-3">
+            {manager.photo_url && <img src={manager.photo_url} alt="" style={{ width: 44, height: 44, objectFit: "cover", borderRadius: "50%" }} />}
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">👔 Manager</div>
+              <div className="text-sm text-[#EDEDE3]">{manager.name}</div>
+              <div className="text-xs text-[#6B8570]">
+                {manager.nationality}{manager.age ? `, ${manager.age}` : ""}
+                {manager.appointed_date && ` · since ${new Date(manager.appointed_date).toLocaleDateString(undefined, { month: "short", year: "numeric" })}`}
+              </div>
+            </div>
+          </div>
+        )}
 
         {record && record.played > 0 && (
           <div className="mt-4 border border-[#2C4A3B] p-4">
@@ -3329,6 +3348,183 @@ function LeagueReportCard({ league, report, forwardedRef }) {
   );
 }
 
+function BigMatchRadarModal({ onClose }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/fixtures/big-matches?limit=15`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">⚡ Big Match Radar</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Upcoming fixtures worth watching — real squad quality on both sides, or one of your shortlisted players' clubs involved. Not an outcome prediction.
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.length === 0 && <div className="text-sm text-[#6B8570]">Nothing flagged as worth watching in the next 2 weeks right now.</div>}
+        {rows?.map(m => (
+          <div key={m.id} className="flex items-center justify-between text-sm py-2.5 border-b border-[#1C2E26]">
+            <div>
+              <div className="text-[#EDEDE3]">{m.home_club} vs {m.away_club} {m.involves_shortlist && <span className="ml-1">⭐</span>}</div>
+              <div className="text-[10px] text-[#6B8570]">{m.league} · {new Date(m.match_date).toLocaleDateString()}</div>
+              <div className="text-[10px] text-[#4A5C52] italic">{m.reasons.join(", ")}</div>
+            </div>
+            {m.combined_quality != null && <span className="font-plexmono text-[#E3A857] text-xs">{m.combined_quality}</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DecliningMinutesModal({ onClose, onSelectPlayer }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/players/declining-minutes?limit=15`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📉 Declining Playing Time</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Players who WERE regular starters but have seen a real drop in minutes recently — a genuine "something's going on" signal, not something a potential score alone would show.
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.length === 0 && <div className="text-sm text-[#6B8570]">No genuine drop-offs detected right now.</div>}
+        {rows?.map(r => (
+          <button key={r.player_id} onClick={() => onSelectPlayer({ id: r.player_id, club: r.club })}
+            className="w-full flex items-center justify-between text-sm py-2.5 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+            <span className="flex items-center gap-2 text-[#EDEDE3] truncate">
+              <Avatar name={r.full_name} photoUrl={r.photo_url} size={26} />
+              <span className="truncate">{r.full_name}</span>
+              <span className="text-[#6B8570] text-xs shrink-0">· {r.club}</span>
+            </span>
+            <span className="text-xs shrink-0 font-plexmono">
+              <span className="text-[#6B8570]">{r.earlier_avg_minutes}</span>
+              <span className="text-[#6B8570] mx-1">→</span>
+              <span className="text-[#E36B57]">{r.recent_avg_minutes}</span>
+              <span className="text-[#E36B57] ml-2">(-{r.drop_pct}%)</span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AdvancedSearchModal({ allLeagueOptions, onClose, onSelectPlayer }) {
+  const [filters, setFilters] = useState({
+    league: "", position: "", ageMin: "", ageMax: "",
+    minPotential: "", maxPotential: "", excludeTop5: false, sort: "potential",
+  });
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runSearch = () => {
+    if (!API_BASE_URL) return;
+    setLoading(true);
+    const params = new URLSearchParams({ sort: filters.sort, limit: "30" });
+    if (filters.league) params.set("league", filters.league);
+    if (filters.position) params.set("position", filters.position);
+    if (filters.ageMin) params.set("age_min", filters.ageMin);
+    if (filters.ageMax) params.set("max_age", filters.ageMax);
+    if (filters.minPotential) params.set("min_potential", filters.minPotential);
+    if (filters.maxPotential) params.set("max_potential", filters.maxPotential);
+    if (filters.excludeTop5) params.set("exclude_top5", "true");
+
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setResults(data))
+      .catch(() => setResults([]))
+      .finally(() => setLoading(false));
+  };
+
+  const set = (key) => (e) => setFilters(prev => ({ ...prev, [key]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🔎 Advanced Search</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Combine every dimension at once — a specific compound question directly, not hopping between separate leaderboards.
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <select value={filters.league} onChange={set("league")} className="bg-[#152922] border border-[#2C4A3B] px-2 py-1.5 text-xs text-[#EDEDE3]">
+            <option value="">Any league</option>
+            {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+          <select value={filters.position} onChange={set("position")} className="bg-[#152922] border border-[#2C4A3B] px-2 py-1.5 text-xs text-[#EDEDE3]">
+            <option value="">Any position</option>
+            <option value="Goalkeeper">Goalkeeper</option>
+            <option value="Defender">Defender</option>
+            <option value="Midfielder">Midfielder</option>
+            <option value="Attacker">Attacker</option>
+          </select>
+          <input type="number" placeholder="Age min" value={filters.ageMin} onChange={set("ageMin")} className="bg-[#152922] border border-[#2C4A3B] px-2 py-1.5 text-xs text-[#EDEDE3]" />
+          <input type="number" placeholder="Age max" value={filters.ageMax} onChange={set("ageMax")} className="bg-[#152922] border border-[#2C4A3B] px-2 py-1.5 text-xs text-[#EDEDE3]" />
+          <input type="number" placeholder="Min potential" value={filters.minPotential} onChange={set("minPotential")} className="bg-[#152922] border border-[#2C4A3B] px-2 py-1.5 text-xs text-[#EDEDE3]" />
+          <input type="number" placeholder="Max potential" value={filters.maxPotential} onChange={set("maxPotential")} className="bg-[#152922] border border-[#2C4A3B] px-2 py-1.5 text-xs text-[#EDEDE3]" />
+        </div>
+        <div className="flex items-center justify-between mb-4">
+          <label className="flex items-center gap-2 text-xs text-[#9AAA9E]">
+            <input type="checkbox" checked={filters.excludeTop5} onChange={set("excludeTop5")} />
+            Exclude top 5 leagues (hidden gems only)
+          </label>
+          <select value={filters.sort} onChange={set("sort")} className="bg-[#152922] border border-[#2C4A3B] px-2 py-1.5 text-xs text-[#EDEDE3]">
+            <option value="potential">Sort: Potential</option>
+            <option value="age">Sort: Age</option>
+            <option value="goals">Sort: Goals</option>
+            <option value="assists">Sort: Assists</option>
+            <option value="minutes_played">Sort: Minutes</option>
+          </select>
+        </div>
+
+        <button onClick={runSearch} disabled={loading}
+          className="w-full bg-[#E3A857] text-[#0E1A15] font-bold py-2 text-sm uppercase tracking-wide disabled:opacity-50 mb-4">
+          {loading ? "Searching…" : "Search"}
+        </button>
+
+        {results?.length === 0 && <div className="text-sm text-[#6B8570] text-center py-4">No players match all these criteria.</div>}
+        {results?.map(r => (
+          <button key={r.id} onClick={() => onSelectPlayer(r)}
+            className="w-full flex items-center justify-between text-sm py-2 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+            <span className="flex items-center gap-2 text-[#EDEDE3] truncate">
+              <Avatar name={r.full_name} photoUrl={r.photo_url} size={26} />
+              <span className="truncate">{r.full_name}</span>
+              <span className="text-[#6B8570] text-xs shrink-0">· {r.club}</span>
+            </span>
+            <span className="font-plexmono text-[#E3A857] text-xs shrink-0">{r.potential_index ? Math.round(r.potential_index) : "—"}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function LeagueReportModal({ allLeagueOptions, onClose }) {
   const [league, setLeague] = useState("");
   const [report, setReport] = useState(null);
@@ -4205,6 +4401,9 @@ function ScoutDashboard() {
   const [positionScarcityOpen, setPositionScarcityOpen] = useState(false);
   const [rebuildRadarOpen, setRebuildRadarOpen] = useState(false);
   const [leagueReportOpen, setLeagueReportOpen] = useState(false);
+  const [bigMatchRadarOpen, setBigMatchRadarOpen] = useState(false);
+  const [decliningMinutesOpen, setDecliningMinutesOpen] = useState(false);
+  const [advancedSearchOpen, setAdvancedSearchOpen] = useState(false);
   const [deepLinkPlayerId, setDeepLinkPlayerId] = useState(() => new URLSearchParams(window.location.search).get("player"));
   const [livePlayers, setLivePlayers] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState(API_BASE_URL ? "connecting" : "offline");
@@ -4565,6 +4764,8 @@ function ScoutDashboard() {
                             ["🏆", "Standings", setStandingsOpen],
                             ["📈", "Table Predictor", setTablePredictorOpen],
                             ["📄", "League Report", setLeagueReportOpen],
+                            ["⚡", "Big Match Radar", setBigMatchRadarOpen],
+                            ["🔎", "Advanced Search", setAdvancedSearchOpen],
                           ]},
                           { section: "Scouting Intelligence", items: [
                             ["🧠", "Intelligence Feed", setIntelligenceFeedOpen],
@@ -4572,6 +4773,7 @@ function ScoutDashboard() {
                             ["📊", "My Report Card", setScoutReportCardOpen],
                             ["🎯", "Underdog Index", setUnderdogIndexOpen],
                             ["🔍", "Position Scarcity", setPositionScarcityOpen],
+                            ["📉", "Declining Minutes", setDecliningMinutesOpen],
                           ]},
                           { section: "Club Analysis", items: [
                             ["🌟", "Team of Season", setTeamOfSeasonOpen],
@@ -5040,6 +5242,29 @@ function ScoutDashboard() {
         />
       )}
       {leagueReportOpen && <LeagueReportModal allLeagueOptions={allLeagueOptions} onClose={() => setLeagueReportOpen(false)} />}
+      {bigMatchRadarOpen && <BigMatchRadarModal onClose={() => setBigMatchRadarOpen(false)} />}
+      {decliningMinutesOpen && (
+        <DecliningMinutesModal
+          onClose={() => setDecliningMinutesOpen(false)}
+          onSelectPlayer={(row) => {
+            setDecliningMinutesOpen(false);
+            if (row.club) setClub(row.club);
+            setDeepLinkPlayerId(String(row.id));
+          }}
+        />
+      )}
+      {advancedSearchOpen && (
+        <AdvancedSearchModal
+          allLeagueOptions={allLeagueOptions}
+          onClose={() => setAdvancedSearchOpen(false)}
+          onSelectPlayer={(row) => {
+            setAdvancedSearchOpen(false);
+            if (row.league_display) setLeague(row.league_display);
+            if (row.club) setClub(row.club);
+            setDeepLinkPlayerId(String(row.id));
+          }}
+        />
+      )}
       <CompareBar selected={compareList} onClear={() => setCompareList([])} onCompare={() => setComparing(true)} />
       {comparing && compareList.length >= 2 && (
         <ComparePanel players={compareList} onClose={() => setComparing(false)} />
