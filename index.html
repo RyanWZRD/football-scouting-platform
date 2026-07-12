@@ -543,14 +543,23 @@ function Sparkline({ points, width = 200, height = 50 }) {
   const stepX = width / (points.length - 1);
   const coords = values.map((v, i) => `${i * stepX},${height - ((v - min) / range) * height}`);
   const trendUp = values[values.length - 1] >= values[0];
+  const color = trendUp ? "#7FD99A" : "#E88B7D";
+  const firstDate = new Date(points[0].computed_at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  const lastDate = new Date(points[points.length - 1].computed_at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height}>
-      <polyline points={coords.join(" ")} fill="none" stroke={trendUp ? "#7FD99A" : "#E88B7D"} strokeWidth="2" />
-      {coords.map((c, i) => {
-        const [x, y] = c.split(",");
-        return <circle key={i} cx={x} cy={y} r="2.5" fill={trendUp ? "#7FD99A" : "#E88B7D"} />;
-      })}
-    </svg>
+    <div>
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height}>
+        <polyline points={coords.join(" ")} fill="none" stroke={color} strokeWidth="2" />
+        {coords.map((c, i) => {
+          const [x, y] = c.split(",");
+          return <circle key={i} cx={x} cy={y} r="2.5" fill={color} />;
+        })}
+      </svg>
+      <div className="flex justify-between text-[10px] text-[#6B8570] mt-1">
+        <span>{firstDate} · {values[0].toFixed(1)}</span>
+        <span style={{ color }}>{lastDate} · {values[values.length - 1].toFixed(1)}</span>
+      </div>
+    </div>
   );
 }
 
@@ -1492,6 +1501,15 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
   }));
   const maxBucketCount = Math.max(1, ...ageCurve.map(b => b.count));
 
+  // Youth Pipeline Score — genuine development-depth signal, distinct
+  // from squad depth warnings. Free, client-side, using data already in hand.
+  const u21s = players.filter(p => p.age != null && p.age <= 21 && p.potential != null);
+  const youthPipeline = u21s.length > 0 ? {
+    count: u21s.length,
+    avgPotential: (u21s.reduce((s, p) => s + p.potential, 0) / u21s.length).toFixed(1),
+    topProspect: [...u21s].sort((a, b) => b.potential - a.potential)[0],
+  } : null;
+
   const POSITION_ORDER = ["Goalkeeper", "Defender", "Midfielder", "Attacker"];
   const byPosition = POSITION_ORDER
     .map(pos => ({ pos, list: players.filter(p => p.position === pos).sort((a, b) => (b.potential ?? -1) - (a.potential ?? -1)) }))
@@ -1511,6 +1529,7 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
   const [record, setRecord] = useState(null);
   const [homeAway, setHomeAway] = useState(null);
   const [tacticalFit, setTacticalFit] = useState(null);
+  const [balance, setBalance] = useState(null);
   useEffect(() => {
     if (!API_BASE_URL) return;
     const params = new URLSearchParams({ club: clubName, league: leagueName });
@@ -1526,6 +1545,10 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
       .then(res => res.ok ? res.json() : null)
       .then(data => setTacticalFit(data))
       .catch(() => setTacticalFit(null));
+    fetch(`${API_BASE_URL}/clubs/balance?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setBalance(data))
+      .catch(() => setBalance(null));
   }, [clubName, leagueName]);
 
   return (
@@ -1600,6 +1623,22 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
           </div>
         )}
 
+        {youthPipeline && (
+          <div className="mt-3 border border-[#2C4A3B] p-4">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🌱 Youth Pipeline</div>
+            <div className="text-sm text-[#EDEDE3]">
+              <span className="font-plexmono text-[#E3A857]">{youthPipeline.count}</span> players U21
+              <span className="text-[#6B8570] mx-2">·</span>
+              avg potential <span className="font-plexmono text-[#E3A857]">{youthPipeline.avgPotential}</span>
+            </div>
+            {youthPipeline.topProspect && (
+              <button onClick={() => onSelectPlayer(youthPipeline.topProspect)} className="text-xs text-[#6B8570] hover:text-[#E3A857] mt-1">
+                Top prospect: {youthPipeline.topProspect.name} ({Math.round(youthPipeline.topProspect.potential)})
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-3 gap-4 mt-6 border-b border-[#2C4A3B] pb-4">
           <div>
             <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">Squad Size</div>
@@ -1645,6 +1684,21 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
           </div>
           );
         })}
+
+        {balance && Object.keys(balance).length > 0 && (
+          <div className="mt-6 border-t border-[#2C4A3B] pt-5">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-3">⚖️ Squad Balance</div>
+            {Object.entries(balance).map(([position, data]) => (
+              <div key={position} className="mb-2 flex items-center justify-between text-sm">
+                <span className="text-[#EDEDE3]">{position}</span>
+                <span className="text-xs" style={{ color: data.balanced ? "#7FD99A" : "#E36B57" }}>
+                  {data.balanced ? "✓ Balanced" : "⚠ Lopsided"}
+                  <span className="text-[#6B8570] ml-2">({Object.entries(data.archetype_breakdown).map(([a, n]) => `${a} ×${n}`).join(", ")})</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {tacticalFit?.club_profile && tacticalFit.candidates?.length > 0 && (
           <div className="mt-6 border-t border-[#2C4A3B] pt-5">
@@ -2699,6 +2753,7 @@ function TransferCentreModal({ onClose }) {
 function LiveScoresModal({ onClose }) {
   const [matches, setMatches] = useState(null);
   const [lastFetch, setLastFetch] = useState(0);
+  const [shortlistClubs, setShortlistClubs] = useState([]);
   const inWindow = isWithinLiveWindow();
 
   const fetchLive = () => {
@@ -2708,6 +2763,14 @@ function LiveScoresModal({ onClose }) {
       .then(data => { setMatches(data.matches); setLastFetch(Date.now()); })
       .catch(() => setMatches([]));
   };
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/shortlist/clubs`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(clubs => setShortlistClubs(clubs))
+      .catch(() => setShortlistClubs([]));
+  }, []);
 
   useEffect(() => {
     if (!inWindow) return;
@@ -2747,19 +2810,23 @@ function LiveScoresModal({ onClose }) {
         {inWindow && matches?.length === 0 && (
           <div className="text-sm text-[#6B8570] text-center py-8">Nothing live right now across your tracked leagues.</div>
         )}
-        {inWindow && matches?.map((m, i) => (
-          <div key={i} className="flex items-center justify-between text-sm py-2.5 border-b border-[#1C2E26]">
-            <div className="text-[#6B8570] text-xs w-16 shrink-0">
-              {m.status_short === "HT" ? "HT" : m.elapsed != null ? `${m.elapsed}'` : m.status_short}
+        {inWindow && matches?.map((m, i) => {
+          const isShortlistMatch = shortlistClubs.includes(m.home_club) || shortlistClubs.includes(m.away_club);
+          return (
+            <div key={i} className={`flex items-center justify-between text-sm py-2.5 border-b ${isShortlistMatch ? "border-[#E3A857] bg-[#1A2E22]" : "border-[#1C2E26]"}`}>
+              <div className="text-[#6B8570] text-xs w-16 shrink-0">
+                {m.status_short === "HT" ? "HT" : m.elapsed != null ? `${m.elapsed}'` : m.status_short}
+              </div>
+              <div className="flex-1 text-center text-[#EDEDE3] truncate px-2">
+                {isShortlistMatch && <span className="mr-1">⭐</span>}
+                {m.home_club} <span className="font-plexmono text-[#E3A857]">{m.home_score}–{m.away_score}</span> {m.away_club}
+              </div>
+              <div className="text-[#6B8570] text-xs w-24 text-right truncate shrink-0">{m.league}</div>
             </div>
-            <div className="flex-1 text-center text-[#EDEDE3] truncate px-2">
-              {m.home_club} <span className="font-plexmono text-[#E3A857]">{m.home_score}–{m.away_score}</span> {m.away_club}
-            </div>
-            <div className="text-[#6B8570] text-xs w-24 text-right truncate shrink-0">{m.league}</div>
-          </div>
-        ))}
+          );
+        })}
         {inWindow && (
-          <div className="text-[10px] text-[#4A5C52] text-center mt-4">Updates every 60s while this is open.</div>
+          <div className="text-[10px] text-[#4A5C52] text-center mt-4">Updates every 60s while this is open. ⭐ = a shortlisted player's club is playing.</div>
         )}
       </div>
     </div>
