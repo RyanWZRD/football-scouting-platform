@@ -2814,15 +2814,19 @@ function TransferCentreModal({ onClose }) {
 
 function LiveScoresModal({ onClose }) {
   const [matches, setMatches] = useState(null);
-  const [lastFetch, setLastFetch] = useState(0);
   const [shortlistClubs, setShortlistClubs] = useState([]);
+  const [connectionMode, setConnectionMode] = useState("connecting"); // "connecting" | "live" | "fallback"
+  const connectionModeRef = useRef("connecting"); // avoids a stale-closure read inside ws.onclose below
   const inWindow = isWithinLiveWindow();
+  const wsRef = useRef(null);
 
-  const fetchLive = () => {
+  const setMode = (mode) => { connectionModeRef.current = mode; setConnectionMode(mode); };
+
+  const fetchLiveOnce = () => {
     if (!API_BASE_URL) return;
     fetch(`${API_BASE_URL}/live`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
       .then(res => res.ok ? res.json() : { matches: [] })
-      .then(data => { setMatches(data.matches); setLastFetch(Date.now()); })
+      .then(data => setMatches(data.matches))
       .catch(() => setMatches([]));
   };
 
@@ -2835,21 +2839,52 @@ function LiveScoresModal({ onClose }) {
   }, []);
 
   useEffect(() => {
-    if (!inWindow) return;
-    fetchLive(); // immediate fetch on open, whatever's happening right now
-    const interval = setInterval(fetchLive, 60000); // baseline 60s poll
+    if (!inWindow || !API_BASE_URL) return;
 
-    const onVisibilityChange = () => {
-      if (document.visibilityState !== "visible") return;
-      // Throttled: only refetch on tab-focus if it's been 45s+ since the
-      // last real fetch — prevents rapid tab-switching from spamming quota.
-      if (Date.now() - lastFetch >= 45000) fetchLive();
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
+    // Real-time push via WebSocket — server polls once, pushes to every
+    // connected client instantly, rather than each browser tab polling
+    // independently every 60s. Falls back to the old REST polling if the
+    // WebSocket connection fails for any reason (proxies, extensions,
+    // network quirks) — this should always show SOMETHING, never just break.
+    const wsUrl = API_BASE_URL.replace(/^http/, "ws") + "/ws/live" + (API_KEY ? `?key=${encodeURIComponent(API_KEY)}` : "");
+    let fallbackInterval = null;
+
+    try {
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onopen = () => setMode("live");
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          setMatches(data.matches);
+        } catch (e) { /* ignore a malformed frame, wait for the next one */ }
+      };
+      ws.onerror = () => {
+        setMode("fallback");
+        fetchLiveOnce();
+        fallbackInterval = setInterval(fetchLiveOnce, 60000);
+      };
+      ws.onclose = () => {
+        // Uses the ref, not the closed-over state var — connectionMode
+        // itself would still read "connecting" here even after onopen
+        // fired, since this closure was created when the effect first
+        // ran, before that update happened.
+        if (connectionModeRef.current === "live") {
+          setMode("fallback");
+          fetchLiveOnce();
+          fallbackInterval = setInterval(fetchLiveOnce, 60000);
+        }
+      };
+    } catch (e) {
+      setMode("fallback");
+      fetchLiveOnce();
+      fallbackInterval = setInterval(fetchLiveOnce, 60000);
+    }
 
     return () => {
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
+      if (wsRef.current) wsRef.current.close();
+      if (fallbackInterval) clearInterval(fallbackInterval);
     };
   }, [inWindow]);
 
@@ -2888,7 +2923,12 @@ function LiveScoresModal({ onClose }) {
           );
         })}
         {inWindow && (
-          <div className="text-[10px] text-[#4A5C52] text-center mt-4">Updates every 60s while this is open. ⭐ = a shortlisted player's club is playing.</div>
+          <div className="text-[10px] text-[#4A5C52] text-center mt-4">
+            {connectionMode === "live" && "🟢 Live — instant updates as they happen."}
+            {connectionMode === "fallback" && "🟡 Reconnecting — updating every 60s in the meantime."}
+            {connectionMode === "connecting" && "Connecting…"}
+            {" "}⭐ = a shortlisted player's club is playing.
+          </div>
         )}
       </div>
     </div>
