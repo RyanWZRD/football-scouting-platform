@@ -404,6 +404,7 @@ def most_improved(limit: int = Query(10, le=50), authorized: bool = Depends(chec
     return rows
 
 
+
 @app.get("/shortlist/alerts")
 def shortlist_alerts(limit: int = Query(10, le=30), authorized: bool = Depends(check_api_key)):
     """Currently-shortlisted players who just had a standout match (high
@@ -766,6 +767,70 @@ def breakout_candidates(limit: int = Query(10, le=30), authorized: bool = Depend
 
     scored.sort(key=lambda r: r["breakout_score"], reverse=True)
     return scored[:limit]
+
+
+@app.get("/players/declining-minutes")
+def declining_minutes(limit: int = Query(15, le=50), authorized: bool = Depends(check_api_key)):
+    """A genuinely novel signal: players who WERE regular starters but
+    have seen sharply dropping minutes recently — a real proxy for
+    'something's going on' (loss of form, injury concern, manager
+    fallout, unrest) that pure output stats alone would never surface.
+    Compares average minutes in a player's most recent 5 matches against
+    their earlier matches this season — needs 10+ total matches to have
+    a meaningful 'earlier' baseline to compare against."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT pms.player_id, pms.minutes_played, m.match_date
+            FROM player_match_stats pms
+            JOIN matches m ON m.id = pms.match_id
+            WHERE m.status = 'finished'
+            ORDER BY pms.player_id, m.match_date DESC
+        """)
+        rows = cur.fetchall()
+
+    by_player = {}
+    for r in rows:
+        by_player.setdefault(r["player_id"], []).append(r["minutes_played"])
+
+    declines = []
+    for pid, minutes_list in by_player.items():
+        if len(minutes_list) < 10:
+            continue
+        recent = minutes_list[:5]
+        earlier = minutes_list[5:]
+        recent_avg = sum(recent) / len(recent)
+        earlier_avg = sum(earlier) / len(earlier)
+        if earlier_avg < 45:  # wasn't a real starter before either — nothing to genuinely decline from
+            continue
+        drop_pct = (earlier_avg - recent_avg) / earlier_avg * 100
+        if drop_pct >= 40:  # a real, meaningful drop — not just normal week-to-week variance
+            declines.append({"player_id": pid, "earlier_avg_minutes": round(earlier_avg, 1),
+                              "recent_avg_minutes": round(recent_avg, 1), "drop_pct": round(drop_pct, 1)})
+
+    declines.sort(key=lambda d: d["drop_pct"], reverse=True)
+    declines = declines[:limit]
+
+    if not declines:
+        return []
+
+    with conn.cursor() as cur:
+        ids = [d["player_id"] for d in declines]
+        cur.execute("""
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club
+            FROM players p LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            WHERE p.id = ANY(%s)
+        """, (ids,))
+        player_info = {r["id"]: r for r in cur.fetchall()}
+    conn.close()
+
+    results = []
+    for d in declines:
+        info = player_info.get(d["player_id"])
+        if not info:
+            continue
+        results.append({**d, "full_name": info["full_name"], "photo_url": info["photo_url"], "club": info["club"]})
+    return results
 
 
 @app.get("/clubs/tactical-fit")
@@ -1290,6 +1355,80 @@ def shortlist_clubs(authorized: bool = Depends(check_api_key)):
     return clubs
 
 
+@app.get("/fixtures/big-matches")
+def big_match_radar(days_ahead: int = Query(14, le=30), limit: int = Query(15, le=50), authorized: bool = Depends(check_api_key)):
+    """Scans upcoming fixtures and flags which ones are genuinely worth
+    watching — either both squads are high quality, or a shortlisted
+    player's club is involved. Ties fixtures, squad quality, and your
+    shortlist together in a way nothing else does."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT DISTINCT cl.name AS club
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT watch_level FROM scout_notes sn
+                WHERE sn.player_id = p.id ORDER BY created_at DESC LIMIT 1
+            ) latest_note ON true
+            WHERE latest_note.watch_level = 'shortlist'
+        """)
+        shortlist_club_names = {r["club"] for r in cur.fetchall()}
+
+        cur.execute("""
+            SELECT m.id, m.match_date, home_cl.name AS home_club, away_cl.name AS away_club,
+                   l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display
+            FROM matches m
+            JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            LEFT JOIN leagues l ON l.id = m.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE m.status = 'scheduled' AND m.match_date <= now() + (%s || ' days')::interval
+            ORDER BY m.match_date ASC
+        """, (days_ahead,))
+        fixtures = cur.fetchall()
+
+        cur.execute("""
+            SELECT cl.name AS club, AVG(pps.potential_index) AS avg_potential
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            GROUP BY cl.name
+            HAVING COUNT(*) >= 8
+        """)
+        club_quality = {r["club"]: r["avg_potential"] for r in cur.fetchall()}
+
+    conn.close()
+
+    results = []
+    for f in fixtures:
+        home_q = club_quality.get(f["home_club"])
+        away_q = club_quality.get(f["away_club"])
+        involves_shortlist = f["home_club"] in shortlist_club_names or f["away_club"] in shortlist_club_names
+        combined_quality = (home_q + away_q) / 2 if (home_q and away_q) else None
+
+        reasons = []
+        if involves_shortlist:
+            reasons.append("shortlisted player involved")
+        if combined_quality and combined_quality >= 65:
+            reasons.append("high combined squad quality")
+
+        if reasons:
+            results.append({
+                "id": f["id"], "match_date": f["match_date"], "home_club": f["home_club"],
+                "away_club": f["away_club"], "league": f["league_display"],
+                "combined_quality": round(combined_quality, 1) if combined_quality else None,
+                "involves_shortlist": involves_shortlist, "reasons": reasons,
+            })
+
+    results.sort(key=lambda r: (r["involves_shortlist"], r["combined_quality"] or 0), reverse=True)
+    return results[:limit]
+
+
+
 @app.get("/leagues/strength")
 def league_strength(authorized: bool = Depends(check_api_key)):
     """Average potential score per tracked league — genuine meta-context
@@ -1504,7 +1643,26 @@ def rebuild_radar(limit: int = Query(15, le=50), authorized: bool = Depends(chec
     return results[:limit]
 
 
+@app.get("/clubs/manager")
+def club_manager(club: str, league: str, authorized: bool = Depends(check_api_key)):
+    """The club's current manager — a genuinely new data dimension.
+    Empty until managers_ingest.py has been run for this club."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT cm.name, cm.nationality, cm.age, cm.photo_url, cm.appointed_date
+            FROM club_managers cm
+            JOIN clubs cl ON cl.id = cm.club_id
+            LEFT JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE cl.name = %s AND (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (club, league))
+        row = cur.fetchone()
+    conn.close()
+    return row
 
+
+@app.get("/clubs/balance")
 def squad_balance(club: str, league: str, authorized: bool = Depends(check_api_key)):
     """Archetype diversity within a squad — is this club genuinely
     balanced (a real mix of roles at each position) or lopsided (three
@@ -2310,7 +2468,9 @@ def list_players(
     league: Optional[str] = None,
     position: Optional[str] = None,
     max_age: Optional[int] = None,
+    age_min: Optional[int] = None,
     min_potential: Optional[float] = Query(None),
+    max_potential: Optional[float] = Query(None),
     search: Optional[str] = None,
     shortlist_only: bool = False,
     sort: str = Query("potential", enum=[
@@ -2430,9 +2590,15 @@ def list_players(
     if max_age:
         filters.append("date_part('year', age(p.date_of_birth)) <= %s")
         params.append(max_age)
+    if age_min:
+        filters.append("date_part('year', age(p.date_of_birth)) >= %s")
+        params.append(age_min)
     if min_potential:
         filters.append("pps.potential_index >= %s")
         params.append(min_potential)
+    if max_potential:
+        filters.append("pps.potential_index <= %s")
+        params.append(max_potential)
     if search:
         filters.append("(p.full_name ILIKE %s OR cl.name ILIKE %s)")
         params.append(f"%{search}%")
