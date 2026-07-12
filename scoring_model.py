@@ -82,7 +82,7 @@ def fetch_season_aggregates(conn, season):
         JOIN players p ON p.id = pms.player_id
         JOIN matches m ON m.id = pms.match_id
         JOIN leagues l ON l.id = m.league_id
-        WHERE l.season = %s
+        WHERE l.season = %s AND l.is_youth = false
         GROUP BY pms.player_id, p.primary_position, p.date_of_birth
         HAVING SUM(pms.minutes_played) >= 450   -- ~5 full matches minimum sample
     """
