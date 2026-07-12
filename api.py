@@ -2138,12 +2138,19 @@ def league_full_report(league: str, authorized: bool = Depends(check_api_key)):
                 JOIN clubs cl ON cl.id = p.current_club_id
                 WHERE cl.league_id = %s
                 GROUP BY h.player_id HAVING COUNT(*) >= 2
+            ),
+            first_vals AS (
+                SELECT DISTINCT ON (h.player_id) h.player_id, h.potential_index AS first_val
+                FROM player_potential_history h JOIN bounds b ON b.player_id = h.player_id AND h.computed_at = b.first_at
+            ),
+            last_vals AS (
+                SELECT DISTINCT ON (h.player_id) h.player_id, h.potential_index AS last_val
+                FROM player_potential_history h JOIN bounds b ON b.player_id = h.player_id AND h.computed_at = b.last_at
             )
-            SELECT p.full_name, cl.name AS club,
-                   (SELECT potential_index FROM player_potential_history h2 WHERE h2.player_id = b.player_id ORDER BY computed_at DESC LIMIT 1)
-                   - (SELECT potential_index FROM player_potential_history h2 WHERE h2.player_id = b.player_id ORDER BY computed_at ASC LIMIT 1) AS delta
-            FROM bounds b
-            JOIN players p ON p.id = b.player_id
+            SELECT p.full_name, cl.name AS club, (lv.last_val - fv.first_val) AS delta
+            FROM first_vals fv
+            JOIN last_vals lv ON lv.player_id = fv.player_id
+            JOIN players p ON p.id = fv.player_id
             JOIN clubs cl ON cl.id = p.current_club_id
             ORDER BY delta DESC
             LIMIT 5
