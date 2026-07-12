@@ -1199,6 +1199,28 @@ def scout_discovery(limit: int = Query(10, le=30), authorized: bool = Depends(ch
     }
 
 
+@app.get("/shortlist/clubs")
+def shortlist_clubs(authorized: bool = Depends(check_api_key)):
+    """Which clubs currently have at least one shortlisted player — a
+    small, fast lookup used to highlight live matches involving your
+    targets, without needing full per-player live event tracking."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT DISTINCT cl.name AS club
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT watch_level FROM scout_notes sn
+                WHERE sn.player_id = p.id ORDER BY created_at DESC LIMIT 1
+            ) latest_note ON true
+            WHERE latest_note.watch_level = 'shortlist'
+        """)
+        clubs = [r["club"] for r in cur.fetchall()]
+    conn.close()
+    return clubs
+
+
 @app.get("/leagues/strength")
 def league_strength(authorized: bool = Depends(check_api_key)):
     """Average potential score per tracked league — genuine meta-context
@@ -1250,6 +1272,92 @@ def squad_continuity(limit: int = Query(15, le=50), authorized: bool = Depends(c
         rows = cur.fetchall()
     conn.close()
     return rows
+
+
+@app.get("/clubs/balance")
+def squad_balance(club: str, league: str, authorized: bool = Depends(check_api_key)):
+    """Archetype diversity within a squad — is this club genuinely
+    balanced (a real mix of roles at each position) or lopsided (three
+    near-identical players competing for one slot, a real gap
+    elsewhere)? Reuses the same shared peer-group pattern as Team of the
+    Season for efficiency — one peer-group fetch per position, not one
+    per player."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        result = {}
+        for position in ["Goalkeeper", "Defender", "Midfielder", "Attacker"]:
+            cur.execute("""
+                SELECT p.id, p.full_name
+                FROM players p
+                JOIN clubs cl ON cl.id = p.current_club_id
+                WHERE cl.name = %s AND cl.league_id = %s AND p.primary_position = %s
+            """, (club, league_id, position))
+            squad_members = cur.fetchall()
+            if not squad_members:
+                continue
+
+            cur.execute("""
+                SELECT player_id,
+                       SUM(goals) * 90.0 / NULLIF(SUM(minutes_played), 0) AS goals_p90,
+                       SUM(assists) * 90.0 / NULLIF(SUM(minutes_played), 0) AS assists_p90,
+                       SUM(key_passes) * 90.0 / NULLIF(SUM(minutes_played), 0) AS key_passes_p90,
+                       SUM(tackles + interceptions) * 90.0 / NULLIF(SUM(minutes_played), 0) AS defensive_p90,
+                       SUM(take_ons_attempted) * 90.0 / NULLIF(SUM(minutes_played), 0) AS take_ons_p90,
+                       AVG(NULLIF(passes_completed, 0)::float / NULLIF(passes_attempted, 0)) * 100 AS pass_acc
+                FROM player_match_stats pms
+                JOIN players p3 ON p3.id = pms.player_id
+                WHERE p3.primary_position = %s
+                GROUP BY player_id
+                HAVING SUM(minutes_played) >= 450
+            """, (position,))
+            peer_rows = cur.fetchall()
+            peer_by_id = {r["player_id"]: r for r in peer_rows}
+
+            position_result = []
+            for member in squad_members:
+                target_row = peer_by_id.get(member["id"])
+                archetype = None
+                if target_row and len(peer_rows) >= 10:
+                    pr = {
+                        "goals": percentile_rank(target_row["goals_p90"], [r["goals_p90"] for r in peer_rows]),
+                        "assists": percentile_rank(target_row["assists_p90"], [r["assists_p90"] for r in peer_rows]),
+                        "key_passes": percentile_rank(target_row["key_passes_p90"], [r["key_passes_p90"] for r in peer_rows]),
+                        "defensive": percentile_rank(target_row["defensive_p90"], [r["defensive_p90"] for r in peer_rows]),
+                        "take_ons": percentile_rank(target_row["take_ons_p90"], [r["take_ons_p90"] for r in peer_rows]),
+                        "pass_acc": percentile_rank(target_row["pass_acc"], [r["pass_acc"] for r in peer_rows]),
+                    }
+                    archetype = classify_archetype(position, pr)
+                if archetype:
+                    position_result.append({"full_name": member["full_name"], "archetype": archetype})
+
+            if position_result:
+                archetype_counts = {}
+                for p in position_result:
+                    archetype_counts[p["archetype"]] = archetype_counts.get(p["archetype"], 0) + 1
+                unique_archetypes = len(archetype_counts)
+                # Balanced = at least as many distinct archetypes as half the
+                # squad in this position (rounded up) — a simple, defensible
+                # threshold rather than an arbitrary fixed number.
+                is_balanced = unique_archetypes >= max(1, -(-len(position_result) // 2))
+                result[position] = {
+                    "players": position_result,
+                    "archetype_breakdown": archetype_counts,
+                    "balanced": is_balanced,
+                }
+
+    conn.close()
+    return result
 
 
 @app.get("/leagues/table-predictor")
