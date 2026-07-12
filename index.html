@@ -3203,6 +3203,212 @@ function LeagueStrengthModal({ onClose }) {
   );
 }
 
+function PositionScarcityModal({ onClose }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/positions/scarcity`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  const maxCount = rows?.length ? Math.max(...rows.map(r => r.high_potential_count)) : 1;
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🔍 Position Scarcity Index</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          How many genuinely high-potential (70+) players currently exist for each real archetype — scarcest at the top. Knowing genuine Playmakers are rare while Box-to-Box types are everywhere is a real recruitment signal.
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.map(r => (
+          <div key={r.archetype} className="mb-2.5">
+            <div className="flex justify-between text-sm mb-1">
+              <span className="text-[#EDEDE3]">{r.archetype}</span>
+              <span className="font-plexmono" style={{ color: r.high_potential_count <= 3 ? "#E36B57" : "#7FD99A" }}>{r.high_potential_count}</span>
+            </div>
+            <div className="h-1.5 bg-[#152922]">
+              <div className="h-full bg-[#E3A857]" style={{ width: `${(r.high_potential_count / maxCount) * 100}%` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RebuildRadarModal({ onClose, onSelectClub }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/clubs/rebuild-radar?limit=15`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🏗️ Squad Rebuild Radar</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Clubs with BOTH genuine transfer churn AND a young squad — the combination is the real tell, not either signal alone.
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.length === 0 && <div className="text-sm text-[#6B8570]">No clubs currently meet both thresholds.</div>}
+        {rows?.map((r, i) => (
+          <div key={r.club} className="flex items-center justify-between text-sm py-2.5 border-b border-[#1C2E26]">
+            <span className="flex items-center gap-2">
+              <span className="text-[#6B8570] w-5">{i + 1}.</span>
+              <span className="text-[#EDEDE3]">{r.club}</span>
+            </span>
+            <span className="text-xs text-[#9AAA9E]">
+              {r.churn} moves · avg age {r.avg_age}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LeagueReportCard({ league, report, forwardedRef }) {
+  return (
+    <div ref={forwardedRef} style={{
+      width: 800, background: "#0E1A15", color: "#EDEDE3", fontFamily: "'Inter', sans-serif",
+      padding: 48, boxSizing: "border-box", border: "2px solid #E3A857",
+    }}>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 16, letterSpacing: 3, color: "#E3A857", textTransform: "uppercase", textAlign: "center" }}>
+        ⚽ Cross-League Scouting Index
+      </div>
+      <div style={{ fontFamily: "'Archivo Black', sans-serif", fontSize: 32, textAlign: "center", marginTop: 12 }}>
+        {league} — League Report
+      </div>
+
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "#6B8570", textTransform: "uppercase", letterSpacing: 1, marginTop: 32 }}>
+        Standings (Top 10)
+      </div>
+      {report.standings.map((s, i) => (
+        <div key={s.club} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #1C2E26", fontSize: 15 }}>
+          <span>{i + 1}. {s.club}</span>
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: "#E3A857" }}>{s.points} pts</span>
+        </div>
+      ))}
+
+      <div style={{ display: "flex", gap: 40, marginTop: 24 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "#6B8570", textTransform: "uppercase", letterSpacing: 1 }}>Top Scorers</div>
+          {report.top_scorers.map(s => (
+            <div key={s.full_name} style={{ fontSize: 14, padding: "4px 0" }}>{s.full_name} <span style={{ color: "#E3A857" }}>({s.goals})</span></div>
+          ))}
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "#6B8570", textTransform: "uppercase", letterSpacing: 1 }}>Biggest Movers</div>
+          {report.movers.map(m => (
+            <div key={m.full_name} style={{ fontSize: 14, padding: "4px 0" }}>{m.full_name} <span style={{ color: "#7FD99A" }}>+{Number(m.delta).toFixed(1)}</span></div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: "#4A5C52", textAlign: "center", marginTop: 32 }}>
+        Real ingested match data · not a projection
+      </div>
+    </div>
+  );
+}
+
+function LeagueReportModal({ allLeagueOptions, onClose }) {
+  const [league, setLeague] = useState("");
+  const [report, setReport] = useState(null);
+  const [exporting, setExporting] = useState(false);
+  const cardRef = useRef(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !league) { setReport(null); return; }
+    setReport(null);
+    const params = new URLSearchParams({ league });
+    fetch(`${API_BASE_URL}/leagues/full-report?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setReport(data))
+      .catch(() => setReport(null));
+  }, [league]);
+
+  const downloadImage = () => {
+    if (!cardRef.current || typeof html2canvas === "undefined") {
+      alert("Image export isn't available right now — check your connection and try again.");
+      return;
+    }
+    setExporting(true);
+    html2canvas(cardRef.current, { backgroundColor: "#0E1A15", scale: 2 })
+      .then(canvas => {
+        const link = document.createElement("a");
+        link.download = `${league.replace(/\s+/g, "_")}_full_report.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      })
+      .catch(() => alert("Image export failed — please try again."))
+      .finally(() => setExporting(false));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📄 Full League Report</div>
+          <div className="flex items-center gap-3">
+            {report && (
+              <button onClick={downloadImage} disabled={exporting} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] disabled:opacity-50">
+                {exporting ? "Exporting…" : "📸 Export Image"}
+              </button>
+            )}
+            <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+          </div>
+        </div>
+
+        <select value={league} onChange={e => setLeague(e.target.value)}
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none text-[#EDEDE3] mb-4">
+          <option value="">Select a league...</option>
+          {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+
+        {league && report === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {report && (
+          <>
+            <div style={{ position: "fixed", top: 0, left: -99999 }}>
+              <LeagueReportCard league={league} report={report} forwardedRef={cardRef} />
+            </div>
+            <div className="text-sm text-[#EDEDE3]">
+              <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Standings (Top 10)</div>
+              {report.standings.map((s, i) => (
+                <div key={s.club} className="flex justify-between py-1 border-b border-[#1C2E26]">
+                  <span>{i + 1}. {s.club}</span>
+                  <span className="font-plexmono text-[#E3A857]">{s.points} pts</span>
+                </div>
+              ))}
+              <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mt-4 mb-2">Top Scorers</div>
+              {report.top_scorers.map(s => (
+                <div key={s.full_name} className="py-1">{s.full_name} <span className="text-[#E3A857]">({s.goals})</span></div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function UnderdogIndexModal({ onClose, onSelectClub }) {
   const [rows, setRows] = useState(null);
 
@@ -3329,6 +3535,8 @@ function SquadContinuityModal({ onClose }) {
 function StandingsModal({ allLeagueOptions, onClose }) {
   const [league, setLeague] = useState("");
   const [table, setTable] = useState(null);
+  const [mode, setMode] = useState("season"); // "season" | "form"
+  const [formTable, setFormTable] = useState(null);
   const [exporting, setExporting] = useState(false);
   const cardRef = useRef(null);
 
@@ -3341,6 +3549,16 @@ function StandingsModal({ allLeagueOptions, onClose }) {
       .then(rows => setTable(rows))
       .catch(() => setTable([]));
   }, [league]);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !league || mode !== "form") { setFormTable(null); return; }
+    setFormTable(null);
+    const params = new URLSearchParams({ league, window: "5" });
+    fetch(`${API_BASE_URL}/standings/form?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setFormTable(rows))
+      .catch(() => setFormTable([]));
+  }, [league, mode]);
 
   const downloadImage = () => {
     if (!cardRef.current || typeof html2canvas === "undefined") {
@@ -3379,18 +3597,54 @@ function StandingsModal({ allLeagueOptions, onClose }) {
           <option value="">Select a league...</option>
           {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
         </select>
+
+        {league && (
+          <div className="flex border border-[#2C4A3B] mb-4 w-fit">
+            <button onClick={() => setMode("season")}
+              className={`px-4 py-1.5 text-xs uppercase tracking-wide ${mode === "season" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+              Season Table
+            </button>
+            <button onClick={() => setMode("form")}
+              className={`px-4 py-1.5 text-xs uppercase tracking-wide ${mode === "form" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+              Form Table (Last 5)
+            </button>
+          </div>
+        )}
+
         {/* Hidden, full-size, untransformed — the only thing html2canvas ever captures */}
-        {table?.length > 0 && (
+        {mode === "season" && table?.length > 0 && (
           <div style={{ position: "fixed", top: 0, left: -99999 }}>
             <StandingsCard league={league} table={table} forwardedRef={cardRef} />
           </div>
         )}
 
-        {!league && <div className="text-sm text-[#6B8570]">Select a league to see its table.</div>}
-        {league && table === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
-        {league && table?.length === 0 && <div className="text-sm text-[#6B8570]">No finished matches recorded yet for this league.</div>}
+        {mode === "form" && (
+          <>
+            {formTable === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+            {formTable?.length === 0 && <div className="text-sm text-[#6B8570]">No recent matches to compute form from.</div>}
+            {formTable?.map((r, i) => (
+              <div key={r.club} className="flex items-center justify-between text-sm py-2 border-b border-[#1C2E26]">
+                <span className="text-[#6B8570] w-6">{i + 1}.</span>
+                <span className="text-[#EDEDE3] flex-1 truncate">{r.club}</span>
+                <span className="flex gap-1 mr-3">
+                  {r.form_string.map((res, j) => (
+                    <span key={j} className="w-5 h-5 flex items-center justify-center text-[10px] font-bold rounded-full"
+                      style={{ background: res === "W" ? "#7FD99A" : res === "L" ? "#E36B57" : "#6B8570", color: "#0E1A15" }}>
+                      {res}
+                    </span>
+                  ))}
+                </span>
+                <span className="font-plexmono text-[#E3A857] text-xs w-10 text-right">{r.form_points}pts</span>
+              </div>
+            ))}
+          </>
+        )}
 
-        {table?.length > 0 && (
+        {mode === "season" && !league && <div className="text-sm text-[#6B8570]">Select a league to see its table.</div>}
+        {mode === "season" && league && table === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {mode === "season" && league && table?.length === 0 && <div className="text-sm text-[#6B8570]">No finished matches recorded yet for this league.</div>}
+
+        {mode === "season" && table?.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -3948,6 +4202,9 @@ function ScoutDashboard() {
   const [transferCentreOpen, setTransferCentreOpen] = useState(false);
   const [underdogIndexOpen, setUnderdogIndexOpen] = useState(false);
   const [pipelineHealthOpen, setPipelineHealthOpen] = useState(false);
+  const [positionScarcityOpen, setPositionScarcityOpen] = useState(false);
+  const [rebuildRadarOpen, setRebuildRadarOpen] = useState(false);
+  const [leagueReportOpen, setLeagueReportOpen] = useState(false);
   const [deepLinkPlayerId, setDeepLinkPlayerId] = useState(() => new URLSearchParams(window.location.search).get("player"));
   const [livePlayers, setLivePlayers] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState(API_BASE_URL ? "connecting" : "offline");
@@ -4315,6 +4572,9 @@ function ScoutDashboard() {
                           ["🔄", "Transfer Centre", setTransferCentreOpen],
                           ["🎯", "Underdog Index", setUnderdogIndexOpen],
                           ["🩺", "Pipeline Health", setPipelineHealthOpen],
+                          ["🔍", "Position Scarcity", setPositionScarcityOpen],
+                          ["🏗️", "Rebuild Radar", setRebuildRadarOpen],
+                          ["📄", "League Report", setLeagueReportOpen],
                         ].map(([icon, label, setter]) => (
                           <button key={label} onClick={() => { setter(true); setMoreMenuOpen(false); }}
                             className="w-full text-left px-4 py-2 text-xs text-[#9AAA9E] hover:text-[#E3A857] hover:bg-[#0E1A15] flex items-center gap-2">
@@ -4759,6 +5019,14 @@ function ScoutDashboard() {
         />
       )}
       {pipelineHealthOpen && <PipelineHealthModal onClose={() => setPipelineHealthOpen(false)} />}
+      {positionScarcityOpen && <PositionScarcityModal onClose={() => setPositionScarcityOpen(false)} />}
+      {rebuildRadarOpen && (
+        <RebuildRadarModal
+          onClose={() => setRebuildRadarOpen(false)}
+          onSelectClub={(row) => { setRebuildRadarOpen(false); setClub(row.club); }}
+        />
+      )}
+      {leagueReportOpen && <LeagueReportModal allLeagueOptions={allLeagueOptions} onClose={() => setLeagueReportOpen(false)} />}
       <CompareBar selected={compareList} onClear={() => setCompareList([])} onCompare={() => setComparing(true)} />
       {comparing && compareList.length >= 2 && (
         <ComparePanel players={compareList} onClose={() => setComparing(false)} />
