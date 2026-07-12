@@ -1622,6 +1622,52 @@ def player_highlights(player_id: int, authorized: bool = Depends(check_api_key))
     return result
 
 
+@app.get("/transfer-news")
+def transfer_news(limit: int = Query(30, le=100), authorized: bool = Depends(check_api_key)):
+    """General transfer news — served entirely from our own cache, kept
+    fresh every 5 minutes by a dedicated background workflow regardless
+    of whether anyone has the app open. Genuinely current, but this
+    endpoint itself does zero external fetching — it's just a fast read."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT headline, link, source, published, fetched_at
+            FROM transfer_news_cache
+            ORDER BY fetched_at DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/clubs/transfer-news")
+def club_transfer_news(club: str, limit: int = Query(10, le=30), authorized: bool = Depends(check_api_key)):
+    """Live transfer news for one specific club — not background-cached
+    like the general feed, since favorited clubs currently live only in
+    the browser, not the server, so there's no fixed list to pre-fetch
+    for. Fetched fresh each time this is called instead."""
+    import xml.etree.ElementTree as ET
+    query = requests.utils.quote(f"{club} transfer")
+    try:
+        resp = requests.get(
+            f"https://news.google.com/rss/search?q={query}&hl=en-GB&gl=GB&ceid=GB:en",
+            headers={"User-Agent": "CrossLeagueScoutingIndex/1.0"}, timeout=8,
+        )
+        root = ET.fromstring(resp.content)
+        items = []
+        for item in root.findall(".//item")[:limit]:
+            items.append({
+                "headline": item.findtext("title"),
+                "link": item.findtext("link"),
+                "source": item.findtext("source"),
+                "published": item.findtext("pubDate"),
+            })
+        return items
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch club transfer news: {e}")
+
+
 @app.get("/standings")
 def standings(league: str, authorized: bool = Depends(check_api_key)):
     """Full league table (P/W/D/L/GF/GA/GD/Pts), computed entirely from
