@@ -1319,6 +1319,73 @@ def league_strength(authorized: bool = Depends(check_api_key)):
     return [{"league": r["league_display"], "avg_potential": round(r["avg_potential"], 1), "scored_players": r["scored_players"]} for r in rows]
 
 
+@app.get("/positions/scarcity")
+def position_scarcity(potential_threshold: float = Query(70.0), authorized: bool = Depends(check_api_key)):
+    """A genuine meta-recruitment signal: how many real high-potential
+    players exist for each ARCHETYPE right now, not just each broad
+    position (4 categories is too blunt to be interesting — knowing
+    genuine Playmakers are rare while Box-to-Box types are everywhere
+    is actually useful; knowing 'Midfielders exist' isn't). Computed
+    across all tracked leagues using the same shared peer-group pattern
+    as Team of the Season, so this is real classification, not a guess."""
+    conn = get_conn()
+    archetype_counts = {}
+    with conn.cursor() as cur:
+        for position in ["Goalkeeper", "Defender", "Midfielder", "Attacker"]:
+            cur.execute("""
+                SELECT player_id,
+                       SUM(goals) * 90.0 / NULLIF(SUM(minutes_played), 0) AS goals_p90,
+                       SUM(assists) * 90.0 / NULLIF(SUM(minutes_played), 0) AS assists_p90,
+                       SUM(key_passes) * 90.0 / NULLIF(SUM(minutes_played), 0) AS key_passes_p90,
+                       SUM(tackles + interceptions) * 90.0 / NULLIF(SUM(minutes_played), 0) AS defensive_p90,
+                       SUM(take_ons_attempted) * 90.0 / NULLIF(SUM(minutes_played), 0) AS take_ons_p90,
+                       AVG(NULLIF(passes_completed, 0)::float / NULLIF(passes_attempted, 0)) * 100 AS pass_acc
+                FROM player_match_stats pms
+                JOIN players p3 ON p3.id = pms.player_id
+                WHERE p3.primary_position = %s
+                GROUP BY player_id
+                HAVING SUM(minutes_played) >= 450
+            """, (position,))
+            peer_rows = cur.fetchall()
+            if len(peer_rows) < 10:
+                continue
+            peer_by_id = {r["player_id"]: r for r in peer_rows}
+
+            cur.execute("""
+                SELECT p.id, pps.potential_index
+                FROM players p
+                JOIN LATERAL (
+                    SELECT potential_index FROM player_potential_scores
+                    WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+                ) pps ON true
+                WHERE p.primary_position = %s AND pps.potential_index >= %s
+            """, (position, potential_threshold))
+            high_potential_ids = {r["id"]: r["potential_index"] for r in cur.fetchall()}
+
+            for pid in high_potential_ids:
+                target_row = peer_by_id.get(pid)
+                if not target_row:
+                    continue
+                pr = {
+                    "goals": percentile_rank(target_row["goals_p90"], [r["goals_p90"] for r in peer_rows]),
+                    "assists": percentile_rank(target_row["assists_p90"], [r["assists_p90"] for r in peer_rows]),
+                    "key_passes": percentile_rank(target_row["key_passes_p90"], [r["key_passes_p90"] for r in peer_rows]),
+                    "defensive": percentile_rank(target_row["defensive_p90"], [r["defensive_p90"] for r in peer_rows]),
+                    "take_ons": percentile_rank(target_row["take_ons_p90"], [r["take_ons_p90"] for r in peer_rows]),
+                    "pass_acc": percentile_rank(target_row["pass_acc"], [r["pass_acc"] for r in peer_rows]),
+                }
+                archetype = classify_archetype(position, pr)
+                if archetype:
+                    key = f"{position} — {archetype}"
+                    archetype_counts[key] = archetype_counts.get(key, 0) + 1
+    conn.close()
+
+    results = [{"archetype": k, "high_potential_count": v} for k, v in archetype_counts.items()]
+    results.sort(key=lambda r: r["high_potential_count"])
+    return results
+
+
+
 @app.get("/clubs/underdogs")
 def underdog_index(limit: int = Query(15, le=50), authorized: bool = Depends(check_api_key)):
     """A genuine 'moneyball' signal: which clubs are producing squad
@@ -1388,7 +1455,56 @@ def squad_continuity(limit: int = Query(15, le=50), authorized: bool = Depends(c
     return rows
 
 
-@app.get("/clubs/balance")
+@app.get("/clubs/rebuild-radar")
+def rebuild_radar(limit: int = Query(15, le=50), authorized: bool = Depends(check_api_key)):
+    """Which clubs are genuinely mid-rebuild — combines squad churn
+    (transfer activity) with squad youth (average age) into one signal,
+    rather than either alone. A young squad isn't necessarily rebuilding
+    (could just be a settled young core); high churn alone isn't either
+    (could be normal squad rotation). Both together is the real tell."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT cl.name AS club,
+                   COUNT(*) FILTER (WHERE t.new_club_id = cl.id) AS arrivals,
+                   COUNT(*) FILTER (WHERE t.old_club_id = cl.id) AS departures
+            FROM clubs cl
+            LEFT JOIN player_club_transfers t ON t.new_club_id = cl.id OR t.old_club_id = cl.id
+            GROUP BY cl.name
+            HAVING COUNT(*) > 0
+        """)
+        churn_by_club = {r["club"]: r["arrivals"] + r["departures"] for r in cur.fetchall()}
+
+        cur.execute("""
+            SELECT cl.name AS club, AVG(EXTRACT(YEAR FROM AGE(p.date_of_birth))) AS avg_age, COUNT(*) AS squad_size
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            WHERE p.date_of_birth IS NOT NULL
+            GROUP BY cl.name
+            HAVING COUNT(*) >= 8
+        """)
+        age_by_club = {r["club"]: {"avg_age": r["avg_age"], "squad_size": r["squad_size"]} for r in cur.fetchall()}
+
+    conn.close()
+
+    results = []
+    for club, age_data in age_by_club.items():
+        churn = churn_by_club.get(club, 0)
+        avg_age = age_data["avg_age"]
+        # Both signals meaningfully present — genuine young churn, not
+        # just "young" (settled core) or "high churn" (normal rotation) alone.
+        if churn >= 3 and avg_age <= 25:
+            results.append({
+                "club": club, "churn": churn,
+                "avg_age": round(avg_age, 1), "squad_size": age_data["squad_size"],
+                "rebuild_score": round(churn * (26 - avg_age), 1),
+            })
+
+    results.sort(key=lambda r: r["rebuild_score"], reverse=True)
+    return results[:limit]
+
+
+
 def squad_balance(club: str, league: str, authorized: bool = Depends(check_api_key)):
     """Archetype diversity within a squad — is this club genuinely
     balanced (a real mix of roles at each position) or lopsided (three
@@ -1958,6 +2074,87 @@ def standings(league: str, authorized: bool = Depends(check_api_key)):
     return rows
 
 
+@app.get("/leagues/full-report")
+def league_full_report(league: str, authorized: bool = Depends(check_api_key)):
+    """Everything needed for a comprehensive league report in ONE
+    response — standings, top scorers, and biggest recent movers —
+    rather than the frontend making several separate calls for an export."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        cur.execute("""
+            WITH club_matches AS (
+                SELECT home_club_id AS club_id, home_score AS gf, away_score AS ga,
+                    CASE WHEN home_score > away_score THEN 3 WHEN home_score = away_score THEN 1 ELSE 0 END AS pts,
+                    CASE WHEN home_score > away_score THEN 1 ELSE 0 END AS win,
+                    CASE WHEN home_score = away_score THEN 1 ELSE 0 END AS draw,
+                    CASE WHEN home_score < away_score THEN 1 ELSE 0 END AS loss
+                FROM matches WHERE league_id = %s AND status = 'finished'
+                UNION ALL
+                SELECT away_club_id, away_score, home_score,
+                    CASE WHEN away_score > home_score THEN 3 WHEN away_score = home_score THEN 1 ELSE 0 END,
+                    CASE WHEN away_score > home_score THEN 1 ELSE 0 END,
+                    CASE WHEN away_score = home_score THEN 1 ELSE 0 END,
+                    CASE WHEN away_score < home_score THEN 1 ELSE 0 END
+                FROM matches WHERE league_id = %s AND status = 'finished'
+            )
+            SELECT c.name AS club, COUNT(*) AS played, SUM(win) AS won, SUM(draw) AS drawn, SUM(loss) AS lost,
+                   SUM(gf) AS gf, SUM(ga) AS ga, SUM(gf) - SUM(ga) AS gd, SUM(pts) AS points
+            FROM club_matches cm
+            JOIN clubs c ON c.id = cm.club_id
+            GROUP BY c.name
+            ORDER BY points DESC, gd DESC, gf DESC
+            LIMIT 10
+        """, (league_id, league_id))
+        standings_top10 = cur.fetchall()
+
+        cur.execute("""
+            SELECT p.full_name, cl.name AS club, SUM(pms.goals) AS goals
+            FROM player_match_stats pms
+            JOIN players p ON p.id = pms.player_id
+            JOIN clubs cl ON cl.id = pms.club_id
+            WHERE cl.league_id = %s
+            GROUP BY p.full_name, cl.name
+            ORDER BY goals DESC
+            LIMIT 5
+        """, (league_id,))
+        top_scorers = cur.fetchall()
+
+        cur.execute("""
+            WITH bounds AS (
+                SELECT h.player_id, MIN(h.computed_at) AS first_at, MAX(h.computed_at) AS last_at
+                FROM player_potential_history h
+                JOIN players p ON p.id = h.player_id
+                JOIN clubs cl ON cl.id = p.current_club_id
+                WHERE cl.league_id = %s
+                GROUP BY h.player_id HAVING COUNT(*) >= 2
+            )
+            SELECT p.full_name, cl.name AS club,
+                   (SELECT potential_index FROM player_potential_history h2 WHERE h2.player_id = b.player_id ORDER BY computed_at DESC LIMIT 1)
+                   - (SELECT potential_index FROM player_potential_history h2 WHERE h2.player_id = b.player_id ORDER BY computed_at ASC LIMIT 1) AS delta
+            FROM bounds b
+            JOIN players p ON p.id = b.player_id
+            JOIN clubs cl ON cl.id = p.current_club_id
+            ORDER BY delta DESC
+            LIMIT 5
+        """, (league_id,))
+        movers = cur.fetchall()
+
+    conn.close()
+    return {"league": league, "standings": standings_top10, "top_scorers": top_scorers, "movers": movers}
+
+
+
 @app.get("/h2h")
 def head_to_head(club1: str, club2: str, limit: int = Query(10, le=30), authorized: bool = Depends(check_api_key)):
     """Last N meetings between two specific clubs, regardless of which
@@ -2010,6 +2207,78 @@ def club_form(club: str, league: str, limit: int = Query(5, le=10), authorized: 
         form.append("W" if gf > ga else "L" if gf < ga else "D")
     conn.close()
     return {"form": form}
+
+
+@app.get("/standings/form")
+def form_table(league: str, window: int = Query(5, le=10), authorized: bool = Depends(check_api_key)):
+    """A table built purely from each club's last N matches — a real
+    'who's actually hot right now' signal, genuinely different from the
+    full-season table (a club could be mid-table overall but on a real
+    hot streak, or vice versa)."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        cur.execute("""
+            SELECT DISTINCT cl.name AS club
+            FROM matches m
+            JOIN clubs cl ON cl.id = m.home_club_id OR cl.id = m.away_club_id
+            WHERE m.league_id = %s AND m.status = 'finished'
+        """, (league_id,))
+        clubs = [r["club"] for r in cur.fetchall()]
+
+        results = []
+        for club in clubs:
+            cur.execute("""
+                SELECT m.match_date, m.home_score, m.away_score,
+                       home_cl.name AS home_club, away_cl.name AS away_club
+                FROM matches m
+                JOIN clubs home_cl ON home_cl.id = m.home_club_id
+                JOIN clubs away_cl ON away_cl.id = m.away_club_id
+                WHERE m.league_id = %s AND m.status = 'finished'
+                  AND (home_cl.name = %s OR away_cl.name = %s)
+                ORDER BY m.match_date DESC
+                LIMIT %s
+            """, (league_id, club, club, window))
+            recent = cur.fetchall()
+            if not recent:
+                continue
+
+            points = 0
+            form_string = []
+            gf_total = ga_total = 0
+            for r in recent:
+                is_home = r["home_club"] == club
+                gf = r["home_score"] if is_home else r["away_score"]
+                ga = r["away_score"] if is_home else r["home_score"]
+                gf_total += gf
+                ga_total += ga
+                if gf > ga:
+                    points += 3
+                    form_string.append("W")
+                elif gf == ga:
+                    points += 1
+                    form_string.append("D")
+                else:
+                    form_string.append("L")
+            results.append({
+                "club": club, "form_points": points, "matches": len(recent),
+                "form_string": list(reversed(form_string)),  # oldest -> most recent, reads left-to-right naturally
+                "goal_diff": gf_total - ga_total,
+            })
+
+    conn.close()
+    results.sort(key=lambda r: (r["form_points"], r["goal_diff"]), reverse=True)
+    return results
 
 
 @app.get("/leagues")
