@@ -836,6 +836,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   };
 
   const [projection, setProjection] = useState(null);
+  const [seasonHistory, setSeasonHistory] = useState(null);
   const [biography, setBiography] = useState(null);
   const [loadingBio, setLoadingBio] = useState(false);
   const loadBiography = () => {
@@ -901,6 +902,10 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
       .then(res => res.ok ? res.json() : null)
       .then(data => setProjection(data))
       .catch(() => setProjection(null));
+    fetch(`${API_BASE_URL}/players/${realId}/season-history`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setSeasonHistory(data))
+      .catch(() => setSeasonHistory([]));
   }, [p.id]);
 
   // Fetch a broad, position-matched pool and rank by similarity across all
@@ -1233,17 +1238,55 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
 
             {details?.positions_played?.length > 1 && (
               <div className="mt-4 border-b border-[#2C4A3B] pb-4">
-                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">
-                  🔀 Positional Versatility
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1 flex items-center justify-between">
+                  <span>🔀 Positional Versatility</span>
+                  {details.versatility_value != null && (
+                    <span className="text-[#E3A857] font-plexmono normal-case">Value: {details.versatility_value}</span>
+                  )}
                 </div>
                 <div className="text-sm text-[#EDEDE3]">
                   {details.positions_played.map((pp, i) => (
                     <span key={pp.position_played}>
                       {i > 0 && <span className="text-[#6B8570]"> · </span>}
-                      {pp.position_played} <span className="text-[#6B8570] text-xs">({pp.matches})</span>
+                      {pp.position_played} <span className="text-[#6B8570] text-xs">({pp.matches}{pp.avg_rating ? `, avg ${pp.avg_rating}` : ""})</span>
                     </span>
                   ))}
                 </div>
+                {details.versatility_value != null && (
+                  <div className="text-[10px] text-[#4A5C52] mt-1 italic">
+                    Rewards both genuine breadth AND maintaining real quality across positions, not just showing up somewhere different once.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {seasonHistory?.length > 0 && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">📚 Multi-Season Career</div>
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-[#6B8570] uppercase tracking-wide border-b border-[#2C4A3B]">
+                      <th className="text-left py-1">Season</th>
+                      <th className="text-left py-1">Club</th>
+                      <th className="text-center py-1">Apps</th>
+                      <th className="text-center py-1">G</th>
+                      <th className="text-center py-1">A</th>
+                      <th className="text-center py-1">Rating</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {seasonHistory.map(s => (
+                      <tr key={s.season} className="border-b border-[#1C2E26] text-[#EDEDE3]">
+                        <td className="py-1.5">{s.season}</td>
+                        <td className="py-1.5 truncate max-w-[100px]">{s.club_name}</td>
+                        <td className="text-center py-1.5 font-plexmono">{s.appearances}</td>
+                        <td className="text-center py-1.5 font-plexmono">{s.goals}</td>
+                        <td className="text-center py-1.5 font-plexmono">{s.assists}</td>
+                        <td className="text-center py-1.5 font-plexmono text-[#E3A857]">{s.avg_rating ? Number(s.avg_rating).toFixed(2) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
 
@@ -3160,6 +3203,92 @@ function LeagueStrengthModal({ onClose }) {
   );
 }
 
+function UnderdogIndexModal({ onClose, onSelectClub }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/clubs/underdogs?limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🎯 The Underdog Index</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Clubs whose squad quality is meaningfully above their own league's average — real overperformance relative to context, not just "good" clubs in strong leagues.
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.map((r, i) => (
+          <button key={r.club} onClick={() => onSelectClub(r)}
+            className="w-full flex items-center justify-between text-sm py-2.5 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+            <span className="flex items-center gap-2">
+              <span className="text-[#6B8570] w-5">{i + 1}.</span>
+              <span className="text-[#EDEDE3]">{r.club}</span>
+              <span className="text-[#6B8570] text-xs">· {r.league_display}</span>
+            </span>
+            <span className="font-plexmono text-[#7FD99A] text-xs">+{r.overperformance}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PipelineHealthModal({ onClose }) {
+  const [health, setHealth] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/pipeline-health`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setHealth(data))
+      .catch(() => setHealth(null));
+  }, []);
+
+  const Row = ({ label, value, color }) => (
+    <div className="flex items-center justify-between text-sm py-2 border-b border-[#1C2E26]">
+      <span className="text-[#6B8570]">{label}</span>
+      <span className="font-plexmono" style={{ color: color || "#EDEDE3" }}>{value}</span>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-md w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🩺 Pipeline Health</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        {health === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {health && (
+          <>
+            {health.quota && (
+              <Row label="API Quota Today" value={`${health.quota.used_today} / ${health.quota.daily_limit}`}
+                color={health.quota.used_today / health.quota.daily_limit > 0.85 ? "#E36B57" : "#7FD99A"} />
+            )}
+            <Row label="Scoring Last Run" value={health.scoring_last_run ? new Date(health.scoring_last_run).toLocaleString() : "—"} />
+            <Row label="Most Recent Finished Match" value={health.most_recent_finished_match ? new Date(health.most_recent_finished_match).toLocaleDateString() : "—"} />
+            <Row label="Transfer News Last Refreshed" value={health.transfer_news_last_refreshed ? new Date(health.transfer_news_last_refreshed).toLocaleTimeString() : "—"} />
+            <Row label="Total Players Tracked" value={health.total_players_tracked} />
+            <div className="text-[10px] text-[#4A5C52] mt-4 italic">
+              Shows current state, not a history of past failures — there's no error-logging table yet, so this can't tell you WHY something might look stale, only whether it currently does.
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SquadContinuityModal({ onClose }) {
   const [rows, setRows] = useState(null);
 
@@ -3817,6 +3946,8 @@ function ScoutDashboard() {
   const [scoutReportCardOpen, setScoutReportCardOpen] = useState(false);
   const [discoveryEngineOpen, setDiscoveryEngineOpen] = useState(false);
   const [transferCentreOpen, setTransferCentreOpen] = useState(false);
+  const [underdogIndexOpen, setUnderdogIndexOpen] = useState(false);
+  const [pipelineHealthOpen, setPipelineHealthOpen] = useState(false);
   const [deepLinkPlayerId, setDeepLinkPlayerId] = useState(() => new URLSearchParams(window.location.search).get("player"));
   const [livePlayers, setLivePlayers] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState(API_BASE_URL ? "connecting" : "offline");
@@ -4182,6 +4313,8 @@ function ScoutDashboard() {
                           ["📊", "My Report Card", setScoutReportCardOpen],
                           ["🔮", "Discovery Engine", setDiscoveryEngineOpen],
                           ["🔄", "Transfer Centre", setTransferCentreOpen],
+                          ["🎯", "Underdog Index", setUnderdogIndexOpen],
+                          ["🩺", "Pipeline Health", setPipelineHealthOpen],
                         ].map(([icon, label, setter]) => (
                           <button key={label} onClick={() => { setter(true); setMoreMenuOpen(false); }}
                             className="w-full text-left px-4 py-2 text-xs text-[#9AAA9E] hover:text-[#E3A857] hover:bg-[#0E1A15] flex items-center gap-2">
@@ -4614,6 +4747,18 @@ function ScoutDashboard() {
         />
       )}
       {transferCentreOpen && <TransferCentreModal onClose={() => setTransferCentreOpen(false)} />}
+      {underdogIndexOpen && (
+        <UnderdogIndexModal
+          onClose={() => setUnderdogIndexOpen(false)}
+          onSelectClub={(row) => {
+            setUnderdogIndexOpen(false);
+            setLeague(row.league_display);
+            setClub(row.club);
+            setClubProfileOpen(true);
+          }}
+        />
+      )}
+      {pipelineHealthOpen && <PipelineHealthModal onClose={() => setPipelineHealthOpen(false)} />}
       <CompareBar selected={compareList} onClear={() => setCompareList([])} onCompare={() => setComparing(true)} />
       {comparing && compareList.length >= 2 && (
         <ComparePanel players={compareList} onClose={() => setComparing(false)} />
