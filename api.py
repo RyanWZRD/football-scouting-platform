@@ -21,9 +21,10 @@ Endpoints:
 import os
 import json
 import time
+import asyncio
 from datetime import datetime
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Query, Header, Depends
+from fastapi import FastAPI, HTTPException, Query, Header, Depends, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -275,33 +276,110 @@ def percentile_rank(target_val, all_vals):
 # on server restart, which is fine for something this short-lived.
 _live_cache = {"data": None, "fetched_at": 0}
 LIVE_CACHE_SECONDS = 20
+WS_POLL_INTERVAL_SECONDS = 60  # same cadence as the old client-side polling — no faster, so no extra quota cost
 
 
-@app.get("/live")
-def live_scores(authorized: bool = Depends(check_api_key)):
-    """Currently in-progress matches across all tracked leagues, in ONE
-    API-Football request (their live=all endpoint returns everything at
-    once, regardless of league count — cost doesn't scale with coverage).
-    Cached briefly server-side as an extra safety buffer."""
-    if not FOOTBALL_API_KEY:
-        raise HTTPException(status_code=503, detail="FOOTBALL_API_KEY not configured on the server.")
-
-    now = time.time()
-    if _live_cache["data"] is not None and (now - _live_cache["fetched_at"]) < LIVE_CACHE_SECONDS:
-        return {"matches": _live_cache["data"], "cached": True}
-
+def is_within_live_window():
+    """Same 8am-3am UK window the frontend already enforces client-side —
+    duplicated here server-side so the background poller doesn't run
+    24/7 regardless of whether matches are actually likely happening."""
     try:
-        resp = requests.get(
-            "https://v3.football.api-sports.io/fixtures",
-            headers={"x-apisports-key": FOOTBALL_API_KEY},
-            params={"live": "all"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        resp.encoding = "utf-8"
-        raw = resp.json().get("response", [])
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch live scores: {e}")
+        from zoneinfo import ZoneInfo
+        uk_now = datetime.now(ZoneInfo("Europe/London"))
+    except Exception:
+        uk_now = datetime.utcnow()  # fallback if zoneinfo data isn't available — errs toward polling rather than silently never running
+    hour = uk_now.hour
+    return hour >= 8 or hour < 3  # 8am through 3am, wrapping past midnight
+
+
+class LiveConnectionManager:
+    """Tracks connected WebSocket clients. The background poller only
+    does any work at all when this is non-empty — polling when nobody's
+    watching would be pure waste."""
+    def __init__(self):
+        self.active: list[WebSocket] = []
+
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        self.active.append(ws)
+
+    def disconnect(self, ws: WebSocket):
+        if ws in self.active:
+            self.active.remove(ws)
+
+    async def broadcast(self, message: dict):
+        dead = []
+        for ws in self.active:
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead.append(ws)  # connection genuinely gone — clean it up, don't let it silently accumulate
+        for ws in dead:
+            self.disconnect(ws)
+
+
+live_manager = LiveConnectionManager()
+
+
+async def live_poll_loop():
+    """Runs for the lifetime of the server process. Only calls
+    API-Football when there's at least one connected client AND we're
+    inside the real live-match window — the same two gates the old
+    client-side-only polling effectively had, just enforced properly
+    server-side now instead of trusting the browser to behave."""
+    while True:
+        await asyncio.sleep(WS_POLL_INTERVAL_SECONDS)
+        if not live_manager.active or not is_within_live_window() or not FOOTBALL_API_KEY:
+            continue
+        try:
+            matches = fetch_live_matches()
+            _live_cache["data"] = matches
+            _live_cache["fetched_at"] = time.time()
+            await live_manager.broadcast({"matches": matches})
+        except Exception as e:
+            print(f"Live poll loop error (non-fatal, will retry next cycle): {e}")
+
+
+@app.on_event("startup")
+async def start_live_poller():
+    asyncio.create_task(live_poll_loop())
+
+
+@app.websocket("/ws/live")
+async def ws_live_scores(websocket: WebSocket, key: str = Query(None)):
+    """WebSocket version of live scores — the server pushes updates the
+    moment its own poll finds something new, rather than the client
+    waiting for its own next interval. Auth via query param since
+    browsers' native WebSocket API can't set custom headers the way
+    fetch() can for the REST endpoint."""
+    if API_ACCESS_KEY and key != API_ACCESS_KEY:
+        await websocket.close(code=4001)
+        return
+
+    await live_manager.connect(websocket)
+    # Send whatever we already have immediately, don't make them wait for the next poll cycle
+    if _live_cache["data"] is not None:
+        await websocket.send_json({"matches": _live_cache["data"]})
+    try:
+        while True:
+            await websocket.receive_text()  # just keeps the connection alive; we don't expect client messages
+    except WebSocketDisconnect:
+        live_manager.disconnect(websocket)
+
+
+def fetch_live_matches():
+    """Shared fetch logic — used by both the REST /live endpoint and the
+    WebSocket background poller, so there's exactly one place that talks
+    to API-Football for this, not two independently-maintained copies."""
+    resp = requests.get(
+        "https://v3.football.api-sports.io/fixtures",
+        headers={"x-apisports-key": FOOTBALL_API_KEY},
+        params={"live": "all"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    resp.encoding = "utf-8"
+    raw = resp.json().get("response", [])
 
     matches = []
     for f in raw:
@@ -316,6 +394,28 @@ def live_scores(authorized: bool = Depends(check_api_key)):
             "elapsed": f["fixture"]["status"]["elapsed"],
             "status_short": f["fixture"]["status"]["short"],
         })
+    return matches
+
+
+@app.get("/live")
+def live_scores(authorized: bool = Depends(check_api_key)):
+    """Currently in-progress matches across all tracked leagues, in ONE
+    API-Football request (their live=all endpoint returns everything at
+    once, regardless of league count — cost doesn't scale with coverage).
+    Cached briefly server-side as an extra safety buffer. This REST
+    version still exists alongside the WebSocket one below — a genuine
+    fallback if a client can't hold a WebSocket connection open."""
+    if not FOOTBALL_API_KEY:
+        raise HTTPException(status_code=503, detail="FOOTBALL_API_KEY not configured on the server.")
+
+    now = time.time()
+    if _live_cache["data"] is not None and (now - _live_cache["fetched_at"]) < LIVE_CACHE_SECONDS:
+        return {"matches": _live_cache["data"], "cached": True}
+
+    try:
+        matches = fetch_live_matches()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch live scores: {e}")
 
     _live_cache["data"] = matches
     _live_cache["fetched_at"] = now
@@ -2478,6 +2578,7 @@ def list_players(
         "interceptions", "saves", "yellow_cards", "minutes_played", "duel_win_pct", "pass_accuracy_pct",
     ]),
     exclude_top5: bool = False,
+    youth_only: bool = False,
     season: Optional[str] = None,
     limit: int = Query(50, le=5000),
     authorized: bool = Depends(check_api_key),
@@ -2607,6 +2708,12 @@ def list_players(
         filters.append("latest_note.watch_level = 'shortlist'")
     if exclude_top5:
         filters.append("l.is_top5 = false")
+    # Safe default: senior leagues only, unless youth data is explicitly
+    # requested. Without this, once youth leagues are ingested, academy
+    # players would silently mix into ordinary senior searches — exactly
+    # what the is_youth flag exists to prevent.
+    filters.append("l.is_youth = %s")
+    params.append(youth_only)
 
     if filters:
         base_query += " WHERE " + " AND ".join(filters)
