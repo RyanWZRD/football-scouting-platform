@@ -92,7 +92,7 @@ def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
 
-def upsert_league(conn, league_id, season):
+def upsert_league(conn, league_id, season, is_youth=False):
     data = api_get("leagues", {"id": league_id, "season": season})
     if not data:
         return None
@@ -115,12 +115,12 @@ def upsert_league(conn, league_id, season):
 
         cur.execute(
             """
-            INSERT INTO leagues (external_id, name, country_id, tier, is_top5, season)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (external_id) DO UPDATE SET season = EXCLUDED.season
+            INSERT INTO leagues (external_id, name, country_id, tier, is_top5, season, is_youth)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (external_id) DO UPDATE SET season = EXCLUDED.season, is_youth = EXCLUDED.is_youth
             RETURNING id
             """,
-            (str(league["id"]), fix_mojibake(league["name"]), country_id, 1, is_top5, str(season)),
+            (str(league["id"]), fix_mojibake(league["name"]), country_id, 1, is_top5, str(season), is_youth),
         )
         conn.commit()
         return cur.fetchone()[0]
@@ -248,13 +248,13 @@ def upsert_players_for_club(conn, club_external_id, season, db_club_id, max_page
     return total_players
 
 
-def run(league_ids, season, max_pages=5):
+def run(league_ids, season, max_pages=5, is_youth=False):
     conn = get_conn()
     completed = []
     for league_id in league_ids:
         print(f"Syncing league {league_id} / season {season} ...")
         try:
-            db_league_id = upsert_league(conn, league_id, season)
+            db_league_id = upsert_league(conn, league_id, season, is_youth)
             if db_league_id is None:
                 print(f"  no data for league {league_id}, skipping")
                 continue
@@ -297,6 +297,10 @@ if __name__ == "__main__":
     parser.add_argument("--max-pages", type=int, default=5,
                          help="Max player-list pages PER CLUB (20 players/page). Default 5 (~100 players) "
                               "is generous headroom above any real squad size.")
+    parser.add_argument("--youth", action="store_true",
+                         help="Mark the leagues in this run as youth/academy competitions (U19, U21, etc.), "
+                              "not senior leagues — flags them in the database so they're excluded from "
+                              "senior-level percentile scoring, and can be filtered separately in the app.")
     args = parser.parse_args()
 
     LEAGUE_IDS = [
@@ -309,4 +313,4 @@ if __name__ == "__main__":
     if not ids:
         parser.error("Provide --league <id> (repeatable) or --all-leagues")
 
-    run(ids, args.season, args.max_pages)
+    run(ids, args.season, args.max_pages, args.youth)
