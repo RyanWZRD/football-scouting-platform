@@ -175,6 +175,29 @@ def pipeline_health(authorized: bool = Depends(check_api_key)):
     }
 
 
+@app.get("/digests/latest")
+def latest_digest(authorized: bool = Depends(check_api_key)):
+    """The most recent weekly digest — generated automatically every
+    Monday by a scheduled workflow, zero manual trigger needed."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, generated_at, content FROM weekly_digests ORDER BY generated_at DESC LIMIT 1")
+        row = cur.fetchone()
+    conn.close()
+    return row
+
+
+@app.get("/digests")
+def list_digests(limit: int = Query(10, le=50), authorized: bool = Depends(check_api_key)):
+    """Full archive of past weekly digests, most recent first."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, generated_at, content FROM weekly_digests ORDER BY generated_at DESC LIMIT %s", (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 # Our 17 tracked league external IDs, for filtering the global live-scores response
 TRACKED_LEAGUE_IDS = {39, 140, 78, 135, 61, 88, 94, 203, 71, 98, 253, 179, 62, 40, 144, 262, 128}
 
@@ -930,6 +953,115 @@ def declining_minutes(limit: int = Query(15, le=50), authorized: bool = Depends(
         if not info:
             continue
         results.append({**d, "full_name": info["full_name"], "photo_url": info["photo_url"], "club": info["club"]})
+    return results
+
+
+@app.get("/fixtures/estimate")
+def fixture_estimates(league: str, limit: int = Query(10, le=30), authorized: bool = Depends(check_api_key)):
+    """Illustrative outcome estimates for upcoming fixtures — combines
+    squad quality (potential index) and recent form (last 5 results)
+    into a Home/Draw/Away percentage split, with a small built-in home
+    advantage (a real, well-established football phenomenon, not
+    something invented here).
+
+    IMPORTANT HONEST FRAMING: this is NOT a betting tool and does not
+    account for injuries, tactics, or form-on-the-day — it's a
+    transparent, rule-based estimate from two signals you already have
+    elsewhere on this platform (squad quality + recent form), shown
+    together for convenience, nothing more sophisticated than that."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        cur.execute("""
+            SELECT cl.name AS club, AVG(pps.potential_index) AS avg_potential
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE cl.league_id = %s
+            GROUP BY cl.name
+            HAVING COUNT(*) >= 8
+        """, (league_id,))
+        quality = {r["club"]: r["avg_potential"] for r in cur.fetchall()}
+
+        # Recent form per club — same logic as /standings/form, last 5 results.
+        cur.execute("""
+            SELECT DISTINCT cl.name AS club
+            FROM matches m
+            JOIN clubs cl ON cl.id = m.home_club_id OR cl.id = m.away_club_id
+            WHERE m.league_id = %s AND m.status = 'finished'
+        """, (league_id,))
+        clubs = [r["club"] for r in cur.fetchall()]
+        form = {}
+        for club in clubs:
+            cur.execute("""
+                SELECT m.home_score, m.away_score, home_cl.name AS home_club, away_cl.name AS away_club
+                FROM matches m
+                JOIN clubs home_cl ON home_cl.id = m.home_club_id
+                JOIN clubs away_cl ON away_cl.id = m.away_club_id
+                WHERE m.league_id = %s AND m.status = 'finished' AND (home_cl.name = %s OR away_cl.name = %s)
+                ORDER BY m.match_date DESC LIMIT 5
+            """, (league_id, club, club))
+            recent = cur.fetchall()
+            if not recent:
+                continue
+            points = 0
+            for r in recent:
+                is_home = r["home_club"] == club
+                gf = r["home_score"] if is_home else r["away_score"]
+                ga = r["away_score"] if is_home else r["home_score"]
+                points += 3 if gf > ga else (1 if gf == ga else 0)
+            form[club] = (points / (len(recent) * 3)) * 100  # 0-100 scale
+
+        cur.execute("""
+            SELECT m.id, m.match_date, home_cl.name AS home_club, away_cl.name AS away_club
+            FROM matches m
+            JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            WHERE m.league_id = %s AND m.status = 'scheduled'
+            ORDER BY m.match_date ASC LIMIT %s
+        """, (league_id, limit))
+        upcoming = cur.fetchall()
+    conn.close()
+
+    HOME_ADVANTAGE_BONUS = 3  # a modest, well-established real effect — not something invented for this feature
+
+    results = []
+    for m in upcoming:
+        home_q, away_q = quality.get(m["home_club"]), quality.get(m["away_club"])
+        if home_q is None or away_q is None:
+            continue
+        home_form, away_form = form.get(m["home_club"], 50), form.get(m["away_club"], 50)  # neutral default if genuinely no recent matches yet
+
+        home_strength = 0.6 * home_q + 0.4 * home_form
+        away_strength = 0.6 * away_q + 0.4 * away_form
+        strength_diff = (home_strength - away_strength) + HOME_ADVANTAGE_BONUS
+
+        raw_home = max(5, 33 + strength_diff)
+        raw_away = max(5, 33 - strength_diff)
+        raw_draw = max(8, 28 - abs(strength_diff) * 0.15)
+        total = raw_home + raw_away + raw_draw
+
+        results.append({
+            "id": m["id"], "match_date": m["match_date"],
+            "home_club": m["home_club"], "away_club": m["away_club"],
+            "home_win_pct": round(raw_home / total * 100),
+            "draw_pct": round(raw_draw / total * 100),
+            "away_win_pct": round(raw_away / total * 100),
+        })
+
     return results
 
 
@@ -2548,6 +2680,13 @@ def form_table(league: str, window: int = Query(5, le=10), authorized: bool = De
 
 @app.get("/leagues")
 def list_leagues(authorized: bool = Depends(check_api_key)):
+    """Excludes cup/continental competitions — their knockout format
+    breaks the table/standings concept most consumers of this list
+    assume (Standings, Table Predictor, Form Table). Youth leagues stay
+    visible, since those are still round-robin and those features work
+    fine for them. Cup competition data still exists and still counts
+    toward player profiles — it's just not offered as a 'pick a league'
+    option here."""
     conn = get_conn()
     with conn.cursor() as cur:
         cur.execute("""
@@ -2556,6 +2695,7 @@ def list_leagues(authorized: bool = Depends(check_api_key)):
                    l.season, l.is_top5, c.name AS country
             FROM leagues l
             LEFT JOIN countries c ON c.id = l.country_id
+            WHERE l.is_cup = false
             ORDER BY l.name
         """)
         rows = cur.fetchall()
