@@ -2905,6 +2905,7 @@ function TransferCentreModal({ onClose }) {
 
 function LiveScoresModal({ onClose }) {
   const [matches, setMatches] = useState(null);
+  const [playerEvents, setPlayerEvents] = useState([]);
   const [shortlistClubs, setShortlistClubs] = useState([]);
   const [connectionMode, setConnectionMode] = useState("connecting"); // "connecting" | "live" | "fallback"
   const connectionModeRef = useRef("connecting"); // avoids a stale-closure read inside ws.onclose below
@@ -2948,7 +2949,10 @@ function LiveScoresModal({ onClose }) {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          setMatches(data.matches);
+          if (data.matches) setMatches(data.matches);
+          if (data.player_event) {
+            setPlayerEvents(prev => [data.player_event, ...prev].slice(0, 10));
+          }
         } catch (e) { /* ignore a malformed frame, wait for the next one */ }
       };
       ws.onerror = () => {
@@ -2988,6 +2992,18 @@ function LiveScoresModal({ onClose }) {
           </div>
           <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
         </div>
+
+        {playerEvents.length > 0 && (
+          <div className="mb-4 border border-[#E3A857] bg-[#1A2E22] p-3">
+            <div className="text-[10px] uppercase tracking-wide text-[#E3A857] mb-2">⭐ Your Shortlist, Live</div>
+            {playerEvents.map((ev, i) => (
+              <div key={i} className="text-sm text-[#EDEDE3] py-1">
+                {ev.type === "Goal" ? "⚽" : "🟨"} <span className="font-bold">{ev.player}</span> ({ev.team})
+                <span className="text-[#6B8570] text-xs ml-2">{ev.minute}' · {ev.home_club} vs {ev.away_club}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {!inWindow && (
           <div className="text-sm text-[#6B8570] text-center py-8">
@@ -3599,6 +3615,66 @@ function RecruitmentBoardModal({ onClose, onSelectPlayer }) {
   );
 }
 
+function FixtureRow({ m }) {
+  const [apiPrediction, setApiPrediction] = useState(null);
+  const [loadingApi, setLoadingApi] = useState(false);
+
+  const loadApiPrediction = () => {
+    if (!API_BASE_URL) return;
+    setLoadingApi(true);
+    fetch(`${API_BASE_URL}/fixtures/${m.id}/api-prediction`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setApiPrediction(data))
+      .catch(() => setApiPrediction({ prediction: null }))
+      .finally(() => setLoadingApi(false));
+  };
+
+  // Defensive reads — API-Football's own response shape is theirs to
+  // change, so this fails gracefully (shows nothing) rather than
+  // crashing if a field isn't where expected.
+  const percent = apiPrediction?.prediction?.predictions?.percent;
+
+  return (
+    <div className="py-3 border-b border-[#1C2E26]">
+      <div className="flex justify-between text-sm text-[#EDEDE3] mb-1">
+        <span>{m.home_club}</span>
+        <span className="text-[#6B8570] text-xs">{new Date(m.match_date).toLocaleDateString()}</span>
+        <span>{m.away_club}</span>
+      </div>
+      <div className="text-[9px] uppercase tracking-wide text-[#4A5C52] mb-1">Our estimate</div>
+      <div className="flex h-2 w-full overflow-hidden">
+        <div style={{ width: `${m.home_win_pct}%`, background: "#E3A857" }} />
+        <div style={{ width: `${m.draw_pct}%`, background: "#6B8570" }} />
+        <div style={{ width: `${m.away_win_pct}%`, background: "#7FA8D9" }} />
+      </div>
+      <div className="flex justify-between text-[10px] text-[#6B8570] mt-1 font-plexmono mb-2">
+        <span>{m.home_win_pct}%</span>
+        <span>{m.draw_pct}% draw</span>
+        <span>{m.away_win_pct}%</span>
+      </div>
+
+      {!apiPrediction && (
+        <button onClick={loadApiPrediction} disabled={loadingApi} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] disabled:opacity-50">
+          {loadingApi ? "Loading…" : "Compare against API-Football's own prediction →"}
+        </button>
+      )}
+      {apiPrediction && !percent && (
+        <div className="text-[10px] text-[#4A5C52] italic">No API-Football prediction available for this fixture.</div>
+      )}
+      {percent && (
+        <>
+          <div className="text-[9px] uppercase tracking-wide text-[#4A5C52] mb-1">API-Football's own model</div>
+          <div className="flex justify-between text-[10px] text-[#7FD99A] font-plexmono">
+            <span>{percent.home}</span>
+            <span>{percent.draw} draw</span>
+            <span>{percent.away}</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function MatchEstimatorModal({ allLeagueOptions, onClose }) {
   const [league, setLeague] = useState("");
   const [estimates, setEstimates] = useState(null);
@@ -3632,25 +3708,7 @@ function MatchEstimatorModal({ allLeagueOptions, onClose }) {
 
         {league && estimates === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
         {estimates?.length === 0 && <div className="text-sm text-[#6B8570]">No upcoming fixtures with enough data to estimate.</div>}
-        {estimates?.map(m => (
-          <div key={m.id} className="py-3 border-b border-[#1C2E26]">
-            <div className="flex justify-between text-sm text-[#EDEDE3] mb-1">
-              <span>{m.home_club}</span>
-              <span className="text-[#6B8570] text-xs">{new Date(m.match_date).toLocaleDateString()}</span>
-              <span>{m.away_club}</span>
-            </div>
-            <div className="flex h-2 w-full overflow-hidden">
-              <div style={{ width: `${m.home_win_pct}%`, background: "#E3A857" }} />
-              <div style={{ width: `${m.draw_pct}%`, background: "#6B8570" }} />
-              <div style={{ width: `${m.away_win_pct}%`, background: "#7FA8D9" }} />
-            </div>
-            <div className="flex justify-between text-[10px] text-[#6B8570] mt-1 font-plexmono">
-              <span>{m.home_win_pct}%</span>
-              <span>{m.draw_pct}% draw</span>
-              <span>{m.away_win_pct}%</span>
-            </div>
-          </div>
-        ))}
+        {estimates?.map(m => <FixtureRow key={m.id} m={m} />)}
       </div>
     </div>
   );
