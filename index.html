@@ -1904,7 +1904,7 @@ function TransferSimulatorModal({ squad, clubName, onClose }) {
   );
 }
 
-function CompareBar({ selected, onClear, onCompare }) {
+function CompareBar({ selected, onClear, onCompare, onRecruitmentPack }) {
   if (selected.length === 0) return null;
   const names = selected.map(p => p.name);
   return (
@@ -1920,10 +1920,98 @@ function CompareBar({ selected, onClear, onCompare }) {
         <button onClick={onClear} className="text-xs uppercase tracking-wide text-[#9AAA9E] hover:text-[#EDEDE3] px-3 py-2">
           Clear
         </button>
+        <button onClick={onRecruitmentPack} disabled={selected.length < 2}
+          className="text-xs uppercase tracking-wide px-4 py-2 border border-[#E3A857] text-[#E3A857] font-bold disabled:opacity-40 disabled:cursor-not-allowed">
+          📑 Recruitment Pack
+        </button>
         <button onClick={onCompare} disabled={selected.length < 2}
           className="text-xs uppercase tracking-wide px-4 py-2 bg-[#E3A857] text-[#0E1A15] font-bold disabled:opacity-40 disabled:cursor-not-allowed">
           Compare
         </button>
+      </div>
+    </div>
+  );
+}
+
+function RecruitmentPackModal({ players, onClose }) {
+  const [dossiers, setDossiers] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    Promise.all(players.map(p =>
+      fetch(`${API_BASE_URL}/players/${p.id}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+        .then(res => res.ok ? res.json() : null)
+        .catch(() => null)
+    )).then(results => setDossiers(results.filter(Boolean)));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[70]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-3xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-8" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-6 print:hidden">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📑 Recruitment Pack</div>
+          <div className="flex items-center gap-3">
+            {dossiers && (
+              <button onClick={() => window.print()} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
+                🖨 Print / Save as PDF
+              </button>
+            )}
+            <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+          </div>
+        </div>
+
+        {dossiers === null && <div className="text-sm text-[#6B8570]">Loading full profiles…</div>}
+
+        {dossiers?.map((d, i) => (
+          <div key={d.player?.id} className={`${i > 0 ? "mt-8 pt-8 border-t border-[#2C4A3B]" : ""} print:break-before-page`}>
+            <div className="flex items-center gap-4 mb-4">
+              <Avatar name={d.player?.full_name} photoUrl={d.player?.photo_url} size={56} />
+              <div>
+                <div className="text-xl font-display text-[#EDEDE3]">{d.player?.full_name}</div>
+                <div className="text-sm text-[#9AAA9E]">{d.player?.club} · {d.player?.primary_position}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+              <div>
+                <div className="text-[10px] uppercase text-[#6B8570]">Potential</div>
+                <div className="text-lg font-plexmono text-[#E3A857]">{d.score?.potential_index ? Math.round(d.score.potential_index) : "—"}</div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase text-[#6B8570]">Grade</div>
+                <div className="text-lg font-plexmono text-[#E3A857]">{d.grade || "—"}</div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase text-[#6B8570]">Archetype</div>
+                <div className="text-sm text-[#EDEDE3]">{d.archetype || "—"}</div>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase text-[#6B8570]">Confidence</div>
+                <div className="text-sm text-[#EDEDE3] capitalize">{d.scouting_confidence?.tier || "—"}</div>
+              </div>
+            </div>
+
+            {d.scout_ratings?.length > 0 && (
+              <div className="mb-4">
+                <div className="text-[10px] uppercase text-[#6B8570] mb-1">Latest Scout Rating</div>
+                <div className="text-sm text-[#EDEDE3]">
+                  Technical {d.scout_ratings[0].technical} · Physical {d.scout_ratings[0].physical} ·
+                  Mental {d.scout_ratings[0].mental} · Tactical {d.scout_ratings[0].tactical}
+                </div>
+                {d.scout_ratings[0].notes && <div className="text-xs text-[#9AAA9E] mt-1 italic">"{d.scout_ratings[0].notes}"</div>}
+              </div>
+            )}
+
+            {d.scout_notes?.length > 0 && (
+              <div className="mb-2">
+                <div className="text-[10px] uppercase text-[#6B8570] mb-1">Notes</div>
+                {d.scout_notes.slice(0, 3).map((n, j) => (
+                  <div key={j} className="text-xs text-[#9AAA9E] mb-1">"{n.note}" <span className="text-[#4A5C52]">— {n.author || "scout"}</span></div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -3391,6 +3479,126 @@ function LeagueReportCard({ league, report, forwardedRef }) {
   );
 }
 
+function RecruitmentBoardModal({ onClose, onSelectPlayer }) {
+  const [rows, setRows] = useState(null);
+  const [sortCol, setSortCol] = useState("potential_index");
+  const [sortDir, setSortDir] = useState("desc");
+  const [showAll, setShowAll] = useState(false); // false = shortlist only (the real "board"), true = broader view
+  const [exporting, setExporting] = useState(false);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    setRows(null);
+    const params = new URLSearchParams({ sort: "potential", limit: "200" });
+    if (!showAll) params.set("shortlist_only", "true");
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, [showAll]);
+
+  const exportCsv = () => {
+    if (!API_BASE_URL) return;
+    setExporting(true);
+    const params = new URLSearchParams({ sort: "potential", limit: "200", format: "csv" });
+    if (!showAll) params.set("shortlist_only", "true");
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.blob() : null)
+      .then(blob => {
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "recruitment_board.csv";
+        link.click();
+        URL.revokeObjectURL(url);
+      })
+      .catch(() => alert("Export failed — please try again."))
+      .finally(() => setExporting(false));
+  };
+
+  const columns = [
+    { key: "full_name", label: "Player" },
+    { key: "club", label: "Club" },
+    { key: "primary_position", label: "Pos" },
+    { key: "age", label: "Age" },
+    { key: "potential_index", label: "Potential" },
+    { key: "minutes_played", label: "Mins" },
+    { key: "goals", label: "G" },
+    { key: "assists", label: "A" },
+    { key: "pass_accuracy_pct", label: "Pass%" },
+  ];
+
+  const computeAge = (dob) => dob ? Math.floor((Date.now() - new Date(dob)) / (365.25 * 24 * 3600 * 1000)) : null;
+
+  const sorted = rows ? [...rows].map(r => ({ ...r, age: computeAge(r.date_of_birth) })).sort((a, b) => {
+    const av = a[sortCol], bv = b[sortCol];
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === "string") return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+    return sortDir === "asc" ? av - bv : bv - av;
+  }) : [];
+
+  const toggleSort = (key) => {
+    if (sortCol === key) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortCol(key); setSortDir("desc"); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-5xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📋 Recruitment Board</div>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-1.5 text-[10px] text-[#9AAA9E] uppercase tracking-wide">
+              <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)} />
+              Show all (not just shortlist)
+            </label>
+            <button onClick={exportCsv} disabled={exporting} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] disabled:opacity-50">
+              {exporting ? "Exporting…" : "📤 Export CSV"}
+            </button>
+            <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+          </div>
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.length === 0 && <div className="text-sm text-[#6B8570] text-center py-4">Nothing shortlisted yet — check "Show all" or shortlist some players first.</div>}
+
+        {rows?.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[#6B8570] uppercase tracking-wide border-b border-[#2C4A3B]">
+                  {columns.map(c => (
+                    <th key={c.key} onClick={() => toggleSort(c.key)} className="text-left py-2 px-2 cursor-pointer hover:text-[#E3A857] whitespace-nowrap">
+                      {c.label} {sortCol === c.key && (sortDir === "asc" ? "↑" : "↓")}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map(r => (
+                  <tr key={r.id} onClick={() => onSelectPlayer(r)} className="border-b border-[#1C2E26] text-[#EDEDE3] hover:bg-[#152922] cursor-pointer">
+                    <td className="py-2 px-2 whitespace-nowrap">{r.full_name}</td>
+                    <td className="py-2 px-2 text-[#9AAA9E] whitespace-nowrap">{r.club}</td>
+                    <td className="py-2 px-2">{r.primary_position}</td>
+                    <td className="py-2 px-2 font-plexmono">{r.age ?? "—"}</td>
+                    <td className="py-2 px-2 font-plexmono text-[#E3A857]">{r.potential_index ? Math.round(r.potential_index) : "—"}</td>
+                    <td className="py-2 px-2 font-plexmono">{r.minutes_played ?? "—"}</td>
+                    <td className="py-2 px-2 font-plexmono">{r.goals ?? 0}</td>
+                    <td className="py-2 px-2 font-plexmono">{r.assists ?? 0}</td>
+                    <td className="py-2 px-2 font-plexmono">{r.pass_accuracy_pct ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MatchEstimatorModal({ allLeagueOptions, onClose }) {
   const [league, setLeague] = useState("");
   const [estimates, setEstimates] = useState(null);
@@ -3525,6 +3733,84 @@ function DecliningMinutesModal({ onClose, onSelectPlayer }) {
               <span className="text-[#E36B57]">{r.recent_avg_minutes}</span>
               <span className="text-[#E36B57] ml-2">(-{r.drop_pct}%)</span>
             </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TargetProfileSearchModal({ onClose, onSelectPlayer }) {
+  const [profile, setProfile] = useState({
+    position: "Attacker", goalsP90: "", assistsP90: "", keyPassesP90: "",
+    defensiveP90: "", takeOnsP90: "", passAcc: "", ageMax: "",
+  });
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const set = (key) => (e) => setProfile(prev => ({ ...prev, [key]: e.target.value }));
+
+  const runSearch = () => {
+    if (!API_BASE_URL) return;
+    setLoading(true);
+    const params = new URLSearchParams({ position: profile.position, limit: "20" });
+    if (profile.goalsP90) params.set("goals_p90", profile.goalsP90);
+    if (profile.assistsP90) params.set("assists_p90", profile.assistsP90);
+    if (profile.keyPassesP90) params.set("key_passes_p90", profile.keyPassesP90);
+    if (profile.defensiveP90) params.set("defensive_p90", profile.defensiveP90);
+    if (profile.takeOnsP90) params.set("take_ons_p90", profile.takeOnsP90);
+    if (profile.passAcc) params.set("pass_acc", profile.passAcc);
+    if (profile.ageMax) params.set("age_max", profile.ageMax);
+
+    fetch(`${API_BASE_URL}/players/target-search?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setResults(data))
+      .catch(() => setResults([]))
+      .finally(() => setLoading(false));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🎯 Target Profile Search</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Define exactly what you're looking for — leave fields blank you don't care about. Only filled-in dimensions count toward the match.
+        </div>
+
+        <select value={profile.position} onChange={set("position")} className="w-full bg-[#152922] border border-[#2C4A3B] px-2 py-1.5 text-xs text-[#EDEDE3] mb-3">
+          <option value="Goalkeeper">Goalkeeper</option>
+          <option value="Defender">Defender</option>
+          <option value="Midfielder">Midfielder</option>
+          <option value="Attacker">Attacker</option>
+        </select>
+
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <input type="number" step="0.1" placeholder="Goals per 90" value={profile.goalsP90} onChange={set("goalsP90")} className="bg-[#152922] border border-[#2C4A3B] px-2 py-1.5 text-xs text-[#EDEDE3]" />
+          <input type="number" step="0.1" placeholder="Assists per 90" value={profile.assistsP90} onChange={set("assistsP90")} className="bg-[#152922] border border-[#2C4A3B] px-2 py-1.5 text-xs text-[#EDEDE3]" />
+          <input type="number" step="0.1" placeholder="Key passes per 90" value={profile.keyPassesP90} onChange={set("keyPassesP90")} className="bg-[#152922] border border-[#2C4A3B] px-2 py-1.5 text-xs text-[#EDEDE3]" />
+          <input type="number" step="0.1" placeholder="Defensive actions per 90" value={profile.defensiveP90} onChange={set("defensiveP90")} className="bg-[#152922] border border-[#2C4A3B] px-2 py-1.5 text-xs text-[#EDEDE3]" />
+          <input type="number" step="0.1" placeholder="Take-ons per 90" value={profile.takeOnsP90} onChange={set("takeOnsP90")} className="bg-[#152922] border border-[#2C4A3B] px-2 py-1.5 text-xs text-[#EDEDE3]" />
+          <input type="number" placeholder="Pass accuracy %" value={profile.passAcc} onChange={set("passAcc")} className="bg-[#152922] border border-[#2C4A3B] px-2 py-1.5 text-xs text-[#EDEDE3]" />
+          <input type="number" placeholder="Max age" value={profile.ageMax} onChange={set("ageMax")} className="bg-[#152922] border border-[#2C4A3B] px-2 py-1.5 text-xs text-[#EDEDE3] col-span-2" />
+        </div>
+
+        <button onClick={runSearch} disabled={loading} className="w-full bg-[#E3A857] text-[#0E1A15] font-bold py-2 text-sm uppercase tracking-wide disabled:opacity-50 mb-4">
+          {loading ? "Searching…" : "Find Matches"}
+        </button>
+
+        {results?.length === 0 && <div className="text-sm text-[#6B8570] text-center py-4">No matches — try widening the profile.</div>}
+        {results?.map((r, i) => (
+          <button key={r.id} onClick={() => onSelectPlayer(r)} className="w-full flex items-center justify-between text-sm py-2 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+            <span className="flex items-center gap-2 text-[#EDEDE3] truncate">
+              <span className="text-[#6B8570] w-5">{i + 1}.</span>
+              <Avatar name={r.full_name} photoUrl={r.photo_url} size={26} />
+              <span className="truncate">{r.full_name}</span>
+              <span className="text-[#6B8570] text-xs shrink-0">· {r.club} · Age {r.age}</span>
+            </span>
+            <span className="font-plexmono text-[#E3A857] text-xs shrink-0">Δ{r.match_distance}</span>
           </button>
         ))}
       </div>
@@ -4575,6 +4861,9 @@ function ScoutDashboard() {
   const [leagueReportOpen, setLeagueReportOpen] = useState(false);
   const [bigMatchRadarOpen, setBigMatchRadarOpen] = useState(false);
   const [matchEstimatorOpen, setMatchEstimatorOpen] = useState(false);
+  const [recruitmentBoardOpen, setRecruitmentBoardOpen] = useState(false);
+  const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
+  const [recruitmentPackOpen, setRecruitmentPackOpen] = useState(false);
   const [decliningMinutesOpen, setDecliningMinutesOpen] = useState(false);
   const [advancedSearchOpen, setAdvancedSearchOpen] = useState(false);
   const [deepLinkPlayerId, setDeepLinkPlayerId] = useState(() => new URLSearchParams(window.location.search).get("player"));
@@ -4739,7 +5028,7 @@ function ScoutDashboard() {
   const toggleCompare = (p) => {
     setCompareList(list => {
       if (list.find(x => x.id === p.id)) return list.filter(x => x.id !== p.id);
-      if (list.length >= 2) return list;
+      if (list.length >= 4) return list;  // was >= 2, silently capping compare at 2 despite UI/ComparePanel both supporting up to 4
       return [...list, p];
     });
   };
@@ -4939,6 +5228,8 @@ function ScoutDashboard() {
                             ["📄", "League Report", setLeagueReportOpen],
                             ["⚡", "Big Match Radar", setBigMatchRadarOpen],
                             ["🎲", "Match Estimator", setMatchEstimatorOpen],
+                            ["📋", "Recruitment Board", setRecruitmentBoardOpen],
+                            ["🎯", "Target Profile Search", setTargetProfileSearchOpen],
                             ["🔎", "Advanced Search", setAdvancedSearchOpen],
                           ]},
                           { section: "Scouting Intelligence", items: [
@@ -5451,7 +5742,35 @@ function ScoutDashboard() {
           }}
         />
       )}
-      <CompareBar selected={compareList} onClear={() => setCompareList([])} onCompare={() => setComparing(true)} />
+      <CompareBar
+        selected={compareList}
+        onClear={() => setCompareList([])}
+        onCompare={() => setComparing(true)}
+        onRecruitmentPack={() => setRecruitmentPackOpen(true)}
+      />
+      {recruitmentPackOpen && compareList.length >= 2 && (
+        <RecruitmentPackModal players={compareList} onClose={() => setRecruitmentPackOpen(false)} />
+      )}
+      {recruitmentBoardOpen && (
+        <RecruitmentBoardModal
+          onClose={() => setRecruitmentBoardOpen(false)}
+          onSelectPlayer={(row) => {
+            setRecruitmentBoardOpen(false);
+            if (row.club) setClub(row.club);
+            setDeepLinkPlayerId(String(row.id));
+          }}
+        />
+      )}
+      {targetProfileSearchOpen && (
+        <TargetProfileSearchModal
+          onClose={() => setTargetProfileSearchOpen(false)}
+          onSelectPlayer={(row) => {
+            setTargetProfileSearchOpen(false);
+            if (row.club) setClub(row.club);
+            setDeepLinkPlayerId(String(row.id));
+          }}
+        />
+      )}
       {comparing && compareList.length >= 2 && (
         <ComparePanel players={compareList} onClose={() => setComparing(false)} />
       )}
