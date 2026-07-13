@@ -90,7 +90,12 @@ def run():
         best_start = None
         for c in data:
             for stint in c.get("career", []):
-                if stint.get("end") is None and stint.get("team", {}).get("id") == external_id:
+                # str() on both sides: external_id from our DB is TEXT
+                # ("65"), but API-Football's raw JSON returns team.id as
+                # an integer (65) — comparing them directly as-is is
+                # always False in Python, which is exactly why the
+                # previous run found 0 managers instead of the expected ~365.
+                if stint.get("end") is None and str(stint.get("team", {}).get("id")) == str(external_id):
                     start = stint.get("start")
                     if start and (best_start is None or start > best_start):
                         best_start = start
