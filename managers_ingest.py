@@ -68,12 +68,41 @@ def run():
             no_data += 1
             continue
 
-        coach = data[0]  # current coach — API-Football returns the active one first
-        appointed_date = None
-        for stint in coach.get("career", []):
-            if stint.get("end") is None and stint.get("team", {}).get("id") == external_id:
-                appointed_date = stint.get("start")
-                break
+        # BUG FIX: data[0] is NOT reliably "the current coach" — confirmed
+        # directly against real data. API-Football's /coachs response is
+        # ordered by their internal coach ID (oldest-added first), not by
+        # recency. This searches every coach in the response for whichever
+        # has the LATEST start date among entries genuinely open-ended
+        # (end: null) for THIS team.
+        #
+        # HONEST LIMITATION: for clubs with heavy managerial turnover,
+        # API-Football's own data can show MULTIPLE coaches with end:null
+        # simultaneously for the same team (confirmed directly — happened
+        # for a real club with 5 managers in 12 months) — a genuine data
+        # integrity issue at the source, not something any client-side
+        # heuristic can fully resolve. "Latest start date" is the most
+        # defensible tiebreaker available, not a guarantee of correctness
+        # in every case. A brand-new appointment can also simply be
+        # missing from their coach list entirely for a period after it
+        # happens — re-running this periodically (see OPERATIONS.md) is
+        # how that eventually self-corrects, not a one-time fix.
+        best_coach = None
+        best_start = None
+        for c in data:
+            for stint in c.get("career", []):
+                if stint.get("end") is None and stint.get("team", {}).get("id") == external_id:
+                    start = stint.get("start")
+                    if start and (best_start is None or start > best_start):
+                        best_start = start
+                        best_coach = c
+                    break
+
+        if best_coach is None:
+            no_data += 1
+            continue
+
+        coach = best_coach
+        appointed_date = best_start
 
         with conn.cursor() as cur:
             cur.execute("""
