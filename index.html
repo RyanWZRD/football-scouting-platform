@@ -1576,6 +1576,7 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
   const [manager, setManager] = useState(null);
   const [valueConcentration, setValueConcentration] = useState(null);
   const [partnerships, setPartnerships] = useState(null);
+  const [positionContinuity, setPositionContinuity] = useState(null);
   useEffect(() => {
     if (!API_BASE_URL) return;
     const params = new URLSearchParams({ club: clubName, league: leagueName });
@@ -1607,6 +1608,10 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
       .then(res => res.ok ? res.json() : [])
       .then(data => setPartnerships(data))
       .catch(() => setPartnerships([]));
+    fetch(`${API_BASE_URL}/clubs/position-continuity?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setPositionContinuity(data))
+      .catch(() => setPositionContinuity([]));
   }, [clubName, leagueName]);
 
   return (
@@ -1795,6 +1800,20 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
               <div key={i} className="flex items-center justify-between text-sm py-1.5 border-b border-[#1C2E26]">
                 <span className="text-[#EDEDE3]">{p.p1_name} + {p.p2_name}</span>
                 <span className="text-xs font-plexmono text-[#7FD99A]">{p.win_pct}% win rate <span className="text-[#6B8570]">({p.matches_together} together)</span></span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {positionContinuity?.length > 0 && (
+          <div className="mt-6 border-t border-[#2C4A3B] pt-5">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-3">🛡️ Position-Level Continuity</div>
+            {positionContinuity.map((p, i) => (
+              <div key={i} className="flex items-center justify-between text-sm py-1.5 border-b border-[#1C2E26]">
+                <span className="text-[#EDEDE3]">{p.position_played}</span>
+                <span className="text-xs font-plexmono" style={{ color: p.distinct_starters >= 4 ? "#E36B57" : "#7FD99A" }}>
+                  {p.distinct_starters} different starters
+                </span>
               </div>
             ))}
           </div>
@@ -3398,6 +3417,129 @@ function LeagueStrengthModal({ onClose }) {
               <div className="h-full bg-[#E3A857]" style={{ width: `${(r.avg_potential / maxAvg) * 100}%` }} />
             </div>
           </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HomeAdvantageModal({ onClose, onSelectClub }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/clubs/home-advantage-index?limit=25`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🏠 Home Advantage Index</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Points-per-game at home vs away — some clubs are genuinely transformed at home, others barely notice.
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.map((r, i) => (
+          <button key={r.club} onClick={() => onSelectClub(r)} className="w-full flex items-center justify-between text-sm py-2 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+            <span className="flex items-center gap-2">
+              <span className="text-[#6B8570] w-5">{i + 1}.</span>
+              <span className="text-[#EDEDE3]">{r.club}</span>
+            </span>
+            <span className="text-xs font-plexmono">
+              <span className="text-[#7FD99A]">{r.home_ppg}</span> home
+              <span className="text-[#6B8570] mx-1">vs</span>
+              <span className="text-[#E36B57]">{r.away_ppg}</span> away
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FixtureCongestionModal({ onClose }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/clubs/fixture-congestion?days_ahead=14&limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📅 Fixture Congestion Radar</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Clubs with the most brutal run of games in the next 14 days — a real fatigue-risk signal for squad depth.
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.length === 0 && <div className="text-sm text-[#6B8570]">No clubs currently meet the threshold.</div>}
+        {rows?.map((r, i) => (
+          <div key={r.club} className="flex items-center justify-between text-sm py-2 border-b border-[#1C2E26]">
+            <span className="flex items-center gap-2 text-[#EDEDE3]">
+              <span className="text-[#6B8570] w-5">{i + 1}.</span>
+              {r.club}
+            </span>
+            <span className="text-xs font-plexmono" style={{ color: r.games_per_week >= 2 ? "#E36B57" : "#E3A857" }}>
+              {r.upcoming_matches} games · {r.games_per_week}/week
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SuperSubsModal({ onClose, onSelectPlayer }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/players/super-subs?limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">⚡ Super-Sub Detector</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Players who genuinely produce more per-90 off the bench than starting — a different signal from raw output. Uses minutes &lt; 45 as a reasonable proxy for a sub appearance, not a perfect one.
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.map(r => (
+          <button key={r.id} onClick={() => onSelectPlayer(r)} className="w-full flex items-center justify-between text-sm py-2 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+            <span className="flex items-center gap-2 text-[#EDEDE3] truncate">
+              <Avatar name={r.full_name} photoUrl={r.photo_url} size={26} />
+              <span className="truncate">{r.full_name}</span>
+              <span className="text-[#6B8570] text-xs shrink-0">· {r.club} · {r.sub_apps} sub apps</span>
+            </span>
+            <span className="text-xs font-plexmono shrink-0">
+              <span className="text-[#7FD99A]">{r.sub_ga_per90}</span>
+              <span className="text-[#6B8570] mx-1">vs</span>
+              <span className="text-[#6B8570]">{r.start_ga_per90}</span>
+            </span>
+          </button>
         ))}
       </div>
     </div>
@@ -5034,6 +5176,9 @@ function ScoutDashboard() {
   const [recruitmentBoardOpen, setRecruitmentBoardOpen] = useState(false);
   const [suspensionRiskOpen, setSuspensionRiskOpen] = useState(false);
   const [injuryRecoveryOpen, setInjuryRecoveryOpen] = useState(false);
+  const [homeAdvantageOpen, setHomeAdvantageOpen] = useState(false);
+  const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
+  const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
   const [recruitmentPackOpen, setRecruitmentPackOpen] = useState(false);
   const [decliningMinutesOpen, setDecliningMinutesOpen] = useState(false);
@@ -5403,6 +5548,9 @@ function ScoutDashboard() {
                             ["📋", "Recruitment Board", setRecruitmentBoardOpen],
                             ["🟨", "Suspension Risk", setSuspensionRiskOpen],
                             ["🩹", "Injury Recovery Patterns", setInjuryRecoveryOpen],
+                            ["🏠", "Home Advantage Index", setHomeAdvantageOpen],
+                            ["📅", "Fixture Congestion", setFixtureCongestionOpen],
+                            ["⚡", "Super-Sub Detector", setSuperSubsOpen],
                             ["🎯", "Target Profile Search", setTargetProfileSearchOpen],
                             ["🔎", "Advanced Search", setAdvancedSearchOpen],
                           ]},
@@ -5946,6 +6094,23 @@ function ScoutDashboard() {
         />
       )}
       {injuryRecoveryOpen && <InjuryRecoveryModal onClose={() => setInjuryRecoveryOpen(false)} />}
+      {homeAdvantageOpen && (
+        <HomeAdvantageModal
+          onClose={() => setHomeAdvantageOpen(false)}
+          onSelectClub={(row) => { setHomeAdvantageOpen(false); setClub(row.club); }}
+        />
+      )}
+      {fixtureCongestionOpen && <FixtureCongestionModal onClose={() => setFixtureCongestionOpen(false)} />}
+      {superSubsOpen && (
+        <SuperSubsModal
+          onClose={() => setSuperSubsOpen(false)}
+          onSelectPlayer={(row) => {
+            setSuperSubsOpen(false);
+            if (row.club) setClub(row.club);
+            setDeepLinkPlayerId(String(row.id));
+          }}
+        />
+      )}
       {targetProfileSearchOpen && (
         <TargetProfileSearchModal
           onClose={() => setTargetProfileSearchOpen(false)}
