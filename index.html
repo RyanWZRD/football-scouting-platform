@@ -1623,6 +1623,9 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
                 {manager.nationality}{manager.age ? `, ${manager.age}` : ""}
                 {manager.appointed_date && ` · since ${new Date(manager.appointed_date).toLocaleDateString(undefined, { month: "short", year: "numeric" })}`}
               </div>
+              <div className="text-[10px] text-[#4A5C52] italic mt-0.5">
+                Sourced data — can lag a real appointment, especially at clubs with frequent managerial change. Verify for anything time-sensitive.
+              </div>
             </div>
           </div>
         )}
@@ -3684,6 +3687,77 @@ function UnderdogIndexModal({ onClose, onSelectClub }) {
   );
 }
 
+function WeeklyDigestModal({ onClose, onSelectPlayer }) {
+  const [digest, setDigest] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/digests/latest`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setDigest(data))
+      .catch(() => setDigest(null));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📅 Weekly Digest</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        {digest === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {digest && (
+          <>
+            <div className="text-[10px] text-[#4A5C52] italic mb-4">
+              Generated automatically every Monday · {new Date(digest.generated_at).toLocaleDateString()}
+            </div>
+
+            {digest.content.biggest_movers?.length > 0 && (
+              <div className="mb-5">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">📈 Biggest Movers This Week</div>
+                {digest.content.biggest_movers.map((m, i) => (
+                  <button key={i} onClick={() => onSelectPlayer(m)} className="w-full flex justify-between text-sm py-1.5 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+                    <span className="text-[#EDEDE3]">{m.full_name} <span className="text-[#6B8570] text-xs">· {m.club}</span></span>
+                    <span className="font-plexmono text-[#7FD99A]">+{m.delta}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {digest.content.shortlist_highlights?.length > 0 && (
+              <div className="mb-5">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">⭐ Shortlist Standouts</div>
+                {digest.content.shortlist_highlights.map((s, i) => (
+                  <button key={i} onClick={() => onSelectPlayer(s)} className="w-full flex justify-between text-sm py-1.5 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+                    <span className="text-[#EDEDE3]">{s.full_name} <span className="text-[#6B8570] text-xs">· {s.club}</span></span>
+                    <span className="font-plexmono text-[#E3A857]">{s.rating}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {digest.content.debuts_this_week?.length > 0 && (
+              <div className="mb-5">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🌟 New Debuts This Week</div>
+                {digest.content.debuts_this_week.map((d, i) => (
+                  <button key={i} onClick={() => onSelectPlayer(d)} className="w-full text-sm py-1.5 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+                    <span className="text-[#EDEDE3]">{d.full_name} <span className="text-[#6B8570] text-xs">· {d.club}</span></span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {!digest.content.biggest_movers?.length && !digest.content.shortlist_highlights?.length && !digest.content.debuts_this_week?.length && (
+              <div className="text-sm text-[#6B8570] text-center py-4">Nothing notable this week.</div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PipelineHealthModal({ onClose }) {
   const [health, setHealth] = useState(null);
 
@@ -4438,6 +4512,7 @@ function ScoutDashboard() {
   const [transferCentreOpen, setTransferCentreOpen] = useState(false);
   const [underdogIndexOpen, setUnderdogIndexOpen] = useState(false);
   const [pipelineHealthOpen, setPipelineHealthOpen] = useState(false);
+  const [weeklyDigestOpen, setWeeklyDigestOpen] = useState(false);
   const [positionScarcityOpen, setPositionScarcityOpen] = useState(false);
   const [rebuildRadarOpen, setRebuildRadarOpen] = useState(false);
   const [leagueReportOpen, setLeagueReportOpen] = useState(false);
@@ -4824,6 +4899,7 @@ function ScoutDashboard() {
                           { section: "Live & Operations", items: [
                             ["🔄", "Transfer Centre", setTransferCentreOpen],
                             ["🩺", "Pipeline Health", setPipelineHealthOpen],
+                            ["📅", "Weekly Digest", setWeeklyDigestOpen],
                           ]},
                         ].map(group => (
                           <div key={group.section}>
@@ -5274,6 +5350,16 @@ function ScoutDashboard() {
         />
       )}
       {pipelineHealthOpen && <PipelineHealthModal onClose={() => setPipelineHealthOpen(false)} />}
+      {weeklyDigestOpen && (
+        <WeeklyDigestModal
+          onClose={() => setWeeklyDigestOpen(false)}
+          onSelectPlayer={(row) => {
+            setWeeklyDigestOpen(false);
+            if (row.club) setClub(row.club);
+            setDeepLinkPlayerId(String(row.id || row.player_id));
+          }}
+        />
+      )}
       {positionScarcityOpen && <PositionScarcityModal onClose={() => setPositionScarcityOpen(false)} />}
       {rebuildRadarOpen && (
         <RebuildRadarModal
