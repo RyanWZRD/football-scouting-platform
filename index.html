@@ -3423,6 +3423,68 @@ function LeagueStrengthModal({ onClose }) {
   );
 }
 
+function DataQualityModal({ onClose }) {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/admin/data-quality`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setData(d))
+      .catch(() => setData(null));
+  }, []);
+
+  const labels = {
+    missing_age: "Missing Age", missing_position: "Missing Position",
+    missing_nationality: "Missing Nationality", missing_photo: "Missing Photo",
+    zero_match_stats: "Zero Match Stats", unscored: "Never Scored", stale_clubs: "Stale Clubs (30d+)",
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-lg w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📋 Data Quality Dashboard</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Where the real gaps are — tells you where to focus future backfill effort, not something to fix right now.
+        </div>
+
+        {data === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {data && (
+          <>
+            <div className="grid grid-cols-2 gap-4 mb-6 border border-[#2C4A3B] p-4">
+              <div>
+                <div className="text-2xl font-bold text-[#EDEDE3] font-plexmono">{data.total_players}</div>
+                <div className="text-[10px] text-[#6B8570] uppercase tracking-wide mt-1">Total Players</div>
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-[#EDEDE3] font-plexmono">{data.total_clubs}</div>
+                <div className="text-[10px] text-[#6B8570] uppercase tracking-wide mt-1">Total Clubs</div>
+              </div>
+            </div>
+
+            {Object.entries(data.gaps).map(([key, g]) => (
+              <div key={key} className="mb-2.5">
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="text-[#EDEDE3]">{labels[key]}</span>
+                  <span className="font-plexmono" style={{ color: g.pct >= 10 ? "#E36B57" : g.pct >= 3 ? "#E3A857" : "#7FD99A" }}>
+                    {g.count} ({g.pct}%)
+                  </span>
+                </div>
+                <div className="h-1.5 bg-[#152922]">
+                  <div className="h-full" style={{ width: `${Math.min(100, g.pct)}%`, background: g.pct >= 10 ? "#E36B57" : g.pct >= 3 ? "#E3A857" : "#7FD99A" }} />
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function HomeAdvantageModal({ onClose, onSelectClub }) {
   const [rows, setRows] = useState(null);
 
@@ -5177,6 +5239,7 @@ function ScoutDashboard() {
   const [suspensionRiskOpen, setSuspensionRiskOpen] = useState(false);
   const [injuryRecoveryOpen, setInjuryRecoveryOpen] = useState(false);
   const [homeAdvantageOpen, setHomeAdvantageOpen] = useState(false);
+  const [dataQualityOpen, setDataQualityOpen] = useState(false);
   const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
   const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
@@ -5571,6 +5634,7 @@ function ScoutDashboard() {
                           { section: "Live & Operations", items: [
                             ["🔄", "Transfer Centre", setTransferCentreOpen],
                             ["🩺", "Pipeline Health", setPipelineHealthOpen],
+                            ["📋", "Data Quality", setDataQualityOpen],
                             ["📅", "Weekly Digest", setWeeklyDigestOpen],
                           ]},
                         ].map(group => (
@@ -6022,6 +6086,7 @@ function ScoutDashboard() {
         />
       )}
       {pipelineHealthOpen && <PipelineHealthModal onClose={() => setPipelineHealthOpen(false)} />}
+      {dataQualityOpen && <DataQualityModal onClose={() => setDataQualityOpen(false)} />}
       {weeklyDigestOpen && (
         <WeeklyDigestModal
           onClose={() => setWeeklyDigestOpen(false)}
