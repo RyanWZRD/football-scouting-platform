@@ -1065,6 +1065,91 @@ def fixture_estimates(league: str, limit: int = Query(10, le=30), authorized: bo
     return results
 
 
+@app.get("/players/target-search")
+def target_profile_search(
+    position: str,
+    goals_p90: Optional[float] = None,
+    assists_p90: Optional[float] = None,
+    key_passes_p90: Optional[float] = None,
+    defensive_p90: Optional[float] = None,
+    take_ons_p90: Optional[float] = None,
+    pass_acc: Optional[float] = None,
+    age_max: Optional[int] = None,
+    limit: int = Query(15, le=50),
+    authorized: bool = Depends(check_api_key),
+):
+    """Define exactly what you're looking for, find real players closest
+    to it — the reverse of every other search on this platform, which
+    starts from an existing player or a leaderboard. Mirrors a real
+    recruitment brief: 'we need a right-back with X, Y, Z profile,' not
+    'show me players like this one guy.' Uses the same z-score
+    normalization approach already verified correct in Tactical Fit —
+    only dimensions you actually specify count toward the match."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club, p.date_of_birth,
+                   SUM(goals) * 90.0 / NULLIF(SUM(minutes_played), 0) AS goals_p90,
+                   SUM(assists) * 90.0 / NULLIF(SUM(minutes_played), 0) AS assists_p90,
+                   SUM(key_passes) * 90.0 / NULLIF(SUM(minutes_played), 0) AS key_passes_p90,
+                   SUM(tackles + interceptions) * 90.0 / NULLIF(SUM(minutes_played), 0) AS defensive_p90,
+                   SUM(take_ons_attempted) * 90.0 / NULLIF(SUM(minutes_played), 0) AS take_ons_p90,
+                   AVG(NULLIF(passes_completed, 0)::float / NULLIF(passes_attempted, 0)) * 100 AS pass_acc
+            FROM player_match_stats pms
+            JOIN players p ON p.id = pms.player_id
+            LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            WHERE p.primary_position = %s
+            GROUP BY p.id, p.full_name, p.photo_url, cl.name, p.date_of_birth
+            HAVING SUM(minutes_played) >= 450
+        """, (position,))
+        candidates = cur.fetchall()
+    conn.close()
+
+    target = {
+        "goals_p90": goals_p90, "assists_p90": assists_p90, "key_passes_p90": key_passes_p90,
+        "defensive_p90": defensive_p90, "take_ons_p90": take_ons_p90, "pass_acc": pass_acc,
+    }
+    active_dims = {k: v for k, v in target.items() if v is not None}
+    if not active_dims:
+        raise HTTPException(status_code=400, detail="Specify at least one target stat to search for.")
+
+    # z-score normalize each active dimension across the real candidate
+    # pool, same reasoning as Tactical Fit: raw stat scales differ wildly
+    # (pass_acc ~0-100, goals_p90 ~0-1), so without normalizing, whichever
+    # dimension happens to have the largest raw numbers would dominate
+    # the distance calculation regardless of how meaningful a given gap
+    # actually is.
+    stats = {}
+    for dim in active_dims:
+        vals = [c[dim] for c in candidates if c[dim] is not None]
+        mean = sum(vals) / len(vals) if vals else 0
+        std = ((sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5) if vals else 1
+        stats[dim] = (mean, std or 1)
+
+    scored = []
+    now = datetime.now().date()
+    for c in candidates:
+        age = (now - c["date_of_birth"]).days / 365.25 if c["date_of_birth"] else None
+        if age_max is not None and (age is None or age > age_max):
+            continue
+
+        distance_sq = 0
+        for dim, target_val in active_dims.items():
+            val = c[dim] if c[dim] is not None else 0
+            mean, std = stats[dim]
+            distance_sq += ((val - target_val) / std) ** 2
+        distance = distance_sq ** 0.5
+
+        scored.append({
+            "id": c["id"], "full_name": c["full_name"], "photo_url": c["photo_url"],
+            "club": c["club"], "age": round(age, 1) if age else None,
+            "match_distance": round(distance, 2),
+        })
+
+    scored.sort(key=lambda r: r["match_distance"])
+    return scored[:limit]
+
+
 @app.get("/clubs/tactical-fit")
 def tactical_fit(club: str, league: str, limit: int = Query(10, le=30), authorized: bool = Depends(check_api_key)):
     """Infers a club's real playing style from their own squad's average
@@ -2721,6 +2806,7 @@ def list_players(
     youth_only: bool = False,
     season: Optional[str] = None,
     limit: int = Query(50, le=5000),
+    format: str = Query("json", enum=["json", "csv"]),
     authorized: bool = Depends(check_api_key),
 ):
     conn = get_conn()
@@ -2879,6 +2965,23 @@ def list_players(
         cur.execute(base_query, params)
         rows = cur.fetchall()
     conn.close()
+
+    if format == "csv":
+        import csv
+        import io
+        from fastapi.responses import StreamingResponse
+        output = io.StringIO()
+        if rows:
+            writer = csv.DictWriter(output, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=players_export.csv"},
+        )
+
     return rows
 
 
