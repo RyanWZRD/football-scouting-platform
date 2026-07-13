@@ -2385,6 +2385,150 @@ def injury_recovery_patterns(limit: int = Query(20, le=50), authorized: bool = D
     return rows
 
 
+@app.get("/clubs/home-advantage-index")
+def home_advantage_index(limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
+    """Which clubs genuinely benefit most from home advantage, and which
+    barely notice the difference — using points-per-game home vs away,
+    a real signal not derivable from any single existing view. Requires
+    3+ matches in both home and away to appear, avoiding a misleading
+    read from a tiny sample."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH home_results AS (
+                SELECT home_club_id AS club_id,
+                    CASE WHEN home_score > away_score THEN 3 WHEN home_score = away_score THEN 1 ELSE 0 END AS pts
+                FROM matches WHERE status = 'finished'
+            ),
+            away_results AS (
+                SELECT away_club_id AS club_id,
+                    CASE WHEN away_score > home_score THEN 3 WHEN away_score = home_score THEN 1 ELSE 0 END AS pts
+                FROM matches WHERE status = 'finished'
+            ),
+            home_agg AS (
+                SELECT club_id, AVG(pts) AS home_ppg, COUNT(*) AS home_matches
+                FROM home_results GROUP BY club_id HAVING COUNT(*) >= 3
+            ),
+            away_agg AS (
+                SELECT club_id, AVG(pts) AS away_ppg, COUNT(*) AS away_matches
+                FROM away_results GROUP BY club_id HAVING COUNT(*) >= 3
+            )
+            SELECT cl.name AS club,
+                   ROUND(h.home_ppg::numeric, 2) AS home_ppg, ROUND(a.away_ppg::numeric, 2) AS away_ppg,
+                   ROUND((h.home_ppg - a.away_ppg)::numeric, 2) AS home_advantage_gap,
+                   h.home_matches, a.away_matches
+            FROM home_agg h
+            JOIN away_agg a ON a.club_id = h.club_id
+            JOIN clubs cl ON cl.id = h.club_id
+            ORDER BY home_advantage_gap DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/clubs/fixture-congestion")
+def fixture_congestion(days_ahead: int = Query(14, le=30), limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
+    """Which clubs have the most brutal run of upcoming games — a real
+    fatigue-risk signal for assessing squad depth. Games-per-week
+    density, not just a raw count, so a 14-day window is comparable
+    regardless of how many fixtures happen to be scheduled that far out."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT cl.name AS club, COUNT(*) AS upcoming_matches,
+                   ROUND(COUNT(*) * 7.0 / %s, 2) AS games_per_week
+            FROM matches m
+            JOIN clubs cl ON cl.id = m.home_club_id OR cl.id = m.away_club_id
+            WHERE m.status = 'scheduled'
+              AND m.match_date BETWEEN now() AND now() + (%s || ' days')::interval
+            GROUP BY cl.name
+            HAVING COUNT(*) >= 2
+            ORDER BY upcoming_matches DESC
+            LIMIT %s
+        """, (days_ahead, days_ahead, limit))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/players/super-subs")
+def super_subs(limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
+    """Distinguishes 'great starter' from 'great impact player' — using
+    minutes_played < 45 as a proxy for a substitute appearance (not
+    perfect; could occasionally be an early substitution off rather than
+    on, but a reasonable approximation given the data available).
+    Flags players whose goal+assist output per-90 is genuinely higher
+    coming off the bench than when starting — a real, different signal
+    from raw output. Requires 5+ sub appearances to appear, avoiding a
+    misleading read from 1-2 cameos."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH split_stats AS (
+                SELECT pms.player_id,
+                    SUM(goals + assists) FILTER (WHERE minutes_played < 45) AS sub_ga,
+                    SUM(minutes_played) FILTER (WHERE minutes_played < 45) AS sub_minutes,
+                    COUNT(*) FILTER (WHERE minutes_played < 45) AS sub_apps,
+                    SUM(goals + assists) FILTER (WHERE minutes_played >= 45) AS start_ga,
+                    SUM(minutes_played) FILTER (WHERE minutes_played >= 45) AS start_minutes
+                FROM player_match_stats pms
+                GROUP BY pms.player_id
+                HAVING COUNT(*) FILTER (WHERE minutes_played < 45) >= 5
+                   AND SUM(minutes_played) FILTER (WHERE minutes_played < 45) > 0
+            )
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club,
+                   s.sub_apps,
+                   ROUND((s.sub_ga * 90.0 / NULLIF(s.sub_minutes, 0))::numeric, 2) AS sub_ga_per90,
+                   ROUND((COALESCE(s.start_ga, 0) * 90.0 / NULLIF(s.start_minutes, 0))::numeric, 2) AS start_ga_per90
+            FROM split_stats s
+            JOIN players p ON p.id = s.player_id
+            LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            WHERE (s.sub_ga * 90.0 / NULLIF(s.sub_minutes, 0)) > COALESCE((s.start_ga * 90.0 / NULLIF(s.start_minutes, 0)), 0)
+            ORDER BY sub_ga_per90 DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/clubs/position-continuity")
+def position_continuity(club: str, league: str, authorized: bool = Depends(check_api_key)):
+    """Extends club-level Squad Continuity down to individual position
+    groups — '5 different starting centre-backs this season' is a real
+    stability signal that club-wide churn numbers alone completely miss.
+    Uses position_played (per-match, real lineup data), not
+    primary_position, since this is about who's actually filled a role,
+    not their generic listed position."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        cur.execute("""
+            SELECT pms.position_played, COUNT(DISTINCT pms.player_id) AS distinct_starters
+            FROM player_match_stats pms
+            JOIN clubs cl ON cl.id = pms.club_id
+            WHERE cl.name = %s AND cl.league_id = %s
+              AND pms.position_played IS NOT NULL AND pms.minutes_played >= 45
+            GROUP BY pms.position_played
+            ORDER BY distinct_starters DESC
+        """, (club, league_id))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 @app.get("/transfers")
 def recent_transfers(limit: int = Query(20, le=100), authorized: bool = Depends(check_api_key)):
     """Recent club changes, detected automatically by a database trigger
