@@ -3391,6 +3391,63 @@ function LeagueReportCard({ league, report, forwardedRef }) {
   );
 }
 
+function MatchEstimatorModal({ allLeagueOptions, onClose }) {
+  const [league, setLeague] = useState("");
+  const [estimates, setEstimates] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !league) { setEstimates(null); return; }
+    setEstimates(null);
+    const params = new URLSearchParams({ league, limit: "10" });
+    fetch(`${API_BASE_URL}/fixtures/estimate?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setEstimates(data))
+      .catch(() => setEstimates([]));
+  }, [league]);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🎲 Match Outcome Estimator</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Not a betting tool — a transparent, rule-based estimate from squad quality + recent form + home advantage. Doesn't account for injuries, tactics, or form-on-the-day.
+        </div>
+
+        <select value={league} onChange={e => setLeague(e.target.value)}
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm outline-none text-[#EDEDE3] mb-4">
+          <option value="">Select a league...</option>
+          {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+
+        {league && estimates === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {estimates?.length === 0 && <div className="text-sm text-[#6B8570]">No upcoming fixtures with enough data to estimate.</div>}
+        {estimates?.map(m => (
+          <div key={m.id} className="py-3 border-b border-[#1C2E26]">
+            <div className="flex justify-between text-sm text-[#EDEDE3] mb-1">
+              <span>{m.home_club}</span>
+              <span className="text-[#6B8570] text-xs">{new Date(m.match_date).toLocaleDateString()}</span>
+              <span>{m.away_club}</span>
+            </div>
+            <div className="flex h-2 w-full overflow-hidden">
+              <div style={{ width: `${m.home_win_pct}%`, background: "#E3A857" }} />
+              <div style={{ width: `${m.draw_pct}%`, background: "#6B8570" }} />
+              <div style={{ width: `${m.away_win_pct}%`, background: "#7FA8D9" }} />
+            </div>
+            <div className="flex justify-between text-[10px] text-[#6B8570] mt-1 font-plexmono">
+              <span>{m.home_win_pct}%</span>
+              <span>{m.draw_pct}% draw</span>
+              <span>{m.away_win_pct}%</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function BigMatchRadarModal({ onClose }) {
   const [rows, setRows] = useState(null);
 
@@ -4517,6 +4574,7 @@ function ScoutDashboard() {
   const [rebuildRadarOpen, setRebuildRadarOpen] = useState(false);
   const [leagueReportOpen, setLeagueReportOpen] = useState(false);
   const [bigMatchRadarOpen, setBigMatchRadarOpen] = useState(false);
+  const [matchEstimatorOpen, setMatchEstimatorOpen] = useState(false);
   const [decliningMinutesOpen, setDecliningMinutesOpen] = useState(false);
   const [advancedSearchOpen, setAdvancedSearchOpen] = useState(false);
   const [deepLinkPlayerId, setDeepLinkPlayerId] = useState(() => new URLSearchParams(window.location.search).get("player"));
@@ -4880,6 +4938,7 @@ function ScoutDashboard() {
                             ["📈", "Table Predictor", setTablePredictorOpen],
                             ["📄", "League Report", setLeagueReportOpen],
                             ["⚡", "Big Match Radar", setBigMatchRadarOpen],
+                            ["🎲", "Match Estimator", setMatchEstimatorOpen],
                             ["🔎", "Advanced Search", setAdvancedSearchOpen],
                           ]},
                           { section: "Scouting Intelligence", items: [
@@ -5369,6 +5428,7 @@ function ScoutDashboard() {
       )}
       {leagueReportOpen && <LeagueReportModal allLeagueOptions={allLeagueOptions} onClose={() => setLeagueReportOpen(false)} />}
       {bigMatchRadarOpen && <BigMatchRadarModal onClose={() => setBigMatchRadarOpen(false)} />}
+      {matchEstimatorOpen && <MatchEstimatorModal allLeagueOptions={allLeagueOptions} onClose={() => setMatchEstimatorOpen(false)} />}
       {decliningMinutesOpen && (
         <DecliningMinutesModal
           onClose={() => setDecliningMinutesOpen(false)}
