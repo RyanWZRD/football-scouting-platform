@@ -1037,6 +1037,34 @@ def declining_minutes(limit: int = Query(15, le=50), authorized: bool = Depends(
     return results
 
 
+@app.get("/players/suspension-risk")
+def suspension_risk(limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
+    """Players approaching a real suspension threshold. HONEST CAVEAT:
+    exact accumulation rules genuinely vary by competition (5 yellows in
+    the first ~19 games is common across many European leagues, but not
+    universal) — this uses that commonly-cited 5-card threshold as a
+    reasonable approximation, not a guarantee of the exact rule in every
+    specific league. Useful as an early-warning signal, not a certainty."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club,
+                   SUM(pms.yellow_cards) AS yellow_cards, SUM(pms.red_cards) AS red_cards
+            FROM player_match_stats pms
+            JOIN players p ON p.id = pms.player_id
+            LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            GROUP BY p.id, p.full_name, p.photo_url, cl.name
+            HAVING SUM(pms.yellow_cards) >= 4
+            ORDER BY SUM(pms.yellow_cards) DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    for r in rows:
+        r["cards_from_suspension"] = max(0, 5 - r["yellow_cards"])
+    return rows
+
+
 @app.get("/fixtures/estimate")
 def fixture_estimates(league: str, limit: int = Query(10, le=30), authorized: bool = Depends(check_api_key)):
     """Illustrative outcome estimates for upcoming fixtures — combines
@@ -2146,6 +2174,54 @@ def squad_balance(club: str, league: str, authorized: bool = Depends(check_api_k
     return result
 
 
+@app.get("/clubs/value-concentration")
+def value_concentration(club: str, league: str, authorized: bool = Depends(check_api_key)):
+    """What share of a club's total squad quality comes from just their
+    top 2-3 players versus everyone else — a real over-reliance signal.
+    A club heavily dependent on one or two players is more vulnerable
+    (an injury or departure hits much harder), and may also be more
+    motivated to sell if the fee's right, or need immediate depth."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        cur.execute("""
+            SELECT p.full_name, pps.potential_index
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE cl.name = %s AND cl.league_id = %s
+            ORDER BY pps.potential_index DESC
+        """, (club, league_id))
+        squad = cur.fetchall()
+    conn.close()
+
+    if len(squad) < 5:
+        return {"squad_size": len(squad), "message": "Not enough scored players to compute this meaningfully."}
+
+    total = sum(p["potential_index"] for p in squad)
+    top3 = squad[:3]
+    top3_sum = sum(p["potential_index"] for p in top3)
+
+    return {
+        "squad_size": len(squad),
+        "top3_players": [{"full_name": p["full_name"], "potential_index": round(p["potential_index"], 1)} for p in top3],
+        "top3_share_pct": round((top3_sum / total) * 100, 1) if total > 0 else None,
+    }
+
+
 @app.get("/leagues/table-predictor")
 def table_predictor(league: str, authorized: bool = Depends(check_api_key)):
     """An illustrative alternate table ranked purely by squad quality
@@ -2210,6 +2286,103 @@ def table_predictor(league: str, authorized: bool = Depends(check_api_key)):
             "delta": (real_pos - (i + 1)) if real_pos else None,  # positive = overperforming their squad quality
         })
     return result
+
+
+@app.get("/clubs/partnerships")
+def playing_partnerships(club: str, league: str, limit: int = Query(10, le=30), authorized: bool = Depends(check_api_key)):
+    """Which specific pairs of players consistently start together, and
+    how the club performs in those matches — genuinely novel tactical
+    intelligence pure box-score stats never surface. Not 'who's good,'
+    but 'who's good together.' Requires 5+ shared appearances to appear,
+    avoiding a misleading read from a tiny, coincidental sample."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        cur.execute("""
+            WITH club_appearances AS (
+                SELECT pms.player_id, pms.match_id, p.full_name
+                FROM player_match_stats pms
+                JOIN players p ON p.id = pms.player_id
+                JOIN clubs cl ON cl.id = pms.club_id
+                WHERE cl.name = %s AND cl.league_id = %s AND pms.minutes_played >= 45
+            ),
+            pairs AS (
+                SELECT a.player_id AS p1_id, a.full_name AS p1_name,
+                       b.player_id AS p2_id, b.full_name AS p2_name,
+                       a.match_id
+                FROM club_appearances a
+                JOIN club_appearances b ON a.match_id = b.match_id AND a.player_id < b.player_id
+            ),
+            pair_results AS (
+                SELECT pr.p1_id, pr.p1_name, pr.p2_id, pr.p2_name, pr.match_id,
+                       CASE
+                           WHEN m.home_club_id = (SELECT id FROM clubs WHERE name = %s AND league_id = %s)
+                               THEN CASE WHEN m.home_score > m.away_score THEN 1 ELSE 0 END
+                           ELSE CASE WHEN m.away_score > m.home_score THEN 1 ELSE 0 END
+                       END AS won
+                FROM pairs pr
+                JOIN matches m ON m.id = pr.match_id AND m.status = 'finished'
+            )
+            SELECT p1_name, p2_name, COUNT(*) AS matches_together, SUM(won) AS wins,
+                   ROUND(100.0 * SUM(won) / COUNT(*), 1) AS win_pct
+            FROM pair_results
+            GROUP BY p1_name, p2_name
+            HAVING COUNT(*) >= 5
+            ORDER BY win_pct DESC, matches_together DESC
+            LIMIT %s
+        """, (club, league_id, club, league_id, limit))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/players/injury-recovery-patterns")
+def injury_recovery_patterns(limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
+    """Average time between an injury report and a player's next real
+    match appearance, grouped by injury type — a genuine risk-assessment
+    signal computed entirely from data already ingested. HONEST CAVEAT:
+    this infers 'recovery time' from the gap to next appearance, which
+    isn't the same as official recovery time (a player could be fit but
+    an unused substitute for a while, or the 'next appearance' could
+    belong to a different injury spell entirely) — a reasonable proxy,
+    not a clinical timeline. Requires 5+ recorded instances of an injury
+    type to appear, avoiding a misleading read from 1-2 cases."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH next_appearance AS (
+                SELECT pi.id AS injury_id, pi.player_id, pi.injury_type, pi.reported_date,
+                       MIN(m.match_date) AS next_match_date
+                FROM player_injuries pi
+                LEFT JOIN player_match_stats pms ON pms.player_id = pi.player_id
+                LEFT JOIN matches m ON m.id = pms.match_id
+                    AND m.match_date > pi.reported_date AND pms.minutes_played > 0 AND m.status = 'finished'
+                WHERE pi.injury_type IS NOT NULL AND pi.reported_date IS NOT NULL
+                GROUP BY pi.id, pi.player_id, pi.injury_type, pi.reported_date
+            )
+            SELECT injury_type,
+                   COUNT(*) AS recorded_instances,
+                   ROUND(AVG(EXTRACT(DAY FROM (next_match_date - reported_date::timestamptz)))) AS avg_days_to_next_appearance
+            FROM next_appearance
+            WHERE next_match_date IS NOT NULL
+            GROUP BY injury_type
+            HAVING COUNT(*) >= 5
+            ORDER BY avg_days_to_next_appearance DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
 
 
 @app.get("/transfers")
