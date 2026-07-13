@@ -2529,6 +2529,60 @@ def position_continuity(club: str, league: str, authorized: bool = Depends(check
     return rows
 
 
+@app.get("/admin/data-quality")
+def data_quality_dashboard(authorized: bool = Depends(check_api_key)):
+    """A practical, operational view of where data gaps actually are —
+    doesn't add analysis, just tells you exactly where to focus future
+    backfill effort instead of guessing. Pure database queries, zero
+    API-Football quota cost."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS total FROM players")
+        total_players = cur.fetchone()["total"]
+
+        cur.execute("SELECT COUNT(*) AS n FROM players WHERE date_of_birth IS NULL")
+        missing_age = cur.fetchone()["n"]
+
+        cur.execute("SELECT COUNT(*) AS n FROM players WHERE primary_position IS NULL")
+        missing_position = cur.fetchone()["n"]
+
+        cur.execute("SELECT COUNT(*) AS n FROM players WHERE nationality_id IS NULL")
+        missing_nationality = cur.fetchone()["n"]
+
+        cur.execute("SELECT COUNT(*) AS n FROM players WHERE photo_url IS NULL")
+        missing_photo = cur.fetchone()["n"]
+
+        cur.execute("""
+            SELECT COUNT(*) AS n FROM players p
+            WHERE NOT EXISTS (SELECT 1 FROM player_match_stats pms WHERE pms.player_id = p.id)
+        """)
+        zero_match_stats = cur.fetchone()["n"]
+
+        cur.execute("SELECT COUNT(*) AS n FROM players p WHERE NOT EXISTS (SELECT 1 FROM player_potential_scores pps WHERE pps.player_id = p.id)")
+        unscored = cur.fetchone()["n"]
+
+        cur.execute("SELECT COUNT(*) AS total FROM clubs")
+        total_clubs = cur.fetchone()["total"]
+
+        cur.execute("SELECT COUNT(*) AS n FROM clubs WHERE last_confirmed_at IS NULL OR last_confirmed_at < now() - interval '30 days'")
+        stale_clubs = cur.fetchone()["n"]
+
+    conn.close()
+    return {
+        "total_players": total_players,
+        "total_clubs": total_clubs,
+        "gaps": {
+            "missing_age": {"count": missing_age, "pct": round(100 * missing_age / total_players, 1) if total_players else 0},
+            "missing_position": {"count": missing_position, "pct": round(100 * missing_position / total_players, 1) if total_players else 0},
+            "missing_nationality": {"count": missing_nationality, "pct": round(100 * missing_nationality / total_players, 1) if total_players else 0},
+            "missing_photo": {"count": missing_photo, "pct": round(100 * missing_photo / total_players, 1) if total_players else 0},
+            "zero_match_stats": {"count": zero_match_stats, "pct": round(100 * zero_match_stats / total_players, 1) if total_players else 0},
+            "unscored": {"count": unscored, "pct": round(100 * unscored / total_players, 1) if total_players else 0},
+            "stale_clubs": {"count": stale_clubs, "pct": round(100 * stale_clubs / total_clubs, 1) if total_clubs else 0},
+        },
+    }
+
+
 @app.get("/transfers")
 def recent_transfers(limit: int = Query(20, le=100), authorized: bool = Depends(check_api_key)):
     """Recent club changes, detected automatically by a database trigger
