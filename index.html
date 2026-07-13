@@ -1574,6 +1574,8 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
   const [tacticalFit, setTacticalFit] = useState(null);
   const [balance, setBalance] = useState(null);
   const [manager, setManager] = useState(null);
+  const [valueConcentration, setValueConcentration] = useState(null);
+  const [partnerships, setPartnerships] = useState(null);
   useEffect(() => {
     if (!API_BASE_URL) return;
     const params = new URLSearchParams({ club: clubName, league: leagueName });
@@ -1597,6 +1599,14 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
       .then(res => res.ok ? res.json() : null)
       .then(data => setManager(data))
       .catch(() => setManager(null));
+    fetch(`${API_BASE_URL}/clubs/value-concentration?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setValueConcentration(data))
+      .catch(() => setValueConcentration(null));
+    fetch(`${API_BASE_URL}/clubs/partnerships?${params.toString()}&limit=8`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setPartnerships(data))
+      .catch(() => setPartnerships([]));
   }, [clubName, leagueName]);
 
   return (
@@ -1760,6 +1770,31 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
                   {data.balanced ? "✓ Balanced" : "⚠ Lopsided"}
                   <span className="text-[#6B8570] ml-2">({Object.entries(data.archetype_breakdown).map(([a, n]) => `${a} ×${n}`).join(", ")})</span>
                 </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {valueConcentration?.top3_share_pct != null && (
+          <div className="mt-6 border-t border-[#2C4A3B] pt-5">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">📊 Squad Value Concentration</div>
+            <div className="text-sm text-[#EDEDE3] mb-2">
+              Top 3 players account for <span className="font-plexmono text-[#E3A857]">{valueConcentration.top3_share_pct}%</span> of total squad quality
+              {valueConcentration.top3_share_pct >= 40 && <span className="text-[#E36B57] text-xs ml-2">⚠ high reliance</span>}
+            </div>
+            <div className="text-xs text-[#6B8570]">
+              {valueConcentration.top3_players.map(p => p.full_name).join(", ")}
+            </div>
+          </div>
+        )}
+
+        {partnerships?.length > 0 && (
+          <div className="mt-6 border-t border-[#2C4A3B] pt-5">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-3">🤝 Best Playing Partnerships</div>
+            {partnerships.map((p, i) => (
+              <div key={i} className="flex items-center justify-between text-sm py-1.5 border-b border-[#1C2E26]">
+                <span className="text-[#EDEDE3]">{p.p1_name} + {p.p2_name}</span>
+                <span className="text-xs font-plexmono text-[#7FD99A]">{p.win_pct}% win rate <span className="text-[#6B8570]">({p.matches_together} together)</span></span>
               </div>
             ))}
           </div>
@@ -3369,6 +3404,83 @@ function LeagueStrengthModal({ onClose }) {
   );
 }
 
+function SuspensionRiskModal({ onClose, onSelectPlayer }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/players/suspension-risk?limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🟨 Suspension Risk</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Uses the commonly-cited 5-yellow threshold as a reasonable approximation — exact suspension rules genuinely vary by competition. An early-warning signal, not a guarantee.
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.map(r => (
+          <button key={r.id} onClick={() => onSelectPlayer(r)} className="w-full flex items-center justify-between text-sm py-2 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+            <span className="flex items-center gap-2 text-[#EDEDE3] truncate">
+              <Avatar name={r.full_name} photoUrl={r.photo_url} size={26} />
+              <span className="truncate">{r.full_name}</span>
+              <span className="text-[#6B8570] text-xs shrink-0">· {r.club}</span>
+            </span>
+            <span className="text-xs shrink-0 font-plexmono" style={{ color: r.cards_from_suspension <= 1 ? "#E36B57" : "#E3A857" }}>
+              {r.yellow_cards} 🟨 · {r.cards_from_suspension} away
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function InjuryRecoveryModal({ onClose }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/players/injury-recovery-patterns?limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🩹 Injury Recovery Patterns</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Average gap between injury report and next real match appearance — a reasonable proxy, not an official clinical recovery timeline. A player could be fit but an unused substitute for a while.
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.length === 0 && <div className="text-sm text-[#6B8570]">Not enough recorded instances yet to show meaningful patterns.</div>}
+        {rows?.map((r, i) => (
+          <div key={i} className="flex items-center justify-between text-sm py-2 border-b border-[#1C2E26]">
+            <span className="text-[#EDEDE3]">{r.injury_type}</span>
+            <span className="text-xs font-plexmono text-[#E3A857]">
+              ~{r.avg_days_to_next_appearance} days <span className="text-[#6B8570]">({r.recorded_instances} cases)</span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function PositionScarcityModal({ onClose }) {
   const [rows, setRows] = useState(null);
 
@@ -4920,6 +5032,8 @@ function ScoutDashboard() {
   const [bigMatchRadarOpen, setBigMatchRadarOpen] = useState(false);
   const [matchEstimatorOpen, setMatchEstimatorOpen] = useState(false);
   const [recruitmentBoardOpen, setRecruitmentBoardOpen] = useState(false);
+  const [suspensionRiskOpen, setSuspensionRiskOpen] = useState(false);
+  const [injuryRecoveryOpen, setInjuryRecoveryOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
   const [recruitmentPackOpen, setRecruitmentPackOpen] = useState(false);
   const [decliningMinutesOpen, setDecliningMinutesOpen] = useState(false);
@@ -5287,6 +5401,8 @@ function ScoutDashboard() {
                             ["⚡", "Big Match Radar", setBigMatchRadarOpen],
                             ["🎲", "Match Estimator", setMatchEstimatorOpen],
                             ["📋", "Recruitment Board", setRecruitmentBoardOpen],
+                            ["🟨", "Suspension Risk", setSuspensionRiskOpen],
+                            ["🩹", "Injury Recovery Patterns", setInjuryRecoveryOpen],
                             ["🎯", "Target Profile Search", setTargetProfileSearchOpen],
                             ["🔎", "Advanced Search", setAdvancedSearchOpen],
                           ]},
@@ -5819,6 +5935,17 @@ function ScoutDashboard() {
           }}
         />
       )}
+      {suspensionRiskOpen && (
+        <SuspensionRiskModal
+          onClose={() => setSuspensionRiskOpen(false)}
+          onSelectPlayer={(row) => {
+            setSuspensionRiskOpen(false);
+            if (row.club) setClub(row.club);
+            setDeepLinkPlayerId(String(row.id));
+          }}
+        />
+      )}
+      {injuryRecoveryOpen && <InjuryRecoveryModal onClose={() => setInjuryRecoveryOpen(false)} />}
       {targetProfileSearchOpen && (
         <TargetProfileSearchModal
           onClose={() => setTargetProfileSearchOpen(false)}
