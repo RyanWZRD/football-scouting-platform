@@ -343,13 +343,55 @@ class LiveConnectionManager:
 
 live_manager = LiveConnectionManager()
 
+# Tracks which events we've already broadcast per live fixture, so the
+# same goal doesn't get pushed again on every subsequent poll — keyed by
+# fixture_id, storing a set of (event_type, player_name, minute) seen so far.
+_seen_events = {}
+
+
+def get_shortlist_clubs_sync():
+    """Same query as /shortlist/clubs — a sync helper for use inside the
+    background poll loop, which isn't itself a request handler."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT DISTINCT cl.name AS club
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT watch_level FROM scout_notes sn
+                WHERE sn.player_id = p.id ORDER BY created_at DESC LIMIT 1
+            ) latest_note ON true
+            WHERE latest_note.watch_level = 'shortlist'
+        """)
+        clubs = {r["club"] for r in cur.fetchall()}
+    conn.close()
+    return clubs
+
+
+def fetch_events_for_fixture(fixture_id):
+    resp = requests.get(
+        "https://v3.football.api-sports.io/fixtures/events",
+        headers={"x-apisports-key": FOOTBALL_API_KEY},
+        params={"fixture": fixture_id}, timeout=10,
+    )
+    resp.raise_for_status()
+    resp.encoding = "utf-8"
+    return resp.json().get("response", [])
+
 
 async def live_poll_loop():
     """Runs for the lifetime of the server process. Only calls
     API-Football when there's at least one connected client AND we're
     inside the real live-match window — the same two gates the old
     client-side-only polling effectively had, just enforced properly
-    server-side now instead of trusting the browser to behave."""
+    server-side now instead of trusting the browser to behave.
+
+    On top of the base score poll, also checks for real player-level
+    events (goals, cards) specifically in matches involving a
+    shortlisted player's club — bounded cost, since this only fires
+    extra requests for matches that are actually relevant, not every
+    live match everywhere."""
     while True:
         await asyncio.sleep(WS_POLL_INTERVAL_SECONDS)
         if not live_manager.active or not is_within_live_window() or not FOOTBALL_API_KEY:
@@ -359,6 +401,44 @@ async def live_poll_loop():
             _live_cache["data"] = matches
             _live_cache["fetched_at"] = time.time()
             await live_manager.broadcast({"matches": matches})
+
+            shortlist_clubs = get_shortlist_clubs_sync()
+            relevant = [m for m in matches if m["home_club"] in shortlist_clubs or m["away_club"] in shortlist_clubs]
+            for m in relevant:
+                fixture_id = m["fixture_id"]
+                try:
+                    events = fetch_events_for_fixture(fixture_id)
+                except Exception as e:
+                    print(f"Event fetch failed for fixture {fixture_id} (non-fatal): {e}")
+                    continue
+
+                seen = _seen_events.setdefault(fixture_id, set())
+                for ev in events:
+                    signature = (ev.get("type"), ev.get("player", {}).get("name"), ev.get("time", {}).get("elapsed"))
+                    if signature in seen:
+                        continue
+                    seen.add(signature)
+                    # Only push genuinely notable events, not every single
+                    # substitution or VAR check — goals and cards are what
+                    # a scout actually wants to know about instantly.
+                    if ev.get("type") in ("Goal", "Card"):
+                        await live_manager.broadcast({
+                            "player_event": {
+                                "fixture_id": fixture_id,
+                                "home_club": m["home_club"], "away_club": m["away_club"],
+                                "type": ev.get("type"), "detail": ev.get("detail"),
+                                "player": ev.get("player", {}).get("name"),
+                                "team": ev.get("team", {}).get("name"),
+                                "minute": ev.get("time", {}).get("elapsed"),
+                            }
+                        })
+
+            # Clean up tracking for matches no longer live, so this dict
+            # doesn't grow unbounded over the lifetime of the server process.
+            live_fixture_ids = {m["fixture_id"] for m in matches}
+            for fid in list(_seen_events.keys()):
+                if fid not in live_fixture_ids:
+                    del _seen_events[fid]
         except Exception as e:
             print(f"Live poll loop error (non-fatal, will retry next cycle): {e}")
 
@@ -409,6 +489,7 @@ def fetch_live_matches():
         if f["league"]["id"] not in TRACKED_LEAGUE_IDS:
             continue
         matches.append({
+            "fixture_id": f["fixture"]["id"],
             "league": f["league"]["name"],
             "home_club": f["teams"]["home"]["name"],
             "away_club": f["teams"]["away"]["name"],
@@ -2239,6 +2320,66 @@ def match_boxscore(match_id: int, authorized: bool = Depends(check_api_key)):
         "home_players": [p for p in players if p["club_id"] == match["home_club_id"]],
         "away_players": [p for p in players if p["club_id"] == match["away_club_id"]],
     }
+
+
+@app.get("/fixtures/{match_id}/api-prediction")
+def fixture_api_prediction(match_id: int, authorized: bool = Depends(check_api_key)):
+    """API-Football's OWN prediction model — a genuine second opinion to
+    check our own transparent, rule-based Match Estimator against. This
+    is data you're already paying for and confirmed exists
+    ("predictions": true in their coverage data) but had never actually
+    been called. Cached with a real 24-hour expiry — unlike match events
+    (permanent, since a finished match never changes), a prediction for
+    an upcoming fixture can genuinely shift as team news emerges, so
+    this refreshes periodically rather than being cached forever."""
+    if not FOOTBALL_API_KEY:
+        raise HTTPException(status_code=503, detail="FOOTBALL_API_KEY not configured on the server.")
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT prediction, (EXTRACT(EPOCH FROM (now() - fetched_at)) < 86400) AS still_fresh
+            FROM fixture_predictions_cache WHERE match_id = %s
+        """, (match_id,))
+        cached = cur.fetchone()
+        if cached and cached["still_fresh"]:
+            conn.close()
+            return {"prediction": cached["prediction"], "cached": True}
+
+        cur.execute("SELECT external_id FROM matches WHERE id = %s", (match_id,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Match not found")
+        external_id = row["external_id"]
+
+    try:
+        resp = requests.get(
+            "https://v3.football.api-sports.io/predictions",
+            headers={"x-apisports-key": FOOTBALL_API_KEY},
+            params={"fixture": external_id}, timeout=10,
+        )
+        resp.raise_for_status()
+        resp.encoding = "utf-8"
+        data = resp.json().get("response", [])
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=502, detail=f"Failed to fetch prediction: {e}")
+
+    if not data:
+        conn.close()
+        return {"prediction": None, "cached": False}
+
+    prediction = data[0]
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO fixture_predictions_cache (match_id, prediction)
+            VALUES (%s, %s)
+            ON CONFLICT (match_id) DO UPDATE SET prediction = EXCLUDED.prediction, fetched_at = now()
+        """, (match_id, json.dumps(prediction)))
+    conn.commit()
+    conn.close()
+    return {"prediction": prediction, "cached": False}
 
 
 @app.get("/fixtures/{match_id}/events")
