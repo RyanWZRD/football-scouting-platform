@@ -99,9 +99,16 @@ def upsert_league(conn, league_id, season, is_youth=False):
     entry = data[0]
     league = entry["league"]
     country = entry["country"]
-    is_top5 = league["name"] in {
-        "Premier League", "La Liga", "Bundesliga", "Serie A", "Ligue 1"
+    # Checks BOTH name and country — several countries share league names
+    # with actual top-5 leagues (Brazil's top division is also literally
+    # named "Serie A"), so name alone incorrectly flagged Brazilian Serie
+    # A as top5, wrongly excluding it from "Hidden Gems" searches this
+    # whole time, which defeats that feature's entire purpose.
+    TOP5 = {
+        ("Premier League", "England"), ("La Liga", "Spain"), ("Bundesliga", "Germany"),
+        ("Serie A", "Italy"), ("Ligue 1", "France"),
     }
+    is_top5 = (league["name"], country["name"]) in TOP5
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -117,7 +124,7 @@ def upsert_league(conn, league_id, season, is_youth=False):
             """
             INSERT INTO leagues (external_id, name, country_id, tier, is_top5, season, is_youth)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (external_id) DO UPDATE SET season = EXCLUDED.season, is_youth = EXCLUDED.is_youth
+            ON CONFLICT (external_id) DO UPDATE SET season = EXCLUDED.season, is_youth = EXCLUDED.is_youth, is_top5 = EXCLUDED.is_top5
             RETURNING id
             """,
             (str(league["id"]), fix_mojibake(league["name"]), country_id, 1, is_top5, str(season), is_youth),
