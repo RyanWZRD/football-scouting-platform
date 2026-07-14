@@ -2,6 +2,9 @@ requests
 psycopg2-binary
 numpy
 scipy
+scikit-learn
+joblib
 fastapi
 uvicorn[standard]
 python-dotenv
+anthropic

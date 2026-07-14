@@ -836,6 +836,17 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   };
 
   const [projection, setProjection] = useState(null);
+  const [mlTrajectory, setMlTrajectory] = useState(null);
+  const [loadingMlTrajectory, setLoadingMlTrajectory] = useState(false);
+  const loadMlTrajectory = () => {
+    if (!API_BASE_URL) return;
+    setLoadingMlTrajectory(true);
+    fetch(`${API_BASE_URL}/players/${realId}/ml-trajectory`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setMlTrajectory(data))
+      .catch(() => setMlTrajectory({ available: false, reason: "Failed to load." }))
+      .finally(() => setLoadingMlTrajectory(false));
+  };
   const [seasonHistory, setSeasonHistory] = useState(null);
   const [biography, setBiography] = useState(null);
   const [loadingBio, setLoadingBio] = useState(false);
@@ -1167,6 +1178,29 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
                 <div className="text-[10px] text-[#4A5C52] mt-1 italic">
                   Simple trend line from {projection.points_tracked} data points over {projection.days_tracked} days — illustrative only, not a real prediction. Gets more meaningful as more history accumulates.
                 </div>
+
+                {mlTrajectory === null && (
+                  <button onClick={loadMlTrajectory} disabled={loadingMlTrajectory}
+                    className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] disabled:opacity-50 mt-2">
+                    {loadingMlTrajectory ? "Loading…" : "🤖 Compare against trained ML model →"}
+                  </button>
+                )}
+                {mlTrajectory?.available === false && (
+                  <div className="text-[10px] text-[#4A5C52] italic mt-2">{mlTrajectory.reason}</div>
+                )}
+                {mlTrajectory?.available && (
+                  <div className="mt-2 pt-2 border-t border-[#1C2E26]">
+                    <div className="text-[10px] uppercase tracking-wide text-[#7FD99A] mb-1">🤖 Trained ML Model</div>
+                    <div className="text-sm">
+                      <span className="text-[#EDEDE3] font-plexmono">{mlTrajectory.current_potential}</span>
+                      <span className="text-[#6B8570] mx-2">→</span>
+                      <span className="font-plexmono" style={{ color: mlTrajectory.projected_90d > mlTrajectory.current_potential ? "#7FD99A" : "#E36B57" }}>
+                        {mlTrajectory.projected_90d}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-[#4A5C52] mt-1 italic">{mlTrajectory.note}</div>
+                  </div>
+                )}
               </div>
             )}
 

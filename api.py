@@ -46,6 +46,19 @@ API_ACCESS_KEY = os.environ.get("API_ACCESS_KEY")
 
 app = FastAPI(title="Cross-League Scouting API")
 
+# Loaded once at startup, not per-request — a genuine trained ML model,
+# the platform's first step beyond transparent rule-based percentiles.
+# Loading can genuinely fail (model never trained yet, or not enough
+# data existed when it was) — that's a valid state, not an error, so
+# this degrades gracefully rather than crashing the whole API.
+_trajectory_model = None
+try:
+    import joblib
+    _trajectory_model = joblib.load("trajectory_model.joblib")
+    print("Trajectory ML model loaded successfully.")
+except Exception as e:
+    print(f"Trajectory ML model not loaded (this is fine if it hasn't been trained yet): {e}")
+
 # Restrict to your actual deployed frontend domain(s) rather than "*".
 # Add more origins to this list as you deploy the dashboard elsewhere.
 ALLOWED_ORIGINS = [
@@ -2580,6 +2593,58 @@ def data_quality_dashboard(authorized: bool = Depends(check_api_key)):
             "unscored": {"count": unscored, "pct": round(100 * unscored / total_players, 1) if total_players else 0},
             "stale_clubs": {"count": stale_clubs, "pct": round(100 * stale_clubs / total_clubs, 1) if total_clubs else 0},
         },
+    }
+
+
+@app.get("/players/{player_id}/ml-trajectory")
+def ml_trajectory(player_id: int, authorized: bool = Depends(check_api_key)):
+    """A genuine trained ML prediction, not another rule-based formula —
+    the platform's first real step beyond transparent percentiles. Learns
+    general patterns from every player with enough trend history ('players
+    who look like this tend to trend up/down by this much'), then applies
+    that learned pattern to this specific player. HONEST LIMITATION: this
+    will genuinely improve as more trend history and multi-season data
+    accumulate — right now it's a real MVP, not a mature model. Returns a
+    clear 'not available yet' response if the model hasn't been trained,
+    rather than a confusing error."""
+    if _trajectory_model is None:
+        return {"available": False, "reason": "Model hasn't been trained yet — see train_trajectory_model.py."}
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.primary_position, p.date_of_birth, pps.potential_index, pps.stat_component, pps.age_adjustment
+            FROM players p
+            LEFT JOIN LATERAL (
+                SELECT potential_index, stat_component, age_adjustment FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE p.id = %s
+        """, (player_id,))
+        row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Player not found")
+    position, dob = row["primary_position"], row["date_of_birth"]
+    potential, stat_c, age_adj = row["potential_index"], row["stat_component"], row["age_adjustment"]
+    if not position or not dob or stat_c is None or age_adj is None:
+        return {"available": False, "reason": "This player doesn't have enough profile data (position, age, or scoring) for a prediction yet."}
+
+    age = (datetime.now().date() - dob).days / 365.25
+    positions = _trajectory_model["positions"]
+    position_onehot = [1.0 if position == p else 0.0 for p in positions]
+    features = [[age, potential or 50, stat_c, age_adj] + position_onehot]
+
+    daily_trend = _trajectory_model["model"].predict(features)[0]
+    projected_90d = max(0, min(100, (potential or 50) + daily_trend * 90))
+
+    return {
+        "available": True,
+        "current_potential": round(potential, 1) if potential else None,
+        "predicted_daily_trend": round(daily_trend, 4),
+        "projected_90d": round(projected_90d, 1),
+        "note": "A genuine trained model prediction, not a hand-crafted formula. Accuracy will improve as more trend history accumulates over time.",
     }
 
 
