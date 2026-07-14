@@ -1809,7 +1809,7 @@ def big_match_radar(days_ahead: int = Query(14, le=30), limit: int = Query(15, l
             JOIN clubs away_cl ON away_cl.id = m.away_club_id
             LEFT JOIN leagues l ON l.id = m.league_id
             LEFT JOIN countries co ON co.id = l.country_id
-            WHERE m.status = 'scheduled' AND m.match_date <= now() + (%s || ' days')::interval
+            WHERE m.status = 'scheduled' AND m.match_date <= now() + make_interval(days => %s)
             ORDER BY m.match_date ASC
         """, (days_ahead,))
         fixtures = cur.fetchall()
@@ -2442,7 +2442,7 @@ def fixture_congestion(days_ahead: int = Query(14, le=30), limit: int = Query(20
             FROM matches m
             JOIN clubs cl ON cl.id = m.home_club_id OR cl.id = m.away_club_id
             WHERE m.status = 'scheduled'
-              AND m.match_date BETWEEN now() AND now() + (%s || ' days')::interval
+              AND m.match_date BETWEEN now() AND now() + make_interval(days => %s)
             GROUP BY cl.name
             HAVING COUNT(*) >= 2
             ORDER BY upcoming_matches DESC
