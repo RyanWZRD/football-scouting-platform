@@ -467,7 +467,7 @@ function buildPercentilePlayers(rows) {
       note: !hasStats
         ? "Live record — no match data ingested yet for this player, so no real stats to show."
         : `Live record, ${Math.round(minutes)} minutes across ingested matches. Chart shows percentile rank ${usedPositionPeers ? `vs other ${pos}s` : "vs the full ingested player pool (not enough same-position peers yet)"}.`,
-      tags: !hasStats ? ["Live data", "No match data"] : row.potential_index != null ? ["Live data"] : ["Live data", "Unscored"],
+      tags: !hasStats ? ["No match data"] : row.potential_index != null ? [] : ["Unscored"],
     };
   });
 }
