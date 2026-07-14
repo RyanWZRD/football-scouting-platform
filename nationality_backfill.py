@@ -102,7 +102,7 @@ def run(season, offset, limit):
         except RateLimitError as e:
             print(f"\nHit the rate limit after {updated} players updated.")
             print(f"Actual error detail: {e}")
-            print(f"Re-run with --offset {offset + i - 1} to continue from here.")
+            print("Just re-run with --offset 0 next time — this script's query already excludes anyone successfully updated, so the pool naturally shrinks each run. No offset tracking needed.")
             break
 
         if not data:
