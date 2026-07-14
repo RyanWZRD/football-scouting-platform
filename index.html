@@ -3599,7 +3599,7 @@ function SuperSubsModal({ onClose, onSelectPlayer }) {
             <span className="text-xs font-plexmono shrink-0">
               <span className="text-[#7FD99A]">{r.sub_ga_per90}</span>
               <span className="text-[#6B8570] mx-1">vs</span>
-              <span className="text-[#6B8570]">{r.start_ga_per90}</span>
+              <span className="text-[#6B8570]">{r.start_ga_per90 != null ? r.start_ga_per90 : "never started"}</span>
             </span>
           </button>
         ))}
