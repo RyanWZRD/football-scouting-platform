@@ -3423,6 +3423,54 @@ function LeagueStrengthModal({ onClose }) {
   );
 }
 
+function CommandPaletteModal({ items, onClose, onSelect }) {
+  const [query, setQuery] = useState("");
+  const [highlighted, setHighlighted] = useState(0);
+  const inputRef = useRef(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const filtered = query.trim()
+    ? items.filter(item => item.label.toLowerCase().includes(query.toLowerCase()))
+    : items;
+
+  useEffect(() => { setHighlighted(0); }, [query]);
+
+  const handleKeyDown = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setHighlighted(h => Math.min(h + 1, filtered.length - 1)); }
+    if (e.key === "ArrowUp") { e.preventDefault(); setHighlighted(h => Math.max(h - 1, 0)); }
+    if (e.key === "Enter" && filtered[highlighted]) { e.preventDefault(); onSelect(filtered[highlighted]); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/70 flex items-start justify-center pt-24 p-4 z-[80]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-lg w-full max-h-[70vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Type to search everything... (Esc to close)"
+          className="w-full bg-[#152922] border-b border-[#2C4A3B] px-4 py-3 text-sm text-[#EDEDE3] outline-none"
+        />
+        <div className="overflow-y-auto">
+          {filtered.length === 0 && <div className="px-4 py-6 text-sm text-[#6B8570] text-center">No matches.</div>}
+          {filtered.map((item, i) => (
+            <button key={item.label} onClick={() => onSelect(item)}
+              className="w-full text-left px-4 py-2.5 text-sm flex items-center gap-3"
+              style={{ background: i === highlighted ? "#152922" : "transparent", color: i === highlighted ? "#E3A857" : "#9AAA9E" }}
+              onMouseEnter={() => setHighlighted(i)}>
+              <span>{item.icon}</span>
+              <span className="flex-1">{item.label}</span>
+              <span className="text-[10px] text-[#4A5C52]">{item.section}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function DataQualityModal({ onClose }) {
   const [data, setData] = useState(null);
 
@@ -5208,7 +5256,7 @@ function ScoutDashboard() {
   const [hideUnscored, setHideUnscored] = useState(false);
   const [hideNoMinutes, setHideNoMinutes] = useState(true);
   const [shortlistOnly, setShortlistOnly] = useState(false);
-  const [view, setView] = useState("cards");
+  const [view, setView] = useState("briefing");
   const [scatterX, setScatterX] = useState("Goals/90");
   const [scatterY, setScatterY] = useState("Key Passes/90");
   const [selected, setSelected] = useState(null);
@@ -5246,6 +5294,75 @@ function ScoutDashboard() {
   const [recruitmentPackOpen, setRecruitmentPackOpen] = useState(false);
   const [decliningMinutesOpen, setDecliningMinutesOpen] = useState(false);
   const [advancedSearchOpen, setAdvancedSearchOpen] = useState(false);
+
+  // Single source of truth for every "More" menu / Command Palette entry —
+  // both derive from this one array, so they can never drift out of sync
+  // with each other the way two separately-maintained lists eventually would.
+  const ALL_MENU_ITEMS = [
+    { icon: "🔄", label: "Transfers", section: "Data & Results", setter: setTransfersOpen },
+    { icon: "🏆", label: "Standings", section: "Data & Results", setter: setStandingsOpen },
+    { icon: "📈", label: "Table Predictor", section: "Data & Results", setter: setTablePredictorOpen },
+    { icon: "📄", label: "League Report", section: "Data & Results", setter: setLeagueReportOpen },
+    { icon: "⚡", label: "Big Match Radar", section: "Data & Results", setter: setBigMatchRadarOpen },
+    { icon: "🎲", label: "Match Estimator", section: "Data & Results", setter: setMatchEstimatorOpen },
+    { icon: "📋", label: "Recruitment Board", section: "Data & Results", setter: setRecruitmentBoardOpen },
+    { icon: "🟨", label: "Suspension Risk", section: "Data & Results", setter: setSuspensionRiskOpen },
+    { icon: "🩹", label: "Injury Recovery Patterns", section: "Data & Results", setter: setInjuryRecoveryOpen },
+    { icon: "🏠", label: "Home Advantage Index", section: "Data & Results", setter: setHomeAdvantageOpen },
+    { icon: "📅", label: "Fixture Congestion", section: "Data & Results", setter: setFixtureCongestionOpen },
+    { icon: "⚡", label: "Super-Sub Detector", section: "Data & Results", setter: setSuperSubsOpen },
+    { icon: "🎯", label: "Target Profile Search", section: "Data & Results", setter: setTargetProfileSearchOpen },
+    { icon: "🔎", label: "Advanced Search", section: "Data & Results", setter: setAdvancedSearchOpen },
+    { icon: "🧠", label: "Intelligence Feed", section: "Scouting Intelligence", setter: setIntelligenceFeedOpen },
+    { icon: "🔮", label: "Discovery Engine", section: "Scouting Intelligence", setter: setDiscoveryEngineOpen },
+    { icon: "📊", label: "My Report Card", section: "Scouting Intelligence", setter: setScoutReportCardOpen },
+    { icon: "🎯", label: "Underdog Index", section: "Scouting Intelligence", setter: setUnderdogIndexOpen },
+    { icon: "🔍", label: "Position Scarcity", section: "Scouting Intelligence", setter: setPositionScarcityOpen },
+    { icon: "📉", label: "Declining Minutes", section: "Scouting Intelligence", setter: setDecliningMinutesOpen },
+    { icon: "🌟", label: "Team of Season", section: "Club Analysis", setter: setTeamOfSeasonOpen },
+    { icon: "🌍", label: "League Strength", section: "Club Analysis", setter: setLeagueStrengthOpen },
+    { icon: "♻️", label: "Continuity", section: "Club Analysis", setter: setSquadContinuityOpen },
+    { icon: "🏗️", label: "Rebuild Radar", section: "Club Analysis", setter: setRebuildRadarOpen },
+    { icon: "🔄", label: "Transfer Centre", section: "Live & Operations", setter: setTransferCentreOpen },
+    { icon: "🩺", label: "Pipeline Health", section: "Live & Operations", setter: setPipelineHealthOpen },
+    { icon: "📋", label: "Data Quality", section: "Live & Operations", setter: setDataQualityOpen },
+    { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
+  ];
+
+  const RECENT_KEY = "scoutindex_recent_menu_items_v1";
+  const [recentlyUsed, setRecentlyUsed] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+      // Saved as labels only (functions can't be serialized) — rehydrate
+      // against the current ALL_MENU_ITEMS so the setter reference is real.
+      return saved.map(label => ALL_MENU_ITEMS.find(item => item.label === label)).filter(Boolean).slice(0, 5);
+    } catch (e) { return []; }
+  });
+
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCommandPaletteOpen(open => !open);
+      }
+      if (e.key === "Escape") setCommandPaletteOpen(false);
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
+  const openMenuItem = (item) => {
+    item.setter(true);
+    setMoreMenuOpen(false);
+    setCommandPaletteOpen(false);
+    setRecentlyUsed(prev => {
+      const next = [item, ...prev.filter(i => i.label !== item.label)].slice(0, 5);
+      try { localStorage.setItem(RECENT_KEY, JSON.stringify(next.map(i => i.label))); } catch (e) { /* storage unavailable, skip persisting */ }
+      return next;
+    });
+  };
+
   const [deepLinkPlayerId, setDeepLinkPlayerId] = useState(() => new URLSearchParams(window.location.search).get("player"));
   const [livePlayers, setLivePlayers] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState(API_BASE_URL ? "connecting" : "offline");
@@ -5591,6 +5708,9 @@ function ScoutDashboard() {
                 <button onClick={() => setClubCompareOpen(true)} className="hover:text-[#E3A857]">⚖ Compare Clubs</button>
                 <button onClick={() => setFixturesOpen(true)} className="hover:text-[#E3A857]">📅 Fixtures</button>
                 <button onClick={() => setLiveScoresOpen(true)} className="hover:text-[#E3A857]">🔴 Live</button>
+                <button onClick={() => setCommandPaletteOpen(true)} className="hover:text-[#E3A857] flex items-center gap-1" title="Search everything (Ctrl+K)">
+                  🔎 <span className="text-[10px] text-[#4A5C52] font-plexmono">⌘K</span>
+                </button>
                 <div className="relative">
                   <button onClick={() => setMoreMenuOpen(o => !o)}
                     className={`hover:text-[#E3A857] flex items-center gap-1 ${moreMenuOpen ? "text-[#E3A857]" : ""}`}>
@@ -5600,50 +5720,29 @@ function ScoutDashboard() {
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setMoreMenuOpen(false)}></div>
                       <div className="absolute left-0 top-full mt-2 z-50 bg-[#152922] border border-[#2C4A3B] shadow-lg py-2 w-64 max-h-[80vh] overflow-y-auto normal-case tracking-normal">
-                        {[
-                          { section: "Data & Results", items: [
-                            ["🔄", "Transfers", setTransfersOpen],
-                            ["🏆", "Standings", setStandingsOpen],
-                            ["📈", "Table Predictor", setTablePredictorOpen],
-                            ["📄", "League Report", setLeagueReportOpen],
-                            ["⚡", "Big Match Radar", setBigMatchRadarOpen],
-                            ["🎲", "Match Estimator", setMatchEstimatorOpen],
-                            ["📋", "Recruitment Board", setRecruitmentBoardOpen],
-                            ["🟨", "Suspension Risk", setSuspensionRiskOpen],
-                            ["🩹", "Injury Recovery Patterns", setInjuryRecoveryOpen],
-                            ["🏠", "Home Advantage Index", setHomeAdvantageOpen],
-                            ["📅", "Fixture Congestion", setFixtureCongestionOpen],
-                            ["⚡", "Super-Sub Detector", setSuperSubsOpen],
-                            ["🎯", "Target Profile Search", setTargetProfileSearchOpen],
-                            ["🔎", "Advanced Search", setAdvancedSearchOpen],
-                          ]},
-                          { section: "Scouting Intelligence", items: [
-                            ["🧠", "Intelligence Feed", setIntelligenceFeedOpen],
-                            ["🔮", "Discovery Engine", setDiscoveryEngineOpen],
-                            ["📊", "My Report Card", setScoutReportCardOpen],
-                            ["🎯", "Underdog Index", setUnderdogIndexOpen],
-                            ["🔍", "Position Scarcity", setPositionScarcityOpen],
-                            ["📉", "Declining Minutes", setDecliningMinutesOpen],
-                          ]},
-                          { section: "Club Analysis", items: [
-                            ["🌟", "Team of Season", setTeamOfSeasonOpen],
-                            ["🌍", "League Strength", setLeagueStrengthOpen],
-                            ["♻️", "Continuity", setSquadContinuityOpen],
-                            ["🏗️", "Rebuild Radar", setRebuildRadarOpen],
-                          ]},
-                          { section: "Live & Operations", items: [
-                            ["🔄", "Transfer Centre", setTransferCentreOpen],
-                            ["🩺", "Pipeline Health", setPipelineHealthOpen],
-                            ["📋", "Data Quality", setDataQualityOpen],
-                            ["📅", "Weekly Digest", setWeeklyDigestOpen],
-                          ]},
-                        ].map(group => (
-                          <div key={group.section}>
-                            <div className="px-4 pt-2 pb-1 text-[9px] uppercase tracking-wide text-[#4A5C52]">{group.section}</div>
-                            {group.items.map(([icon, label, setter]) => (
-                              <button key={label} onClick={() => { setter(true); setMoreMenuOpen(false); }}
+                        {recentlyUsed.length > 0 && (
+                          <div>
+                            <div className="px-4 pt-2 pb-1 text-[9px] uppercase tracking-wide text-[#4A5C52]">Recently Used</div>
+                            {recentlyUsed.map(item => (
+                              <button key={"recent-" + item.label} onClick={() => openMenuItem(item)}
+                                className="w-full text-left px-4 py-2 text-xs text-[#E3A857] hover:bg-[#0E1A15] flex items-center gap-2">
+                                <span>{item.icon}</span> {item.label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {Object.entries(
+                          ALL_MENU_ITEMS.reduce((acc, item) => {
+                            (acc[item.section] = acc[item.section] || []).push(item);
+                            return acc;
+                          }, {})
+                        ).map(([section, items]) => (
+                          <div key={section}>
+                            <div className="px-4 pt-2 pb-1 text-[9px] uppercase tracking-wide text-[#4A5C52]">{section}</div>
+                            {items.map(item => (
+                              <button key={item.label} onClick={() => openMenuItem(item)}
                                 className="w-full text-left px-4 py-2 text-xs text-[#9AAA9E] hover:text-[#E3A857] hover:bg-[#0E1A15] flex items-center gap-2">
-                                <span>{icon}</span> {label}
+                                <span>{item.icon}</span> {item.label}
                               </button>
                             ))}
                           </div>
@@ -6087,6 +6186,13 @@ function ScoutDashboard() {
       )}
       {pipelineHealthOpen && <PipelineHealthModal onClose={() => setPipelineHealthOpen(false)} />}
       {dataQualityOpen && <DataQualityModal onClose={() => setDataQualityOpen(false)} />}
+      {commandPaletteOpen && (
+        <CommandPaletteModal
+          items={ALL_MENU_ITEMS}
+          onClose={() => setCommandPaletteOpen(false)}
+          onSelect={openMenuItem}
+        />
+      )}
       {weeklyDigestOpen && (
         <WeeklyDigestModal
           onClose={() => setWeeklyDigestOpen(false)}
