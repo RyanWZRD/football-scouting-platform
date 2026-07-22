@@ -29,14 +29,14 @@ country) after running to sanity-check the results before fully trusting it.
 import os
 import time
 import argparse
-import requests
+import json
+import subprocess
 import psycopg2
 from psycopg2.extras import execute_values
 
 API_BASE = "https://v3.football.api-sports.io"
 API_KEY = os.environ.get("FOOTBALL_API_KEY")
 DATABASE_URL = os.environ.get("DATABASE_URL")
-HEADERS = {"x-apisports-key": API_KEY}
 REQUEST_DELAY_SECONDS = 0.25
 
 
@@ -45,12 +45,27 @@ class RateLimitError(Exception):
 
 
 def api_get(path, params=None):
-    resp = requests.get(f"{API_BASE}/{path}", headers=HEADERS, params=params or {}, timeout=15)
-    if resp.status_code == 429:
-        raise RateLimitError("Rate limit hit (HTTP 429).")
-    resp.raise_for_status()
-    resp.encoding = "utf-8"
-    body = resp.json()
+    """Uses curl.exe directly via subprocess rather than Python's requests
+    library — confirmed, validated fix for a real, repeated SSL certificate
+    validation hang in Python's own networking stack on this machine.
+    curl.exe works reliably every time; Python's requests library does not."""
+    url = f"{API_BASE}/{path}"
+    if params:
+        query = "&".join(f"{k}={v}" for k, v in params.items())
+        url = f"{url}?{query}"
+
+    result = subprocess.run(
+        ["curl.exe", "-s", "-H", f"x-apisports-key: {API_KEY}", url],
+        capture_output=True, text=True, timeout=20,
+    )
+    if result.returncode != 0:
+        raise RateLimitError(f"curl failed (exit code {result.returncode}): {result.stderr}")
+
+    try:
+        body = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        raise RateLimitError(f"Got a non-JSON response, likely a real network issue: {result.stdout[:200]}")
+
     errors = body.get("errors")
     if errors and isinstance(errors, dict) and any("request" in k.lower() for k in errors.keys()):
         raise RateLimitError(f"Rate limit reported in response body: {errors}")
