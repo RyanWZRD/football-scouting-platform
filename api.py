@@ -212,7 +212,7 @@ def list_digests(limit: int = Query(10, le=50), authorized: bool = Depends(check
 
 
 # Our 17 tracked league external IDs, for filtering the global live-scores response
-TRACKED_LEAGUE_IDS = {39, 140, 78, 135, 61, 88, 94, 203, 71, 98, 253, 179, 62, 40, 144, 262, 128}
+TRACKED_LEAGUE_IDS = {39, 140, 78, 135, 61, 88, 94, 203, 71, 98, 253, 179, 62, 40, 144, 262, 128, 79, 218, 119, 210, 207, 239, 103, 345, 106, 197}
 
 
 def get_flag_url(cur, country_name):
