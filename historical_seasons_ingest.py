@@ -42,7 +42,7 @@ class RateLimitError(Exception):
 
 
 def api_get(path, params=None):
-    resp = requests.get(f"{API_BASE}/{path}", headers=HEADERS, params=params or {})
+    resp = requests.get(f"{API_BASE}/{path}", headers=HEADERS, params=params or {}, timeout=15)
     if resp.status_code == 429:
         raise RateLimitError("Rate limit hit (HTTP 429).")
     resp.raise_for_status()
