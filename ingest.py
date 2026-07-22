@@ -314,6 +314,7 @@ if __name__ == "__main__":
         39, 140, 78, 135, 61,        # Top 5
         88, 94, 203, 71, 98, 253, 179, 62,   # Original non-top5 set
         40, 144, 262, 128,           # Additional talent-pipeline leagues
+        79, 218, 119, 210, 207, 239, 103, 345, 106, 197,  # July 2026 expansion
     ]
 
     ids = args.league if args.league else (LEAGUE_IDS if args.all_leagues else [])
