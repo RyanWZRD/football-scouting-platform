@@ -214,6 +214,20 @@ def list_digests(limit: int = Query(10, le=50), authorized: bool = Depends(check
 # Our 17 tracked league external IDs, for filtering the global live-scores response
 TRACKED_LEAGUE_IDS = {39, 140, 78, 135, 61, 88, 94, 203, 71, 98, 253, 179, 62, 40, 144, 262, 128, 79, 218, 119, 210, 207, 239, 103, 345, 106, 197}
 
+ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
+# Maps our league_display strings to The Odds API's per-league "sport_key"
+# values. Only leagues confirmed to exist in their coverage are mapped —
+# genuinely honest that most of the 27 tracked leagues aren't covered by
+# a mainstream odds provider, not something worth guessing at.
+LEAGUE_TO_ODDS_SPORT_KEY = {
+    "Premier League (England)": "soccer_epl",
+    "La Liga (Spain)": "soccer_spain_la_liga",
+    "Bundesliga (Germany)": "soccer_germany_bundesliga",
+    "Serie A (Italy)": "soccer_italy_serie_a",
+    "Ligue 1 (France)": "soccer_france_ligue_one",
+    "Championship (England)": "soccer_efl_champ",
+}
+
 
 def get_flag_url(cur, country_name):
     """Cached flag lookup — checks our own table first, only ever calls
@@ -3044,6 +3058,111 @@ def fixture_api_prediction(match_id: int, authorized: bool = Depends(check_api_k
     conn.commit()
     conn.close()
     return {"prediction": prediction, "cached": False}
+
+
+def _normalize_team_name(name):
+    """Loose normalization for matching team names across two different
+    data sources that may format them slightly differently (e.g.
+    'Manchester City' vs 'Man City')."""
+    name = name.lower().strip()
+    for suffix in [" fc", " afc", " cf"]:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+    return name.strip()
+
+
+def _teams_match(name_a, name_b):
+    a, b = _normalize_team_name(name_a), _normalize_team_name(name_b)
+    return a == b or a in b or b in a
+
+
+@app.get("/fixtures/{match_id}/market-odds")
+def fixture_market_odds(match_id: int, authorized: bool = Depends(check_api_key)):
+    """Real betting market odds, fetched live and compared against our
+    own transparent Match Estimator — a genuine third data point beyond
+    our rule-based estimate and API-Football's own model. HONEST
+    LIMITATION: only the leagues in LEAGUE_TO_ODDS_SPORT_KEY are
+    covered — most of your 27 tracked leagues aren't in mainstream
+    odds coverage, and team names are matched with loose normalization
+    across two different data sources, which can occasionally mismatch.
+    This is not betting advice — it's a comparison point."""
+    if not ODDS_API_KEY:
+        raise HTTPException(status_code=503, detail="ODDS_API_KEY not configured on the server.")
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT home_cl.name AS home_club, away_cl.name AS away_club, m.match_date,
+                   l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display
+            FROM matches m
+            JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            LEFT JOIN leagues l ON l.id = m.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE m.id = %s
+        """, (match_id,))
+        row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    sport_key = LEAGUE_TO_ODDS_SPORT_KEY.get(row["league_display"])
+    if not sport_key:
+        return {"available": False, "reason": f"{row['league_display']} isn't in mainstream odds coverage yet."}
+
+    try:
+        resp = requests.get(
+            f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds",
+            params={"apiKey": ODDS_API_KEY, "regions": "uk,eu", "markets": "h2h", "oddsFormat": "decimal"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        events = resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch odds: {e}")
+
+    match_event = None
+    for ev in events:
+        if _teams_match(ev.get("home_team", ""), row["home_club"]) and _teams_match(ev.get("away_team", ""), row["away_club"]):
+            match_event = ev
+            break
+
+    if not match_event or not match_event.get("bookmakers"):
+        return {"available": False, "reason": "No matching odds found for this specific fixture yet — try again closer to matchday."}
+
+    # Average the implied probability across every bookmaker offering h2h odds,
+    # rather than trusting a single one — a more representative market view.
+    home_probs, draw_probs, away_probs = [], [], []
+    for bm in match_event["bookmakers"]:
+        for market in bm.get("markets", []):
+            if market["key"] != "h2h":
+                continue
+            for outcome in market["outcomes"]:
+                implied = 1.0 / outcome["price"] if outcome["price"] > 0 else None
+                if implied is None:
+                    continue
+                if _teams_match(outcome["name"], row["home_club"]):
+                    home_probs.append(implied)
+                elif _teams_match(outcome["name"], row["away_club"]):
+                    away_probs.append(implied)
+                elif outcome["name"].lower() == "draw":
+                    draw_probs.append(implied)
+
+    if not home_probs:
+        return {"available": False, "reason": "Odds data found but couldn't be parsed into a usable format."}
+
+    def avg_pct(vals):
+        return round(100 * sum(vals) / len(vals), 1) if vals else None
+
+    return {
+        "available": True,
+        "bookmakers_used": len(match_event["bookmakers"]),
+        "market_home_win_pct": avg_pct(home_probs),
+        "market_draw_pct": avg_pct(draw_probs),
+        "market_away_win_pct": avg_pct(away_probs),
+        "note": "Real market odds, averaged across bookmakers. This reflects the market's view, not a recommendation — not betting advice.",
+    }
 
 
 @app.get("/fixtures/{match_id}/events")
