@@ -4424,6 +4424,96 @@ def club_strategy_dashboard(club: str, league: str, authorized: bool = Depends(c
     }
 
 
+@app.post("/pipeline/add")
+def add_to_pipeline(body: PipelineAddRequest, authorized: bool = Depends(check_api_key)):
+    """Adds a player to the Recruitment Pipeline at the 'identified'
+    stage — the start of a genuine, tracked pursuit, distinct from
+    just shortlisting someone."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO recruitment_pipeline (player_id, notes)
+            VALUES (%s, %s)
+            ON CONFLICT (player_id) DO NOTHING
+            RETURNING id
+        """, (body.player_id, body.notes))
+        row = cur.fetchone()
+    conn.commit()
+    conn.close()
+    if not row:
+        return {"added": False, "reason": "Already in the pipeline."}
+    return {"added": True, "id": row["id"]}
+
+
+@app.post("/pipeline/{pipeline_id}/stage")
+def update_pipeline_stage(pipeline_id: int, body: PipelineStageUpdateRequest, authorized: bool = Depends(check_api_key)):
+    """Moves a target to a new stage — the drag in a Kanban board,
+    the actual update to where this pursuit genuinely stands."""
+    valid_stages = {"identified", "contacted", "negotiating", "agreed", "signed", "rejected", "cold"}
+    if body.stage not in valid_stages:
+        raise HTTPException(status_code=400, detail=f"Invalid stage. Must be one of: {', '.join(valid_stages)}")
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            UPDATE recruitment_pipeline
+            SET stage = %s, stage_updated_at = now(), notes = COALESCE(%s, notes)
+            WHERE id = %s
+            RETURNING id
+        """, (body.stage, body.notes, pipeline_id))
+        row = cur.fetchone()
+    conn.commit()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Pipeline entry not found")
+    return {"updated": True}
+
+
+@app.delete("/pipeline/{pipeline_id}")
+def remove_from_pipeline(pipeline_id: int, authorized: bool = Depends(check_api_key)):
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM recruitment_pipeline WHERE id = %s", (pipeline_id,))
+    conn.commit()
+    conn.close()
+    return {"deleted": True}
+
+
+@app.get("/pipeline")
+def get_pipeline(stale_days: int = Query(14, le=90), authorized: bool = Depends(check_api_key)):
+    """Every active target grouped by stage, with days-in-current-stage
+    and a stale flag — the CRM concept that a target sitting untouched
+    too long is a real signal someone's about to fall through the
+    cracks. Also surfaces stage distribution, so a genuine bottleneck
+    (e.g. 12 targets stuck in 'negotiating', 1 in 'contacted') is
+    visible at a glance rather than buried in a list."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT rp.id, rp.stage, rp.notes, rp.created_at, rp.stage_updated_at,
+                   p.id AS player_id, p.full_name, p.photo_url, cl.name AS club,
+                   EXTRACT(DAY FROM now() - rp.stage_updated_at)::int AS days_in_stage
+            FROM recruitment_pipeline rp
+            JOIN players p ON p.id = rp.player_id
+            LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            ORDER BY rp.stage_updated_at ASC
+        """)
+        rows = cur.fetchall()
+    conn.close()
+
+    for r in rows:
+        r["is_stale"] = r["days_in_stage"] >= stale_days and r["stage"] not in ("signed", "rejected", "cold")
+
+    by_stage = {}
+    for r in rows:
+        by_stage.setdefault(r["stage"], []).append(r)
+
+    return {
+        "stages": by_stage,
+        "stage_counts": {stage: len(items) for stage, items in by_stage.items()},
+        "stale_threshold_days": stale_days,
+    }
+
+
 @app.get("/clubs/net-transfer-balance")
 def net_transfer_balance(days: int = Query(180, le=365), limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
     """Which clubs are genuinely net buyers vs net sellers — not raw
@@ -5705,6 +5795,16 @@ def set_watch_level(player_id: int, body: WatchRequest, authorized: bool = Depen
     conn.commit()
     conn.close()
     return result
+
+
+class PipelineAddRequest(BaseModel):
+    player_id: int
+    notes: Optional[str] = None
+
+
+class PipelineStageUpdateRequest(BaseModel):
+    stage: str
+    notes: Optional[str] = None
 
 
 class TrackPredictionRequest(BaseModel):
