@@ -316,6 +316,16 @@ def upsert_upcoming_fixtures_for_league(conn, league_external_id, fixture_season
     return count
 
 
+# Leagues that number seasons by calendar year (season "2026" = Feb-Dec
+# 2026), unlike the August-May cross-year convention most tracked leagues
+# use. Confirmed via direct investigation: their current active season
+# is actually `season + 1` in this project's global --season convention,
+# not the raw value — explains why matches from these leagues specifically
+# were staying stuck as 'scheduled' long after being played (the finished-
+# fixtures query was checking the wrong season for these three only).
+CALENDAR_YEAR_LEAGUE_IDS = {253, 262, 71}  # MLS, Liga MX, Brazilian Serie A
+
+
 def run(league_ids, season, max_fixtures, force=False):
     conn = get_conn()
     completed = []
@@ -327,7 +337,8 @@ def run(league_ids, season, max_fixtures, force=False):
             if db_league_id is None:
                 print(f"  league {league_id} not found in DB yet — run ingest.py for it first, skipping")
                 continue
-            matches = upsert_matches_for_league(conn, league_id, season, db_league_id, max_fixtures, club_cache)
+            finished_season = season + 1 if league_id in CALENDAR_YEAR_LEAGUE_IDS else season
+            matches = upsert_matches_for_league(conn, league_id, finished_season, db_league_id, max_fixtures, club_cache)
 
             upcoming_count = upsert_upcoming_fixtures_for_league(conn, league_id, season + 1, db_league_id, club_cache)
             print(f"  {upcoming_count} upcoming fixtures recorded (season {season + 1})")
