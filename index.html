@@ -5956,29 +5956,29 @@ function ScoutDashboard() {
         )}
         </div>
 
-        <div className="flex border border-[#2C4A3B] w-full md:w-auto md:ml-auto">
+        <div className="flex border border-[#2C4A3B] w-full md:w-auto md:ml-auto overflow-x-auto">
           <button onClick={() => setView("briefing")}
-            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide ${view === "briefing" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide whitespace-nowrap ${view === "briefing" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
             🏠 Briefing
           </button>
           <button onClick={() => setView("cards")}
-            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide ${view === "cards" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide whitespace-nowrap ${view === "cards" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
             Cards
           </button>
           <button onClick={() => setView("rankings")}
-            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide ${view === "rankings" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide whitespace-nowrap ${view === "rankings" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
             Rankings
           </button>
           <button onClick={() => setView("scatter")}
-            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide ${view === "scatter" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide whitespace-nowrap ${view === "scatter" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
             Scatter
           </button>
           <button onClick={() => setView("explore")}
-            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide ${view === "explore" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide whitespace-nowrap ${view === "explore" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
             Explore
           </button>
           <button onClick={() => setView("shortlist")}
-            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide ${view === "shortlist" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
+            className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide whitespace-nowrap ${view === "shortlist" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
             ★ My Shortlist
           </button>
         </div>
