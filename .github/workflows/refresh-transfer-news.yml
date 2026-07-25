@@ -22,5 +22,5 @@ jobs:
 
       - name: Fetch and cache transfer news
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL_FAST }}
         run: python transfer_news_refresh.py
