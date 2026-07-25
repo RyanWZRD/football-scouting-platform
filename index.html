@@ -4798,6 +4798,161 @@ function FixtureDifficultyModal({ allLeagueOptions, onClose }) {
   );
 }
 
+function DivisionChangesModal({ onClose, onSelectClub }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/clubs/division-changes`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🔄 Promotion / Relegation Tracker</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Clubs whose upcoming fixtures imply a different league than currently on record — genuine division changes the fixture calendar already knows about, ahead of full season data catching up.
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.length === 0 && <div className="text-sm text-[#6B8570] text-center py-4">No division changes detected right now.</div>}
+        {rows?.map((r, i) => (
+          <button key={i} onClick={() => onSelectClub(r)} className="w-full flex items-center justify-between text-sm py-2.5 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+            <span className="text-[#EDEDE3]">{r.club}</span>
+            <span className="text-xs text-[#9AAA9E] font-plexmono">
+              {r.current_league || "unassigned"} <span className="text-[#6B8570]">→</span> <span className="text-[#E3A857]">{r.fixture_implied_league}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NewSeasonArrivalsModal({ allLeagueOptions, onClose, onSelectPlayer }) {
+  const [league, setLeague] = useState("");
+  const [club, setClub] = useState("");
+  const [clubOptions, setClubOptions] = useState([]);
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !league) { setClubOptions([]); return; }
+    fetch(`${API_BASE_URL}/players?league=${encodeURIComponent(league)}&limit=500`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setClubOptions(Array.from(new Set(rows.map(r => r.club).filter(Boolean))).sort()))
+      .catch(() => setClubOptions([]));
+  }, [league]);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !club) { setRows(null); return; }
+    setRows(null);
+    fetch(`${API_BASE_URL}/clubs/new-season-arrivals?club=${encodeURIComponent(club)}&days=90`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, [club]);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📋 New Season Arrivals</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">Who's genuinely new here this transfer window.</div>
+
+        <select value={league} onChange={e => { setLeague(e.target.value); setClub(""); }}
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-3">
+          <option value="">Select a league...</option>
+          {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+        {league && (
+          <select value={club} onChange={e => setClub(e.target.value)} className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-4">
+            <option value="">Select a club...</option>
+            {clubOptions.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        )}
+
+        {club && rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.length === 0 && <div className="text-sm text-[#6B8570] text-center py-4">No new arrivals detected for this club recently.</div>}
+        {rows?.map((r, i) => (
+          <div key={i} className="flex items-center justify-between text-sm py-2 border-b border-[#1C2E26]">
+            <span className="text-[#EDEDE3]">{r.full_name} <span className="text-[#6B8570] text-xs">({r.primary_position})</span></span>
+            <span className="text-xs text-[#9AAA9E] font-plexmono">{r.from_club || "?"} <span className="text-[#6B8570]">→</span> <span className="text-[#E3A857]">here</span></span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function daysUntilKickoff() {
+  const kickoff = new Date("2026-08-21T00:00:00Z");
+  const diffMs = kickoff.getTime() - Date.now();
+  return Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+}
+
+function SeasonKickoffHubModal({ onClose, onSelectClub }) {
+  const [preview, setPreview] = useState(null);
+  const [divisionChanges, setDivisionChanges] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/content/season-preview`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setPreview(d))
+      .catch(() => setPreview(null));
+    fetch(`${API_BASE_URL}/clubs/division-changes`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(d => setDivisionChanges(d))
+      .catch(() => setDivisionChanges([]));
+  }, []);
+
+  const days = daysUntilKickoff();
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">⏳ Season Kickoff Hub</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        <div className="text-center border border-[#E3A857] py-6 mb-6">
+          <div className="text-4xl font-bold font-plexmono text-[#E3A857]">{days}</div>
+          <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mt-1">{days === 1 ? "day" : "days"} until kickoff (Aug 21)</div>
+        </div>
+
+        {divisionChanges && divisionChanges.length > 0 && (
+          <div className="mb-6">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🔄 Division Changes ({divisionChanges.length})</div>
+            {divisionChanges.slice(0, 5).map((r, i) => (
+              <button key={i} onClick={() => onSelectClub(r)} className="w-full flex items-center justify-between text-sm py-1.5 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+                <span className="text-[#EDEDE3]">{r.club}</span>
+                <span className="text-xs text-[#E3A857] font-plexmono">→ {r.fixture_implied_league}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {preview === null && <div className="text-sm text-[#6B8570]">Loading pre-season content…</div>}
+        {preview?.tweet_ready_text?.length > 0 && (
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🐦 Pre-Season Content</div>
+            {preview.tweet_ready_text.map((t, i) => <CopyableTweetBlock key={i} text={t} />)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function NetTransferBalanceModal({ onClose }) {
   const [rows, setRows] = useState(null);
 
@@ -6058,6 +6213,9 @@ function ScoutDashboard() {
   const [netTransferBalanceOpen, setNetTransferBalanceOpen] = useState(false);
   const [transferPathwaysOpen, setTransferPathwaysOpen] = useState(false);
   const [fixtureDifficultyOpen, setFixtureDifficultyOpen] = useState(false);
+  const [divisionChangesOpen, setDivisionChangesOpen] = useState(false);
+  const [newSeasonArrivalsOpen, setNewSeasonArrivalsOpen] = useState(false);
+  const [seasonKickoffHubOpen, setSeasonKickoffHubOpen] = useState(false);
   const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
   const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
@@ -6108,6 +6266,9 @@ function ScoutDashboard() {
     { icon: "⚖️", label: "Net Transfer Balance", section: "Club Analysis", setter: setNetTransferBalanceOpen },
     { icon: "🔀", label: "Transfer Pathways", section: "Club Analysis", setter: setTransferPathwaysOpen },
     { icon: "📊", label: "Fixture Difficulty", section: "Club Analysis", setter: setFixtureDifficultyOpen },
+    { icon: "🔄", label: "Promotion/Relegation Tracker", section: "Club Analysis", setter: setDivisionChangesOpen },
+    { icon: "📋", label: "New Season Arrivals", section: "Club Analysis", setter: setNewSeasonArrivalsOpen },
+    { icon: "⏳", label: "Season Kickoff Hub", section: "Content Creation", setter: setSeasonKickoffHubOpen },
     { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
   ];
 
@@ -7032,6 +7193,24 @@ function ScoutDashboard() {
       {netTransferBalanceOpen && <NetTransferBalanceModal onClose={() => setNetTransferBalanceOpen(false)} />}
       {transferPathwaysOpen && <TransferPathwaysModal onClose={() => setTransferPathwaysOpen(false)} />}
       {fixtureDifficultyOpen && <FixtureDifficultyModal allLeagueOptions={allLeagueOptions} onClose={() => setFixtureDifficultyOpen(false)} />}
+      {divisionChangesOpen && (
+        <DivisionChangesModal
+          onClose={() => setDivisionChangesOpen(false)}
+          onSelectClub={(row) => { setDivisionChangesOpen(false); setClub(row.club); }}
+        />
+      )}
+      {newSeasonArrivalsOpen && (
+        <NewSeasonArrivalsModal
+          allLeagueOptions={allLeagueOptions}
+          onClose={() => setNewSeasonArrivalsOpen(false)}
+        />
+      )}
+      {seasonKickoffHubOpen && (
+        <SeasonKickoffHubModal
+          onClose={() => setSeasonKickoffHubOpen(false)}
+          onSelectClub={(row) => { setSeasonKickoffHubOpen(false); setClub(row.club); }}
+        />
+      )}
       {commandPaletteOpen && (
         <CommandPaletteModal
           items={ALL_MENU_ITEMS}
