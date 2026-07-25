@@ -4339,6 +4339,91 @@ def match_preview(match_id: int, authorized: bool = Depends(check_api_key)):
     }
 
 
+@app.get("/clubs/strategy-dashboard")
+def club_strategy_dashboard(club: str, league: str, authorized: bool = Depends(check_api_key)):
+    """The club-wide strategic companion to Transfer Intelligence
+    (per-signing) and Match Preview (per-fixture) — squad balance,
+    rebuild signal, upcoming fixture congestion, squad-wide workload,
+    and Style DNA combined into one comprehensive club briefing.
+    Reuses the exact same thresholds and logic each individual feature
+    already uses, for direct comparability."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        # Rebuild signal — same churn + youth thresholds as /clubs/rebuild-radar
+        cur.execute("""
+            SELECT COUNT(*) FILTER (WHERE t.new_club_id = cl.id) + COUNT(*) FILTER (WHERE t.old_club_id = cl.id) AS churn
+            FROM clubs cl
+            LEFT JOIN player_club_transfers t ON t.new_club_id = cl.id OR t.old_club_id = cl.id
+            WHERE cl.name = %s
+        """, (club,))
+        churn_row = cur.fetchone()
+
+        cur.execute("""
+            SELECT AVG(EXTRACT(YEAR FROM age(p.date_of_birth))) AS avg_age, COUNT(*) AS squad_size
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            WHERE cl.name = %s AND p.date_of_birth IS NOT NULL
+        """, (club,))
+        age_row = cur.fetchone()
+
+        # Fixture congestion — same 14-day window as /clubs/fixture-congestion
+        cur.execute("""
+            SELECT COUNT(*) AS upcoming_matches
+            FROM matches m
+            JOIN clubs cl ON cl.id = m.home_club_id OR cl.id = m.away_club_id
+            WHERE cl.name = %s AND m.status = 'scheduled' AND m.match_date BETWEEN now() AND now() + interval '14 days'
+        """, (club,))
+        congestion_row = cur.fetchone()
+
+        # Squad-wide workload — average ACWR across every player with
+        # enough recent data, not just one individual.
+        cur.execute("""
+            WITH acute AS (
+                SELECT pms.player_id, SUM(pms.minutes_played) AS acute_minutes
+                FROM player_match_stats pms JOIN matches m ON m.id = pms.match_id
+                WHERE m.status = 'finished' AND m.match_date >= now() - interval '7 days'
+                GROUP BY pms.player_id
+            ),
+            chronic AS (
+                SELECT pms.player_id, SUM(pms.minutes_played) / 4.0 AS chronic_weekly
+                FROM player_match_stats pms JOIN matches m ON m.id = pms.match_id
+                JOIN players p ON p.id = pms.player_id JOIN clubs cl ON cl.id = p.current_club_id
+                WHERE m.status = 'finished' AND m.match_date >= now() - interval '28 days' AND cl.name = %s
+                GROUP BY pms.player_id HAVING SUM(pms.minutes_played) >= 90
+            )
+            SELECT ROUND(AVG(COALESCE(a.acute_minutes, 0) / c.chronic_weekly)::numeric, 2) AS avg_squad_acwr,
+                   COUNT(*) AS players_measured
+            FROM chronic c LEFT JOIN acute a ON a.player_id = c.player_id
+        """, (club,))
+        workload_row = cur.fetchone()
+    conn.close()
+
+    rebuild_signal = None
+    if churn_row["churn"] and age_row["avg_age"] and churn_row["churn"] >= 3 and float(age_row["avg_age"]) <= 25:
+        rebuild_signal = {
+            "churn": churn_row["churn"], "avg_age": round(float(age_row["avg_age"]), 1),
+            "rebuild_score": round(churn_row["churn"] * (26 - float(age_row["avg_age"])), 1),
+        }
+
+    style_dna_result = playing_style_dna(club=club, league=league, authorized=True)
+
+    return {
+        "club": club,
+        "rebuild_signal": rebuild_signal,
+        "fixture_congestion": {
+            "upcoming_matches_14d": congestion_row["upcoming_matches"],
+            "flag": "Congested run ahead" if congestion_row["upcoming_matches"] >= 5 else None,
+        },
+        "squad_workload": {
+            "avg_squad_acwr": float(workload_row["avg_squad_acwr"]) if workload_row["avg_squad_acwr"] else None,
+            "players_measured": workload_row["players_measured"],
+            "flag": "Squad-wide workload spike" if workload_row["avg_squad_acwr"] and float(workload_row["avg_squad_acwr"]) >= 1.3 else None,
+        },
+        "style_dna": style_dna_result.get("dna") if style_dna_result.get("available") else None,
+        "note": "A club-wide strategic snapshot combining existing signals — squad balance and youth pipeline are shown separately using data already loaded for this club.",
+    }
+
+
 @app.get("/clubs/net-transfer-balance")
 def net_transfer_balance(days: int = Query(180, le=365), limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
     """Which clubs are genuinely net buyers vs net sellers — not raw
