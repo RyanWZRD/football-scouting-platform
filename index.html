@@ -4486,6 +4486,128 @@ function UnderdogIndexModal({ onClose, onSelectClub }) {
   );
 }
 
+function PersonalizedDigestModal({ favoriteClubs, onClose, onSelectPlayer }) {
+  const [digest, setDigest] = useState(null);
+  const clubNames = favoriteClubs.map(f => f.club);
+
+  useEffect(() => {
+    if (!API_BASE_URL || clubNames.length === 0) return;
+    const params = new URLSearchParams({ clubs: clubNames.join(",") });
+    fetch(`${API_BASE_URL}/digests/personalized?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setDigest(data))
+      .catch(() => setDigest(null));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">⭐ Personalized Digest</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        {clubNames.length === 0 && (
+          <div className="text-sm text-[#6B8570] text-center py-4">Favorite a club first to see personalized highlights just for it.</div>
+        )}
+        {clubNames.length > 0 && (
+          <div className="text-[10px] text-[#4A5C52] italic mb-4">Filtered to: {clubNames.join(", ")}</div>
+        )}
+
+        {clubNames.length > 0 && digest === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+
+        {digest?.movers?.length > 0 && (
+          <div className="mb-5">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">📈 Biggest Movers</div>
+            {digest.movers.map((m, i) => (
+              <button key={i} onClick={() => onSelectPlayer(m)} className="w-full flex justify-between text-sm py-1.5 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+                <span className="text-[#EDEDE3]">{m.full_name} <span className="text-[#6B8570] text-xs">· {m.club}</span></span>
+                <span className="font-plexmono text-[#7FD99A]">+{m.delta}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {digest?.standouts?.length > 0 && (
+          <div className="mb-5">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">⭐ Standout Performances</div>
+            {digest.standouts.map((s, i) => (
+              <button key={i} onClick={() => onSelectPlayer(s)} className="w-full flex justify-between text-sm py-1.5 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+                <span className="text-[#EDEDE3]">{s.full_name} <span className="text-[#6B8570] text-xs">· {s.club}</span></span>
+                <span className="font-plexmono text-[#E3A857]">{s.rating}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {digest?.debuts?.length > 0 && (
+          <div className="mb-2">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🌟 New Debuts</div>
+            {digest.debuts.map((d, i) => (
+              <button key={i} onClick={() => onSelectPlayer(d)} className="w-full text-sm py-1.5 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+                <span className="text-[#EDEDE3]">{d.full_name} <span className="text-[#6B8570] text-xs">· {d.club}</span></span>
+              </button>
+            ))}
+          </div>
+        )}
+        {digest && !digest.movers?.length && !digest.standouts?.length && !digest.debuts?.length && (
+          <div className="text-sm text-[#6B8570] text-center py-4">Nothing notable this week for your favorite clubs.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ScoutNotesSearchModal({ onClose, onSelectPlayer }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runSearch = () => {
+    if (!API_BASE_URL || !query.trim()) return;
+    setLoading(true);
+    const params = new URLSearchParams({ q: query, limit: "20" });
+    fetch(`${API_BASE_URL}/notes/search?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setResults(data))
+      .catch(() => setResults([]))
+      .finally(() => setLoading(false));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🔍 Scout Notes Search</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        <div className="flex gap-2 mb-4">
+          <input value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => e.key === "Enter" && runSearch()}
+            placeholder="Search your notes... e.g. 'clinical finisher'"
+            className="flex-1 bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] outline-none" />
+          <button onClick={runSearch} disabled={loading || !query.trim()}
+            className="bg-[#E3A857] text-[#0E1A15] font-bold px-4 py-2 text-sm uppercase tracking-wide disabled:opacity-50">
+            {loading ? "…" : "Search"}
+          </button>
+        </div>
+
+        {results?.length === 0 && <div className="text-sm text-[#6B8570] text-center py-4">No notes matched that search.</div>}
+        {results?.map(r => (
+          <button key={r.id} onClick={() => onSelectPlayer(r)} className="w-full text-left py-2.5 border-b border-[#1C2E26] hover:bg-[#152922]">
+            <div className="flex items-center gap-2 text-sm text-[#EDEDE3]">
+              <Avatar name={r.full_name} photoUrl={r.photo_url} size={24} />
+              <span className="font-bold">{r.full_name}</span>
+              <span className="text-[#6B8570] text-xs">· {r.club}</span>
+              {r.watch_level === "shortlist" && <span className="text-[#E3A857] text-xs">★</span>}
+            </div>
+            <div className="text-xs text-[#9AAA9E] mt-1 italic">"{r.note}"</div>
+            <div className="text-[10px] text-[#4A5C52] mt-0.5">{new Date(r.created_at).toLocaleDateString()}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function WeeklyDigestModal({ onClose, onSelectPlayer }) {
   const [digest, setDigest] = useState(null);
 
@@ -5322,6 +5444,8 @@ function ScoutDashboard() {
   const [injuryRecoveryOpen, setInjuryRecoveryOpen] = useState(false);
   const [homeAdvantageOpen, setHomeAdvantageOpen] = useState(false);
   const [dataQualityOpen, setDataQualityOpen] = useState(false);
+  const [personalizedDigestOpen, setPersonalizedDigestOpen] = useState(false);
+  const [scoutNotesSearchOpen, setScoutNotesSearchOpen] = useState(false);
   const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
   const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
@@ -5360,6 +5484,8 @@ function ScoutDashboard() {
     { icon: "🔄", label: "Transfer Centre", section: "Live & Operations", setter: setTransferCentreOpen },
     { icon: "🩺", label: "Pipeline Health", section: "Live & Operations", setter: setPipelineHealthOpen },
     { icon: "📋", label: "Data Quality", section: "Live & Operations", setter: setDataQualityOpen },
+    { icon: "⭐", label: "Personalized Digest", section: "Live & Operations", setter: setPersonalizedDigestOpen },
+    { icon: "🔍", label: "Scout Notes Search", section: "Scouting Intelligence", setter: setScoutNotesSearchOpen },
     { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
   ];
 
@@ -6235,6 +6361,27 @@ function ScoutDashboard() {
       )}
       {pipelineHealthOpen && <PipelineHealthModal onClose={() => setPipelineHealthOpen(false)} />}
       {dataQualityOpen && <DataQualityModal onClose={() => setDataQualityOpen(false)} />}
+      {personalizedDigestOpen && (
+        <PersonalizedDigestModal
+          favoriteClubs={favoriteClubs}
+          onClose={() => setPersonalizedDigestOpen(false)}
+          onSelectPlayer={(row) => {
+            setPersonalizedDigestOpen(false);
+            if (row.club) setClub(row.club);
+            setDeepLinkPlayerId(String(row.id));
+          }}
+        />
+      )}
+      {scoutNotesSearchOpen && (
+        <ScoutNotesSearchModal
+          onClose={() => setScoutNotesSearchOpen(false)}
+          onSelectPlayer={(row) => {
+            setScoutNotesSearchOpen(false);
+            if (row.club) setClub(row.club);
+            setDeepLinkPlayerId(String(row.player_id));
+          }}
+        />
+      )}
       {commandPaletteOpen && (
         <CommandPaletteModal
           items={ALL_MENU_ITEMS}
