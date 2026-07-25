@@ -4043,6 +4043,21 @@ function FixtureRow({ m }) {
   // change, so this fails gracefully (shows nothing) rather than
   // crashing if a field isn't where expected.
   const percent = apiPrediction?.prediction?.predictions?.percent;
+  const [tracked, setTracked] = useState(false);
+
+  const trackPrediction = () => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/predictions/track`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+      body: JSON.stringify({
+        match_id: m.id, predicted_home_pct: m.home_win_pct,
+        predicted_draw_pct: m.draw_pct, predicted_away_pct: m.away_win_pct,
+      }),
+    })
+      .then(res => { if (res.ok) setTracked(true); })
+      .catch(() => {});
+  };
 
   return (
     <div className="py-3 border-b border-[#1C2E26]">
@@ -4062,6 +4077,13 @@ function FixtureRow({ m }) {
         <span>{m.draw_pct}% draw</span>
         <span>{m.away_win_pct}%</span>
       </div>
+      {!tracked ? (
+        <button onClick={trackPrediction} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] mb-2">
+          📌 Track this prediction
+        </button>
+      ) : (
+        <div className="text-[10px] text-[#7FD99A] mb-2">✓ Tracked — check Prediction Track Record after the match</div>
+      )}
 
       {!apiPrediction && (
         <button onClick={loadApiPrediction} disabled={loadingApi} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] disabled:opacity-50">
@@ -4585,6 +4607,169 @@ function UnderdogIndexModal({ onClose, onSelectClub }) {
             <span className="font-plexmono text-[#7FD99A] text-xs">+{r.overperformance}</span>
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function CopyableTweetBlock({ text }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="border border-[#2C4A3B] p-3 mb-3">
+      <pre className="text-xs text-[#EDEDE3] whitespace-pre-wrap font-plexmono mb-2">{text}</pre>
+      <button onClick={() => { navigator.clipboard?.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+        className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
+        {copied ? "✓ Copied!" : "📋 Copy"}
+      </button>
+    </div>
+  );
+}
+
+function SeasonPreviewModal({ onClose }) {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/content/season-preview`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setData(d))
+      .catch(() => setData(null));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🐦 Season Preview Content Pack</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">Ready-to-post content, generated from real data. Copy any block directly.</div>
+
+        {data === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {data?.tweet_ready_text?.length === 0 && <div className="text-sm text-[#6B8570] text-center py-4">Not enough data yet to generate a preview pack.</div>}
+        {data?.tweet_ready_text?.map((t, i) => <CopyableTweetBlock key={i} text={t} />)}
+      </div>
+    </div>
+  );
+}
+
+function DailyInsightModal({ onClose }) {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/content/daily-insight`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setData(d))
+      .catch(() => setData(null));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📝 Today's Insight</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">Rotates daily — check back tomorrow for a fresh one.</div>
+
+        {data === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {data && !data.text && <div className="text-sm text-[#6B8570] text-center py-4">Not enough data yet for today's insight.</div>}
+        {data?.text && <CopyableTweetBlock text={data.text} />}
+      </div>
+    </div>
+  );
+}
+
+function DigestThreadModal({ onClose }) {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/content/digest-thread`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setData(d))
+      .catch(() => setData(null));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🧵 Weekly Digest Thread</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        {data === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {data && !data.available && <div className="text-sm text-[#6B8570] text-center py-4">{data.reason}</div>}
+        {data?.available && (
+          <>
+            <div className="text-[10px] text-[#4A5C52] italic mb-4">From digest generated {new Date(data.generated_at).toLocaleDateString()}</div>
+            {data.thread.map((t, i) => <CopyableTweetBlock key={i} text={t} />)}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PredictionTrackRecordModal({ onClose }) {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/predictions/track-record`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setData(d))
+      .catch(() => setData(null));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📊 Prediction Track Record</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        {data === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {data?.total_tracked === 0 && (
+          <div className="text-sm text-[#6B8570] text-center py-4">
+            No predictions tracked yet — use "📌 Track this prediction" in Match Estimator to start building your record.
+          </div>
+        )}
+        {data?.total_tracked > 0 && (
+          <>
+            <div className="grid grid-cols-3 gap-3 mb-5 border border-[#2C4A3B] p-4 text-center">
+              <div>
+                <div className="text-xl font-bold text-[#EDEDE3] font-plexmono">{data.total_tracked}</div>
+                <div className="text-[10px] text-[#6B8570] uppercase tracking-wide mt-1">Tracked</div>
+              </div>
+              <div>
+                <div className="text-xl font-bold text-[#EDEDE3] font-plexmono">{data.finished}</div>
+                <div className="text-[10px] text-[#6B8570] uppercase tracking-wide mt-1">Settled</div>
+              </div>
+              <div>
+                <div className="text-xl font-bold font-plexmono" style={{ color: data.accuracy_pct >= 50 ? "#7FD99A" : "#E36B57" }}>
+                  {data.accuracy_pct != null ? `${data.accuracy_pct}%` : "—"}
+                </div>
+                <div className="text-[10px] text-[#6B8570] uppercase tracking-wide mt-1">Accuracy</div>
+              </div>
+            </div>
+            {data.predictions.map(p => (
+              <div key={p.id} className="flex items-center justify-between text-sm py-2 border-b border-[#1C2E26]">
+                <span className="text-[#EDEDE3]">{p.home_club} vs {p.away_club}</span>
+                <span className="text-xs font-plexmono">
+                  {p.status !== "finished" ? (
+                    <span className="text-[#6B8570]">Pending</span>
+                  ) : (
+                    <span style={{ color: p.was_correct ? "#7FD99A" : "#E36B57" }}>{p.was_correct ? "✓ Correct" : "✗ Wrong"}</span>
+                  )}
+                </span>
+              </div>
+            ))}
+          </>
+        )}
       </div>
     </div>
   );
@@ -5643,6 +5828,10 @@ function ScoutDashboard() {
   const [scoutNotesSearchOpen, setScoutNotesSearchOpen] = useState(false);
   const [padjDefenseOpen, setPadjDefenseOpen] = useState(false);
   const [xgProxyOpen, setXgProxyOpen] = useState(false);
+  const [seasonPreviewOpen, setSeasonPreviewOpen] = useState(false);
+  const [dailyInsightOpen, setDailyInsightOpen] = useState(false);
+  const [digestThreadOpen, setDigestThreadOpen] = useState(false);
+  const [predictionTrackRecordOpen, setPredictionTrackRecordOpen] = useState(false);
   const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
   const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
@@ -5685,6 +5874,10 @@ function ScoutDashboard() {
     { icon: "🔍", label: "Scout Notes Search", section: "Scouting Intelligence", setter: setScoutNotesSearchOpen },
     { icon: "🛡️", label: "Possession-Adjusted Defense", section: "Data & Results", setter: setPadjDefenseOpen },
     { icon: "🎯", label: "Shot Quality Proxy", section: "Data & Results", setter: setXgProxyOpen },
+    { icon: "🐦", label: "Season Preview Content Pack", section: "Content Creation", setter: setSeasonPreviewOpen },
+    { icon: "📝", label: "Today's Insight", section: "Content Creation", setter: setDailyInsightOpen },
+    { icon: "🧵", label: "Weekly Digest Thread", section: "Content Creation", setter: setDigestThreadOpen },
+    { icon: "📊", label: "Prediction Track Record", section: "Content Creation", setter: setPredictionTrackRecordOpen },
     { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
   ];
 
@@ -6601,6 +6794,10 @@ function ScoutDashboard() {
           }}
         />
       )}
+      {seasonPreviewOpen && <SeasonPreviewModal onClose={() => setSeasonPreviewOpen(false)} />}
+      {dailyInsightOpen && <DailyInsightModal onClose={() => setDailyInsightOpen(false)} />}
+      {digestThreadOpen && <DigestThreadModal onClose={() => setDigestThreadOpen(false)} />}
+      {predictionTrackRecordOpen && <PredictionTrackRecordModal onClose={() => setPredictionTrackRecordOpen(false)} />}
       {commandPaletteOpen && (
         <CommandPaletteModal
           items={ALL_MENU_ITEMS}
