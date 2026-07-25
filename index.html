@@ -899,6 +899,14 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
       .then(data => setRotationRisk(data))
       .catch(() => setRotationRisk(null));
   }, [realId]);
+  const [workloadMonitor, setWorkloadMonitor] = useState(null);
+  useEffect(() => {
+    if (!API_BASE_URL || !realId) return;
+    fetch(`${API_BASE_URL}/players/${realId}/workload-monitor`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setWorkloadMonitor(data))
+      .catch(() => setWorkloadMonitor(null));
+  }, [realId]);
   const [seasonHistory, setSeasonHistory] = useState(null);
   const [biography, setBiography] = useState(null);
   const [loadingBio, setLoadingBio] = useState(false);
@@ -1212,6 +1220,25 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
                   </span>
                   <span className="text-xs text-[#6B8570] ml-2">{rotationRisk.start_pct}% starts, last {rotationRisk.matches_considered}</span>
                 </div>
+              </div>
+            )}
+
+            {workloadMonitor?.available && (
+              <div className="mt-3 mb-1">
+                <div className="flex items-center justify-between">
+                  <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">🔋 Workload</div>
+                  {workloadMonitor.acwr != null && (
+                    <span className="text-sm font-bold font-plexmono" style={{
+                      color: workloadMonitor.acwr >= 1.5 ? "#E36B57" : workloadMonitor.acwr >= 1.3 ? "#E3A857" : "#7FD99A",
+                    }}>
+                      ACWR {workloadMonitor.acwr}
+                    </span>
+                  )}
+                </div>
+                {workloadMonitor.flags?.length > 0 && (
+                  <div className="text-xs text-[#E3A857] mt-1">{workloadMonitor.flags.join(" · ")}</div>
+                )}
+                <div className="text-[10px] text-[#4A5C52] mt-1 italic">{workloadMonitor.note}</div>
               </div>
             )}
 
@@ -1695,6 +1722,7 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
   const [valueConcentration, setValueConcentration] = useState(null);
   const [partnerships, setPartnerships] = useState(null);
   const [positionContinuity, setPositionContinuity] = useState(null);
+  const [rotationAdvisor, setRotationAdvisor] = useState(null);
   useEffect(() => {
     if (!API_BASE_URL) return;
     const params = new URLSearchParams({ club: clubName, league: leagueName });
@@ -1730,6 +1758,10 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
       .then(res => res.ok ? res.json() : [])
       .then(data => setPositionContinuity(data))
       .catch(() => setPositionContinuity([]));
+    fetch(`${API_BASE_URL}/clubs/rotation-advisor?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setRotationAdvisor(data))
+      .catch(() => setRotationAdvisor(null));
   }, [clubName, leagueName]);
 
   return (
@@ -1932,6 +1964,24 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
                 <span className="text-xs font-plexmono" style={{ color: p.distinct_starters >= 4 ? "#E36B57" : "#7FD99A" }}>
                   {p.distinct_starters} different starters
                 </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {rotationAdvisor?.positions?.length > 0 && (
+          <div className="mt-6 border-t border-[#2C4A3B] pt-5">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">🔄 Rotation Advisor</div>
+            <div className="text-[10px] text-[#4A5C52] italic mb-3">{rotationAdvisor.note}</div>
+            {rotationAdvisor.positions.map((pos, i) => (
+              <div key={i} className="mb-3 pb-3 border-b border-[#1C2E26]">
+                <div className="text-xs text-[#9AAA9E] mb-1.5">{pos.position} <span className="text-[#4A5C52]">({pos.squad_depth} in rotation)</span></div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-[#E36B57]">Consider resting: {pos.most_loaded.full_name} <span className="text-[#6B8570] text-xs">({pos.most_loaded.recent_minutes_14d}min/14d)</span></span>
+                </div>
+                <div className="flex items-center justify-between text-sm mt-1">
+                  <span className="text-[#7FD99A]">Fresher option: {pos.freshest_option.full_name} <span className="text-[#6B8570] text-xs">({pos.freshest_option.recent_minutes_14d}min/14d)</span></span>
+                </div>
               </div>
             ))}
           </div>
@@ -4860,6 +4910,94 @@ function FixtureDifficultyModal({ allLeagueOptions, onClose }) {
   );
 }
 
+function AcwrModal({ allLeagueOptions, onClose, onSelectPlayer }) {
+  const [league, setLeague] = useState("");
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !league) { setRows(null); return; }
+    setRows(null);
+    fetch(`${API_BASE_URL}/players/acwr?league=${encodeURIComponent(league)}&limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, [league]);
+
+  const acwrColor = (v) => v >= 1.5 ? "#E36B57" : v >= 1.3 ? "#E3A857" : v < 0.8 ? "#9AAA9E" : "#7FD99A";
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📈 Workload Ratio (ACWR)</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          A real, widely-used sports science metric — but genuinely scientifically contested. Recent research has questioned whether it reliably predicts injury. "Sweet spot" 0.8-1.3, "danger zone" above 1.5 — an established signal, not a proven predictor.
+        </div>
+
+        <select value={league} onChange={e => setLeague(e.target.value)}
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-4">
+          <option value="">Select a league...</option>
+          {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+
+        {league && rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.length === 0 && <div className="text-sm text-[#6B8570] text-center py-4">Not enough recent match data for this league yet.</div>}
+        {rows?.map((r, i) => (
+          <div key={i} className="flex items-center justify-between text-sm py-2 border-b border-[#1C2E26]">
+            <span className="text-[#EDEDE3]">{r.full_name} <span className="text-[#6B8570] text-xs">· {r.club}</span></span>
+            <span className="text-xs font-plexmono" style={{ color: acwrColor(r.acwr) }}>{r.acwr}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BurnoutRiskModal({ allLeagueOptions, onClose, onSelectPlayer }) {
+  const [league, setLeague] = useState("");
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !league) { setRows(null); return; }
+    setRows(null);
+    fetch(`${API_BASE_URL}/players/burnout-risk?league=${encodeURIComponent(league)}&limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, [league]);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🚨 Burnout Risk Score</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Combines workload spike, age, and a declining rating trend into one score — a genuine early conversation-starter, not a clinical or diagnostic assessment.
+        </div>
+
+        <select value={league} onChange={e => setLeague(e.target.value)}
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-4">
+          <option value="">Select a league...</option>
+          {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+
+        {league && rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.length === 0 && <div className="text-sm text-[#6B8570] text-center py-4">No elevated risk signals detected for this league right now.</div>}
+        {rows?.map((r, i) => (
+          <div key={i} className="flex items-center justify-between text-sm py-2 border-b border-[#1C2E26]">
+            <span className="text-[#EDEDE3]">{r.full_name} <span className="text-[#6B8570] text-xs">· {r.club}, age {r.age}</span></span>
+            <span className="text-xs font-plexmono" style={{ color: r.burnout_risk_score >= 4 ? "#E36B57" : "#E3A857" }}>{r.burnout_risk_score}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DivisionChangesModal({ onClose, onSelectClub }) {
   const [rows, setRows] = useState(null);
 
@@ -6278,6 +6416,8 @@ function ScoutDashboard() {
   const [divisionChangesOpen, setDivisionChangesOpen] = useState(false);
   const [newSeasonArrivalsOpen, setNewSeasonArrivalsOpen] = useState(false);
   const [seasonKickoffHubOpen, setSeasonKickoffHubOpen] = useState(false);
+  const [acwrOpen, setAcwrOpen] = useState(false);
+  const [burnoutRiskOpen, setBurnoutRiskOpen] = useState(false);
   const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
   const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
@@ -6331,6 +6471,8 @@ function ScoutDashboard() {
     { icon: "🔄", label: "Promotion/Relegation Tracker", section: "Club Analysis", setter: setDivisionChangesOpen },
     { icon: "📋", label: "New Season Arrivals", section: "Club Analysis", setter: setNewSeasonArrivalsOpen },
     { icon: "⏳", label: "Season Kickoff Hub", section: "Content Creation", setter: setSeasonKickoffHubOpen },
+    { icon: "📈", label: "Workload Ratio (ACWR)", section: "Data & Results", setter: setAcwrOpen },
+    { icon: "🚨", label: "Burnout Risk Score", section: "Scouting Intelligence", setter: setBurnoutRiskOpen },
     { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
   ];
 
@@ -7273,6 +7415,8 @@ function ScoutDashboard() {
           onSelectClub={(row) => { setSeasonKickoffHubOpen(false); setClub(row.club); }}
         />
       )}
+      {acwrOpen && <AcwrModal allLeagueOptions={allLeagueOptions} onClose={() => setAcwrOpen(false)} />}
+      {burnoutRiskOpen && <BurnoutRiskModal allLeagueOptions={allLeagueOptions} onClose={() => setBurnoutRiskOpen(false)} />}
       {commandPaletteOpen && (
         <CommandPaletteModal
           items={ALL_MENU_ITEMS}
