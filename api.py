@@ -3763,6 +3763,194 @@ def referee_tendencies(league: str, limit: int = Query(20, le=50), authorized: b
     return rows
 
 
+@app.get("/players/moneyball")
+def moneyball_score(limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
+    """Synthesizes multiple signals this whole platform is built around
+    into one composite score: raw potential, how reliable that score is
+    (scouting confidence from real minutes tracked), and market
+    obscurity (outside the traditional top 5 leagues, where recruitment
+    attention is thinnest). Requires potential >= 70 to avoid surfacing
+    mediocre players purely for being obscure — this finds genuinely
+    good players hiding in plain sight, not just any name nobody's heard of."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club,
+                   l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display,
+                   pps.potential_index, l.is_top5,
+                   COALESCE(SUM(pms.minutes_played), 0) AS total_minutes
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            LEFT JOIN player_match_stats pms ON pms.player_id = p.id
+            WHERE pps.potential_index >= 70
+            GROUP BY p.id, p.full_name, p.photo_url, cl.name, l.name, co.name, pps.potential_index, l.is_top5
+        """)
+        rows = cur.fetchall()
+    conn.close()
+
+    scored = []
+    for r in rows:
+        minutes = r["total_minutes"]
+        if minutes >= 1800:
+            confidence_mult = 1.0
+        elif minutes >= 900:
+            confidence_mult = 0.9
+        elif minutes >= 300:
+            confidence_mult = 0.75
+        else:
+            confidence_mult = 0.5
+
+        obscurity_bonus = 0.15 if not r["is_top5"] else 0
+        moneyball = round(float(r["potential_index"]) * (1 + obscurity_bonus) * confidence_mult, 1)
+        scored.append({
+            "id": r["id"], "full_name": r["full_name"], "photo_url": r["photo_url"],
+            "club": r["club"], "league_display": r["league_display"],
+            "potential_index": round(float(r["potential_index"])),
+            "moneyball_score": moneyball,
+        })
+
+    scored.sort(key=lambda r: r["moneyball_score"], reverse=True)
+    return scored[:limit]
+
+
+@app.get("/clubs/style-dna")
+def playing_style_dna(club: str, league: str, authorized: bool = Depends(check_api_key)):
+    """A club-level tactical fingerprint from real aggregate stats —
+    possession tendency, directness, defensive intensity, physicality,
+    and attacking threat — each percentile-ranked against every other
+    club in the same league, so the shape genuinely reflects this
+    club's identity relative to its actual competition."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT cl.name AS club,
+                   SUM(pms.passes_attempted) * 90.0 / NULLIF(SUM(pms.minutes_played), 0) AS possession_tendency,
+                   SUM(pms.take_ons_attempted) * 90.0 / NULLIF(SUM(pms.minutes_played), 0) AS directness,
+                   SUM(pms.tackles + pms.interceptions) * 90.0 / NULLIF(SUM(pms.minutes_played), 0) AS defensive_intensity,
+                   100.0 * SUM(pms.duels_won) / NULLIF(SUM(pms.duels_attempted), 0) AS physicality,
+                   SUM(pms.goals + pms.assists) * 90.0 / NULLIF(SUM(pms.minutes_played), 0) AS attacking_threat
+            FROM player_match_stats pms
+            JOIN players p ON p.id = pms.player_id
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+            GROUP BY cl.id, cl.name
+            HAVING SUM(pms.minutes_played) >= 900
+        """, (league,))
+        all_clubs = cur.fetchall()
+    conn.close()
+
+    target = next((c for c in all_clubs if c["club"] == club), None)
+    if not target:
+        return {"available": False, "reason": "Not enough match data for this club yet."}
+
+    dimensions = ["possession_tendency", "directness", "defensive_intensity", "physicality", "attacking_threat"]
+    percentiles = {}
+    for dim in dimensions:
+        values = [float(c[dim]) for c in all_clubs if c[dim] is not None]
+        target_val = float(target[dim]) if target[dim] is not None else None
+        if target_val is None or not values:
+            percentiles[dim] = None
+            continue
+        below = sum(1 for v in values if v < target_val)
+        percentiles[dim] = round(100 * below / len(values))
+
+    return {"available": True, "club": club, "dna": percentiles}
+
+
+@app.get("/clubs/rivalry-intensity")
+def rivalry_intensity_index(league: str, limit: int = Query(15, le=30), authorized: bool = Depends(check_api_key)):
+    """Real, measurable rivalry intensity from head-to-head history —
+    tighter average scorelines and elevated card counts in these
+    specific meetings (versus a normal match) both signal a genuinely
+    heated fixture, not just table position. Requires 3+ meetings to
+    avoid a misleading read from a single result."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH match_cards AS (
+                SELECT pms.match_id, SUM(pms.yellow_cards + pms.red_cards) AS total_cards
+                FROM player_match_stats pms GROUP BY pms.match_id
+            ),
+            pairs AS (
+                SELECT LEAST(m.home_club_id, m.away_club_id) AS club_a_id,
+                       GREATEST(m.home_club_id, m.away_club_id) AS club_b_id,
+                       ABS(m.home_score - m.away_score) AS goal_diff,
+                       COALESCE(mc.total_cards, 0) AS cards
+                FROM matches m
+                JOIN leagues l ON l.id = m.league_id
+                LEFT JOIN countries co ON co.id = l.country_id
+                LEFT JOIN match_cards mc ON mc.match_id = m.id
+                WHERE m.status = 'finished' AND (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+            )
+            SELECT cl_a.name AS club_a, cl_b.name AS club_b,
+                   COUNT(*) AS meetings,
+                   ROUND(AVG(p.goal_diff)::numeric, 2) AS avg_goal_diff,
+                   ROUND(AVG(p.cards)::numeric, 2) AS avg_cards
+            FROM pairs p
+            JOIN clubs cl_a ON cl_a.id = p.club_a_id
+            JOIN clubs cl_b ON cl_b.id = p.club_b_id
+            GROUP BY cl_a.name, cl_b.name
+            HAVING COUNT(*) >= 3
+        """, (league,))
+        rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        return []
+
+    max_cards = max(float(r["avg_cards"]) for r in rows) or 1
+    scored = []
+    for r in rows:
+        # Lower goal_diff = tighter = more intense; higher cards = more intense.
+        # Both normalized to comparable scales before combining.
+        tightness_score = max(0, 100 - float(r["avg_goal_diff"]) * 40)
+        card_score = (float(r["avg_cards"]) / max_cards) * 100
+        intensity = round((tightness_score * 0.6 + card_score * 0.4), 1)
+        scored.append({**r, "intensity_score": intensity})
+
+    scored.sort(key=lambda r: r["intensity_score"], reverse=True)
+    return scored[:limit]
+
+
+@app.get("/players/talent-hotspots")
+def talent_hotspots(limit: int = Query(20, le=40), authorized: bool = Depends(check_api_key)):
+    """Which countries are genuinely producing the most high-potential
+    young talent right now — grouped by nationality (where a player is
+    actually from), not current league (where they happen to play),
+    since the real question is where talent originates. Requires 3+
+    qualifying players from a country to avoid a single standout
+    prospect making their whole nation look like a hotspot."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT co.name AS country, COUNT(*) AS high_potential_count,
+                   ROUND(AVG(pps.potential_index)::numeric, 1) AS avg_potential
+            FROM players p
+            JOIN countries co ON co.id = p.nationality_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE p.date_of_birth IS NOT NULL AND age(p.date_of_birth) < interval '22 years'
+              AND pps.potential_index >= 75
+            GROUP BY co.name
+            HAVING COUNT(*) >= 3
+            ORDER BY high_potential_count DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 @app.get("/clubs/net-transfer-balance")
 def net_transfer_balance(days: int = Query(180, le=365), limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
     """Which clubs are genuinely net buyers vs net sellers — not raw
