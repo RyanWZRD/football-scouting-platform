@@ -119,7 +119,7 @@ function potentialColor(v) {
   if (v == null) return "#4A5C52";
   if (v >= 85) return "#E3A857";
   if (v >= 70) return "#C9C08A";
-  return "#8A9A8E";
+  return "#9AAA9E";
 }
 
 // Metrics can be plain numbers (seed/demo players, already 0-100 skill scores)
@@ -278,7 +278,7 @@ function ScatterPlot({ players, xKey, yKey, onSelect, topProspectIds, compareIds
       <text x={16} y={(height - pad + pad) / 2} fill="#9AAA9E" fontSize="12" textAnchor="middle"
         transform={`rotate(-90 16 ${(height - pad + pad) / 2})`}>{yKey}</text>
       {pts.map(({ p, x, y }) => {
-        const color = topProspectIds.has(p.id) ? "#E3A857" : compareIds.has(p.id) ? "#7FB3D5" : "#8A9A8E";
+        const color = topProspectIds.has(p.id) ? "#E3A857" : compareIds.has(p.id) ? "#7FB3D5" : "#9AAA9E";
         return (
           <circle key={p.id} cx={sx(x)} cy={sy(y)} r={topProspectIds.has(p.id) ? 6 : 5}
             fill={color} fillOpacity="0.85" stroke="#0E1A15" strokeWidth="1"
@@ -543,7 +543,7 @@ function Sparkline({ points, width = 200, height = 50 }) {
   const stepX = width / (points.length - 1);
   const coords = values.map((v, i) => `${i * stepX},${height - ((v - min) / range) * height}`);
   const trendUp = values[values.length - 1] >= values[0];
-  const color = trendUp ? "#7FD99A" : "#E88B7D";
+  const color = trendUp ? "#7FD99A" : "#E36B57";
   const firstDate = new Date(points[0].computed_at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
   const lastDate = new Date(points[points.length - 1].computed_at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
   return (
@@ -1125,9 +1125,9 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
             {p.injury && (
               <div className="mt-5 border border-[#E36B57] bg-[#2A1712] px-4 py-3 text-sm">
                 <span className="text-[#E36B57] font-bold">🩹 {p.injury.type}</span>
-                {p.injury.reason && <span className="text-[#C9A08A]"> — {p.injury.reason}</span>}
-                {p.injury.date && <span className="text-[#8A6858] text-xs"> (reported {p.injury.date})</span>}
-                <div className="text-xs text-[#8A6858] mt-1">Most recent report within the last 30 days — API-Football's injury data covers the whole season's history, so this is a rough recency filter, not a confirmed current status. Always verify before a real decision.</div>
+                {p.injury.reason && <span className="text-[#6B8570]"> — {p.injury.reason}</span>}
+                {p.injury.date && <span className="text-[#6B8570] text-xs"> (reported {p.injury.date})</span>}
+                <div className="text-xs text-[#6B8570] mt-1">Most recent report within the last 30 days — API-Football's injury data covers the whole season's history, so this is a rough recency filter, not a confirmed current status. Always verify before a real decision.</div>
               </div>
             )}
             <div className="grid grid-cols-2 gap-4 mt-6 border-b border-[#2C4A3B] pb-4">
@@ -2746,7 +2746,7 @@ function DreamXIBuilder({ onClose }) {
               </div>
               {slots[pickingSlot] && (
                 <button onClick={() => { setSlots(prev => ({ ...prev, [pickingSlot]: null })); setPickingSlot(null); }}
-                  className="text-xs text-[#E36B57] hover:text-[#ff8a75] mb-3">
+                  className="text-xs text-[#E36B57] hover:text-[#FF8A75] mb-3">
                   ✕ Remove {slots[pickingSlot].name} from this slot
                 </button>
               )}
