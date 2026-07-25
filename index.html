@@ -4016,6 +4016,8 @@ function RecruitmentBoardModal({ onClose, onSelectPlayer }) {
 function FixtureRow({ m }) {
   const [apiPrediction, setApiPrediction] = useState(null);
   const [loadingApi, setLoadingApi] = useState(false);
+  const [marketOdds, setMarketOdds] = useState(null);
+  const [loadingOdds, setLoadingOdds] = useState(false);
 
   const loadApiPrediction = () => {
     if (!API_BASE_URL) return;
@@ -4025,6 +4027,16 @@ function FixtureRow({ m }) {
       .then(data => setApiPrediction(data))
       .catch(() => setApiPrediction({ prediction: null }))
       .finally(() => setLoadingApi(false));
+  };
+
+  const loadMarketOdds = () => {
+    if (!API_BASE_URL) return;
+    setLoadingOdds(true);
+    fetch(`${API_BASE_URL}/fixtures/${m.id}/market-odds`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : { available: false })
+      .then(data => setMarketOdds(data))
+      .catch(() => setMarketOdds({ available: false }))
+      .finally(() => setLoadingOdds(false));
   };
 
   // Defensive reads — API-Football's own response shape is theirs to
@@ -4066,6 +4078,27 @@ function FixtureRow({ m }) {
             <span>{percent.home}</span>
             <span>{percent.draw} draw</span>
             <span>{percent.away}</span>
+          </div>
+        </>
+      )}
+
+      {!marketOdds && (
+        <button onClick={loadMarketOdds} disabled={loadingOdds} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] disabled:opacity-50 mt-2">
+          {loadingOdds ? "Loading…" : "Compare against real betting odds →"}
+        </button>
+      )}
+      {marketOdds && !marketOdds.available && (
+        <div className="text-[10px] text-[#4A5C52] italic mt-2">{marketOdds.reason}</div>
+      )}
+      {marketOdds?.available && (
+        <>
+          <div className="text-[9px] uppercase tracking-wide text-[#4A5C52] mb-1 mt-2">
+            Market odds ({marketOdds.bookmakers_used} bookmakers, not betting advice)
+          </div>
+          <div className="flex justify-between text-[10px] text-[#C9C08A] font-plexmono">
+            <span>{marketOdds.market_home_win_pct}%</span>
+            <span>{marketOdds.market_draw_pct}% draw</span>
+            <span>{marketOdds.market_away_win_pct}%</span>
           </div>
         </>
       )}
