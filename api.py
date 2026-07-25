@@ -3478,6 +3478,247 @@ def new_season_arrivals(club: str, days: int = Query(90, le=180), authorized: bo
     return rows
 
 
+@app.get("/players/acwr")
+def acute_chronic_workload_ratio(league: str, limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
+    """Acute:Chronic Workload Ratio — a real, widely-used sports science
+    metric (acute = last 7 days' minutes, chronic = average weekly
+    minutes over the last 28 days), historically associated with
+    injury risk via the 0.8-1.3 'sweet spot' and >1.5 'danger zone'
+    thresholds. HONEST CAVEAT: this metric is genuinely scientifically
+    contested — recent research has found the traditional calculation
+    suffers from mathematical coupling, and at least one major study
+    found spikes in ACWR dissociated from actual injury occurrence.
+    This surfaces a real, historically influential signal, not a
+    proven predictor. Requires at least 90 minutes of chronic-window
+    playing time to avoid meaningless ratios from fringe players."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH acute AS (
+                SELECT pms.player_id, SUM(pms.minutes_played) AS acute_minutes
+                FROM player_match_stats pms
+                JOIN matches m ON m.id = pms.match_id
+                WHERE m.status = 'finished' AND m.match_date >= now() - interval '7 days'
+                GROUP BY pms.player_id
+            ),
+            chronic AS (
+                SELECT pms.player_id, SUM(pms.minutes_played) AS chronic_total
+                FROM player_match_stats pms
+                JOIN matches m ON m.id = pms.match_id
+                WHERE m.status = 'finished' AND m.match_date >= now() - interval '28 days'
+                GROUP BY pms.player_id
+                HAVING SUM(pms.minutes_played) >= 90
+            )
+            SELECT p.full_name, cl.name AS club,
+                   COALESCE(a.acute_minutes, 0) AS acute_minutes_7d,
+                   ROUND((c.chronic_total / 4.0)::numeric, 1) AS chronic_avg_weekly_minutes,
+                   ROUND((COALESCE(a.acute_minutes, 0) / (c.chronic_total / 4.0))::numeric, 2) AS acwr
+            FROM chronic c
+            JOIN players p ON p.id = c.player_id
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            LEFT JOIN acute a ON a.player_id = c.player_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+            ORDER BY acwr DESC
+            LIMIT %s
+        """, (league, limit))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/players/{player_id}/workload-monitor")
+def player_workload_monitor(player_id: int, authorized: bool = Depends(check_api_key)):
+    """Combines three real signals into one workload picture: recent
+    minutes load, how congested the player's club's upcoming run of
+    fixtures is, and international duty frequency. HONEST LIMITATION:
+    international duty uses historical cap frequency as a proxy for
+    call-up likelihood, since upcoming international fixture windows
+    aren't separately tracked — a real gap, not a live schedule check."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT SUM(pms.minutes_played) FILTER (WHERE m.match_date >= now() - interval '7 days') AS acute_7d,
+                   SUM(pms.minutes_played) FILTER (WHERE m.match_date >= now() - interval '28 days') / 4.0 AS chronic_weekly,
+                   p.current_club_id
+            FROM player_match_stats pms
+            JOIN matches m ON m.id = pms.match_id
+            JOIN players p ON p.id = pms.player_id
+            WHERE pms.player_id = %s AND m.status = 'finished'
+            GROUP BY p.current_club_id
+        """, (player_id,))
+        workload_row = cur.fetchone()
+
+        if not workload_row or not workload_row["current_club_id"]:
+            conn.close()
+            return {"available": False, "reason": "Not enough recent match data for this player."}
+
+        cur.execute("""
+            SELECT COUNT(*) AS upcoming_matches
+            FROM matches
+            WHERE (home_club_id = %s OR away_club_id = %s)
+              AND status = 'scheduled' AND match_date BETWEEN now() AND now() + interval '14 days'
+        """, (workload_row["current_club_id"], workload_row["current_club_id"]))
+        fixture_row = cur.fetchone()
+
+        cur.execute("""
+            SELECT SUM(appearances) AS total_caps
+            FROM player_international_caps WHERE player_id = %s
+        """, (player_id,))
+        caps_row = cur.fetchone()
+    conn.close()
+
+    acute = workload_row["acute_7d"] or 0
+    chronic = workload_row["chronic_weekly"] or 0
+    acwr = round(acute / chronic, 2) if chronic > 0 else None
+    upcoming = fixture_row["upcoming_matches"] or 0
+    caps = caps_row["total_caps"] or 0
+
+    flags = []
+    if acwr is not None and acwr >= 1.5:
+        flags.append("High recent workload spike")
+    if upcoming >= 5:
+        flags.append("Congested fixture run ahead")
+    if caps >= 20:
+        flags.append("Frequent international caller-up — added travel/duty load")
+
+    return {
+        "available": True,
+        "acute_minutes_7d": acute,
+        "chronic_avg_weekly_minutes": round(chronic, 1) if chronic else None,
+        "acwr": acwr,
+        "upcoming_matches_14d": upcoming,
+        "total_international_caps": caps,
+        "flags": flags,
+        "note": "Combines real signals into one picture — not a medical or clinical assessment.",
+    }
+
+
+@app.get("/players/burnout-risk")
+def burnout_risk_score(league: str, limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
+    """A composite risk score combining three real signals: workload
+    spike (ACWR), age (a genuine, well-established injury risk factor
+    in sports science), and a declining rating trend (recent matches
+    vs earlier in the tracked window) — a possible sign of accumulating
+    fatigue. HONEST CAVEAT: this is a composite of real signals, not a
+    clinically validated prediction — ACWR itself remains scientifically
+    contested (see /players/acwr), and this compounds that same
+    uncertainty rather than resolving it. Useful as a genuine early
+    conversation-starter, not a diagnosis."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH acute AS (
+                SELECT pms.player_id, SUM(pms.minutes_played) AS acute_minutes
+                FROM player_match_stats pms JOIN matches m ON m.id = pms.match_id
+                WHERE m.status = 'finished' AND m.match_date >= now() - interval '7 days'
+                GROUP BY pms.player_id
+            ),
+            chronic AS (
+                SELECT pms.player_id, SUM(pms.minutes_played) / 4.0 AS chronic_weekly
+                FROM player_match_stats pms JOIN matches m ON m.id = pms.match_id
+                WHERE m.status = 'finished' AND m.match_date >= now() - interval '28 days'
+                GROUP BY pms.player_id HAVING SUM(pms.minutes_played) >= 90
+            ),
+            recent_rating AS (
+                SELECT pms.player_id, AVG(pms.rating) AS recent_avg
+                FROM player_match_stats pms JOIN matches m ON m.id = pms.match_id
+                WHERE m.status = 'finished' AND m.match_date >= now() - interval '14 days' AND pms.rating IS NOT NULL
+                GROUP BY pms.player_id
+            ),
+            earlier_rating AS (
+                SELECT pms.player_id, AVG(pms.rating) AS earlier_avg
+                FROM player_match_stats pms JOIN matches m ON m.id = pms.match_id
+                WHERE m.status = 'finished' AND m.match_date BETWEEN now() - interval '60 days' AND now() - interval '14 days'
+                  AND pms.rating IS NOT NULL
+                GROUP BY pms.player_id
+            )
+            SELECT p.full_name, cl.name AS club,
+                   EXTRACT(YEAR FROM age(p.date_of_birth))::int AS age,
+                   ROUND((a.acute_minutes / c.chronic_weekly)::numeric, 2) AS acwr,
+                   ROUND(rr.recent_avg::numeric, 2) AS recent_rating,
+                   ROUND(er.earlier_avg::numeric, 2) AS earlier_rating
+            FROM chronic c
+            JOIN players p ON p.id = c.player_id
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            LEFT JOIN acute a ON a.player_id = c.player_id
+            LEFT JOIN recent_rating rr ON rr.player_id = c.player_id
+            LEFT JOIN earlier_rating er ON er.player_id = c.player_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+              AND p.date_of_birth IS NOT NULL AND a.acute_minutes IS NOT NULL
+        """, (league,))
+        rows = cur.fetchall()
+    conn.close()
+
+    scored = []
+    for r in rows:
+        risk = 0
+        if r["acwr"] is not None:
+            if r["acwr"] >= 1.5:
+                risk += 3
+            elif r["acwr"] >= 1.3:
+                risk += 1.5
+        if r["age"] and r["age"] >= 30:
+            risk += 1
+        if r["recent_rating"] is not None and r["earlier_rating"] is not None and r["recent_rating"] < r["earlier_rating"] - 0.3:
+            risk += 2
+        if risk > 0:
+            scored.append({**r, "burnout_risk_score": round(risk, 1)})
+
+    scored.sort(key=lambda r: r["burnout_risk_score"], reverse=True)
+    return scored[:limit]
+
+
+@app.get("/clubs/rotation-advisor")
+def squad_rotation_advisor(club: str, league: str, authorized: bool = Depends(check_api_key)):
+    """Compares teammates at the same position by recent workload,
+    giving an actual recommendation rather than just data — who's
+    carrying the heaviest recent load (a rotation candidate) versus
+    who's fresher and available (a genuine option), among players who
+    actually feature in the rotation this season."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.id, p.full_name, p.primary_position,
+                   SUM(pms.minutes_played) FILTER (WHERE m.match_date >= now() - interval '14 days') AS recent_minutes,
+                   SUM(pms.minutes_played) AS season_minutes
+            FROM players p
+            JOIN player_match_stats pms ON pms.player_id = p.id
+            JOIN matches m ON m.id = pms.match_id
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE cl.name = %s AND (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+              AND m.status = 'finished' AND p.primary_position IS NOT NULL
+            GROUP BY p.id, p.full_name, p.primary_position
+            HAVING SUM(pms.minutes_played) >= 90
+        """, (club, league))
+        rows = cur.fetchall()
+    conn.close()
+
+    by_position = {}
+    for r in rows:
+        by_position.setdefault(r["primary_position"], []).append(r)
+
+    result = []
+    for position, players in by_position.items():
+        if len(players) < 2:
+            continue
+        players.sort(key=lambda p: p["recent_minutes"] or 0, reverse=True)
+        result.append({
+            "position": position,
+            "most_loaded": {"full_name": players[0]["full_name"], "recent_minutes_14d": players[0]["recent_minutes"] or 0},
+            "freshest_option": {"full_name": players[-1]["full_name"], "recent_minutes_14d": players[-1]["recent_minutes"] or 0},
+            "squad_depth": len(players),
+        })
+
+    return {"club": club, "positions": result,
+            "note": "Suggests where genuine rotation options exist, based on real recent minutes — doesn't account for tactics, form-on-the-day, or fitness status."}
+
+
 @app.get("/clubs/net-transfer-balance")
 def net_transfer_balance(days: int = Query(180, le=365), limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
     """Which clubs are genuinely net buyers vs net sellers — not raw
