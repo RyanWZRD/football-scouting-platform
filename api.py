@@ -2648,6 +2648,102 @@ def ml_trajectory(player_id: int, authorized: bool = Depends(check_api_key)):
     }
 
 
+@app.get("/digests/personalized")
+def personalized_digest(clubs: str, authorized: bool = Depends(check_api_key)):
+    """Same kind of content as the scheduled Weekly Digest, but filtered
+    to specific clubs and computed live on demand — since favorited
+    clubs live in browser localStorage, not anywhere the server-side
+    scheduled digest script can see, this is the way to make it
+    genuinely personal without needing server-side favorites tracking."""
+    club_list = [c.strip() for c in clubs.split(",") if c.strip()]
+    if not club_list:
+        raise HTTPException(status_code=400, detail="Provide at least one club name via ?clubs=")
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH bounds AS (
+                SELECT player_id, MIN(computed_at) AS first_at, MAX(computed_at) AS last_at
+                FROM player_potential_history
+                WHERE computed_at >= now() - interval '7 days'
+                GROUP BY player_id HAVING COUNT(*) >= 2
+            ),
+            first_vals AS (
+                SELECT DISTINCT ON (h.player_id) h.player_id, h.potential_index AS first_val
+                FROM player_potential_history h JOIN bounds b ON b.player_id = h.player_id AND h.computed_at = b.first_at
+            ),
+            last_vals AS (
+                SELECT DISTINCT ON (h.player_id) h.player_id, h.potential_index AS last_val
+                FROM player_potential_history h JOIN bounds b ON b.player_id = h.player_id AND h.computed_at = b.last_at
+            )
+            SELECT p.id, p.full_name, cl.name AS club, ROUND((lv.last_val - fv.first_val)::numeric, 1) AS delta
+            FROM first_vals fv
+            JOIN last_vals lv ON lv.player_id = fv.player_id
+            JOIN players p ON p.id = fv.player_id
+            JOIN clubs cl ON cl.id = p.current_club_id
+            WHERE cl.name = ANY(%s) AND (lv.last_val - fv.first_val) > 0
+            ORDER BY delta DESC LIMIT 10
+        """, (club_list,))
+        movers = cur.fetchall()
+
+        cur.execute("""
+            SELECT p.id, p.full_name, cl.name AS club, mt.match_date
+            FROM player_match_stats pms
+            JOIN matches mt ON mt.id = pms.match_id
+            JOIN players p ON p.id = pms.player_id
+            JOIN clubs cl ON cl.id = p.current_club_id
+            WHERE mt.match_date >= now() - interval '7 days' AND pms.minutes_played > 0
+              AND cl.name = ANY(%s)
+              AND (SELECT COUNT(*) FROM player_match_stats pms2 WHERE pms2.player_id = pms.player_id AND pms2.minutes_played > 0) = 1
+            ORDER BY mt.match_date DESC LIMIT 10
+        """, (club_list,))
+        debuts = cur.fetchall()
+
+        cur.execute("""
+            SELECT p.id, p.full_name, cl.name AS club, m.rating, m.match_date
+            FROM (
+                SELECT pms.player_id, pms.rating, mt.match_date,
+                       ROW_NUMBER() OVER (PARTITION BY pms.player_id ORDER BY mt.match_date DESC) AS rn
+                FROM player_match_stats pms
+                JOIN matches mt ON mt.id = pms.match_id
+                WHERE pms.rating IS NOT NULL AND mt.match_date >= now() - interval '7 days'
+            ) m
+            JOIN players p ON p.id = m.player_id
+            JOIN clubs cl ON cl.id = p.current_club_id
+            WHERE m.rn = 1 AND cl.name = ANY(%s) AND m.rating >= 7.0
+            ORDER BY m.rating DESC LIMIT 10
+        """, (club_list,))
+        standouts = cur.fetchall()
+    conn.close()
+
+    return {"clubs": club_list, "movers": movers, "debuts": debuts, "standouts": standouts}
+
+
+@app.get("/notes/search")
+def search_scout_notes(q: str, limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
+    """Search your own scout notes by keyword — you've been writing
+    structured notes throughout this whole project with no way to
+    search back through them until now."""
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="Provide a search term via ?q=")
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT sn.id, sn.note, sn.watch_level, sn.created_at,
+                   p.id AS player_id, p.full_name, p.photo_url, cl.name AS club
+            FROM scout_notes sn
+            JOIN players p ON p.id = sn.player_id
+            LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            WHERE sn.note ILIKE %s
+            ORDER BY sn.created_at DESC
+            LIMIT %s
+        """, (f"%{q}%", limit))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 @app.get("/transfers")
 def recent_transfers(limit: int = Query(20, le=100), authorized: bool = Depends(check_api_key)):
     """Recent club changes, detected automatically by a database trigger
