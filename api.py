@@ -2867,6 +2867,18 @@ def xg_proxy(limit: int = Query(20, le=50), authorized: bool = Depends(check_api
     return rows
 
 
+class TemplateRequest(BaseModel):
+    name: str
+    position: str
+    goals_p90: Optional[float] = None
+    assists_p90: Optional[float] = None
+    key_passes_p90: Optional[float] = None
+    defensive_p90: Optional[float] = None
+    take_ons_p90: Optional[float] = None
+    pass_acc: Optional[float] = None
+    age_max: Optional[int] = None
+
+
 @app.post("/templates")
 def save_template(body: TemplateRequest, authorized: bool = Depends(check_api_key)):
     """Save a Target Profile Search as a reusable named template — the
@@ -4424,6 +4436,16 @@ def club_strategy_dashboard(club: str, league: str, authorized: bool = Depends(c
     }
 
 
+class PipelineAddRequest(BaseModel):
+    player_id: int
+    notes: Optional[str] = None
+
+
+class PipelineStageUpdateRequest(BaseModel):
+    stage: str
+    notes: Optional[str] = None
+
+
 @app.post("/pipeline/add")
 def add_to_pipeline(body: PipelineAddRequest = Body(...), authorized: bool = Depends(check_api_key)):
     """Adds a player to the Recruitment Pipeline at the 'identified'
@@ -4693,6 +4715,13 @@ def rotation_risk(player_id: int, authorized: bool = Depends(check_api_key)):
         "matches_considered": len(rows), "starts_60plus_mins": starts,
         "note": "Based on actual recent minutes, not a season-long average — reflects current role, not history.",
     }
+
+
+class TrackPredictionRequest(BaseModel):
+    match_id: int
+    predicted_home_pct: float
+    predicted_draw_pct: float
+    predicted_away_pct: float
 
 
 @app.post("/predictions/track")
@@ -5795,35 +5824,6 @@ def set_watch_level(player_id: int, body: WatchRequest, authorized: bool = Depen
     conn.commit()
     conn.close()
     return result
-
-
-class PipelineAddRequest(BaseModel):
-    player_id: int
-    notes: Optional[str] = None
-
-
-class PipelineStageUpdateRequest(BaseModel):
-    stage: str
-    notes: Optional[str] = None
-
-
-class TrackPredictionRequest(BaseModel):
-    match_id: int
-    predicted_home_pct: float
-    predicted_draw_pct: float
-    predicted_away_pct: float
-
-
-class TemplateRequest(BaseModel):
-    name: str
-    position: str
-    goals_p90: Optional[float] = None
-    assists_p90: Optional[float] = None
-    key_passes_p90: Optional[float] = None
-    defensive_p90: Optional[float] = None
-    take_ons_p90: Optional[float] = None
-    pass_acc: Optional[float] = None
-    age_max: Optional[int] = None
 
 
 class ScoutRatingRequest(BaseModel):
