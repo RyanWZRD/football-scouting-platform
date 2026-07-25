@@ -3423,6 +3423,61 @@ def season_callback(authorized: bool = Depends(check_api_key)):
     return {"available": True, "text": text, "data": r}
 
 
+@app.get("/clubs/division-changes")
+def division_changes(authorized: bool = Depends(check_api_key)):
+    """Clubs whose upcoming fixtures imply a different league than
+    their currently stored league_id — genuine promotion/relegation
+    moves the fixture calendar already knows about, ahead of season
+    coverage data catching up. This is the exact detection pattern
+    that found real bugs earlier (Wolves, Burnley, West Ham stuck on
+    their old Premier League assignment after being relegated) — now
+    a permanent, reusable check rather than a one-off manual query,
+    so future season transitions surface these automatically instead
+    of silently breaking Match Estimator again."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT DISTINCT ON (cl.id)
+                cl.name AS club,
+                current_l.name || ' (' || COALESCE(current_co.name, 'Unknown') || ')' AS current_league,
+                fixture_l.name || ' (' || COALESCE(fixture_co.name, 'Unknown') || ')' AS fixture_implied_league
+            FROM matches m
+            JOIN clubs cl ON cl.id = m.home_club_id OR cl.id = m.away_club_id
+            JOIN leagues fixture_l ON fixture_l.id = m.league_id
+            LEFT JOIN countries fixture_co ON fixture_co.id = fixture_l.country_id
+            LEFT JOIN leagues current_l ON current_l.id = cl.league_id
+            LEFT JOIN countries current_co ON current_co.id = current_l.country_id
+            WHERE m.status = 'scheduled' AND m.match_date >= now()
+              AND (current_l.id IS NULL OR current_l.id != fixture_l.id)
+            ORDER BY cl.id, m.match_date ASC
+        """)
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/clubs/new-season-arrivals")
+def new_season_arrivals(club: str, days: int = Query(90, le=180), authorized: bool = Depends(check_api_key)):
+    """Who's genuinely new at this specific club this transfer window —
+    different from the league-wide Net Transfer Balance/Pathways views,
+    this is the per-club 'who just arrived here' answer, directly
+    useful heading into a new season."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.full_name, p.primary_position, old_cl.name AS from_club, pct.changed_at
+            FROM player_club_transfers pct
+            JOIN players p ON p.id = pct.player_id
+            JOIN clubs new_cl ON new_cl.id = pct.new_club_id
+            LEFT JOIN clubs old_cl ON old_cl.id = pct.old_club_id
+            WHERE new_cl.name = %s AND pct.changed_at >= now() - make_interval(days => %s)
+            ORDER BY pct.changed_at DESC
+        """, (club, days))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 @app.get("/clubs/net-transfer-balance")
 def net_transfer_balance(days: int = Query(180, le=365), limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
     """Which clubs are genuinely net buyers vs net sellers — not raw
