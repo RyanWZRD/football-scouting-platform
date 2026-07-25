@@ -1104,7 +1104,11 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
                     method: "POST",
                     headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
                     body: JSON.stringify({ player_id: parseInt(realId) }),
-                  }).then(res => res.json()).then(data => alert(data.added ? "Added to Recruitment Pipeline." : "Already in the pipeline."));
+                  }).then(res => {
+                    if (!res.ok) { alert("Couldn't add to pipeline — please try again."); return null; }
+                    return res.json();
+                  }).then(data => { if (data) alert(data.added ? "Added to Recruitment Pipeline." : "Already in the pipeline."); })
+                    .catch(() => alert("Couldn't add to pipeline — please try again."));
                 }}
                 className="no-print flex items-center gap-1.5 text-xs uppercase tracking-wide px-3 py-1.5 border border-[#2C4A3B] text-[#9AAA9E] hover:border-[#E3A857] hover:text-[#E3A857]">
                 📌 Add to Pipeline
