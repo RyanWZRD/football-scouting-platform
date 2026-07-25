@@ -4710,6 +4710,83 @@ function DailyInsightModal({ onClose }) {
   );
 }
 
+function NetTransferBalanceModal({ onClose }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/clubs/net-transfer-balance?days=180&limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">⚖️ Net Transfer Balance</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Net buyers vs net sellers over the last 180 days — direction, not just raw activity volume.
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.length === 0 && <div className="text-sm text-[#6B8570] text-center py-4">Not enough transfer activity recorded yet.</div>}
+        {rows?.map((r, i) => (
+          <div key={i} className="flex items-center justify-between text-sm py-2 border-b border-[#1C2E26]">
+            <span className="text-[#EDEDE3]">{r.club} <span className="text-[#6B8570] text-xs">· {r.league}</span></span>
+            <span className="text-xs font-plexmono">
+              <span className="text-[#7FD99A]">+{r.transfers_in}</span>
+              <span className="text-[#6B8570] mx-1">/</span>
+              <span className="text-[#E36B57]">-{r.transfers_out}</span>
+              <span className="ml-2" style={{ color: r.net_balance > 0 ? "#7FD99A" : r.net_balance < 0 ? "#E36B57" : "#6B8570" }}>
+                ({r.net_balance > 0 ? "+" : ""}{r.net_balance})
+              </span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TransferPathwaysModal({ onClose }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/transfers/pathways?days=180&limit=15`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🔀 Transfer Pathways</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          The most common league-to-league transfer routes — genuine feeder pipelines the data reveals.
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.length === 0 && <div className="text-sm text-[#6B8570] text-center py-4">Not enough cross-league transfer activity recorded yet.</div>}
+        {rows?.map((r, i) => (
+          <div key={i} className="flex items-center justify-between text-sm py-2 border-b border-[#1C2E26]">
+            <span className="text-[#EDEDE3]">{r.from_league} <span className="text-[#6B8570]">→</span> {r.to_league}</span>
+            <span className="text-xs font-plexmono text-[#E3A857]">{r.transfer_count}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SeasonCallbackModal({ onClose }) {
   const [data, setData] = useState(null);
 
@@ -5890,6 +5967,8 @@ function ScoutDashboard() {
   const [digestThreadOpen, setDigestThreadOpen] = useState(false);
   const [predictionTrackRecordOpen, setPredictionTrackRecordOpen] = useState(false);
   const [seasonCallbackOpen, setSeasonCallbackOpen] = useState(false);
+  const [netTransferBalanceOpen, setNetTransferBalanceOpen] = useState(false);
+  const [transferPathwaysOpen, setTransferPathwaysOpen] = useState(false);
   const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
   const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
@@ -5937,6 +6016,8 @@ function ScoutDashboard() {
     { icon: "🧵", label: "Weekly Digest Thread", section: "Content Creation", setter: setDigestThreadOpen },
     { icon: "📊", label: "Prediction Track Record", section: "Content Creation", setter: setPredictionTrackRecordOpen },
     { icon: "📅", label: "Season Callback", section: "Content Creation", setter: setSeasonCallbackOpen },
+    { icon: "⚖️", label: "Net Transfer Balance", section: "Club Analysis", setter: setNetTransferBalanceOpen },
+    { icon: "🔀", label: "Transfer Pathways", section: "Club Analysis", setter: setTransferPathwaysOpen },
     { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
   ];
 
@@ -6858,6 +6939,8 @@ function ScoutDashboard() {
       {digestThreadOpen && <DigestThreadModal onClose={() => setDigestThreadOpen(false)} />}
       {predictionTrackRecordOpen && <PredictionTrackRecordModal onClose={() => setPredictionTrackRecordOpen(false)} />}
       {seasonCallbackOpen && <SeasonCallbackModal onClose={() => setSeasonCallbackOpen(false)} />}
+      {netTransferBalanceOpen && <NetTransferBalanceModal onClose={() => setNetTransferBalanceOpen(false)} />}
+      {transferPathwaysOpen && <TransferPathwaysModal onClose={() => setTransferPathwaysOpen(false)} />}
       {commandPaletteOpen && (
         <CommandPaletteModal
           items={ALL_MENU_ITEMS}
