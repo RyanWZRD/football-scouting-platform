@@ -1189,6 +1189,12 @@ def fixture_estimates(league: str, limit: int = Query(10, le=30), authorized: bo
         home_q, away_q = quality.get(m["home_club"]), quality.get(m["away_club"])
         if home_q is None or away_q is None:
             continue
+        # BUG FIX: PostgreSQL's AVG() always returns a Decimal, not a
+        # native float, and Python deliberately disallows implicit
+        # float/Decimal arithmetic (a precision-safety measure) — this
+        # was crashing the entire endpoint with a genuine TypeError on
+        # every single call, confirmed directly via Render's live logs.
+        home_q, away_q = float(home_q), float(away_q)
         home_form, away_form = form.get(m["home_club"], 50), form.get(m["away_club"], 50)  # neutral default if genuinely no recent matches yet
 
         home_strength = 0.6 * home_q + 0.4 * home_form
