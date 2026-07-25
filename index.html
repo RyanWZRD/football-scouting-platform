@@ -2038,16 +2038,32 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
           </div>
         )}
       </div>
-      {simulatorOpen && <TransferSimulatorModal squad={players} clubName={clubName} onClose={() => setSimulatorOpen(false)} />}
+      {simulatorOpen && <TransferSimulatorModal squad={players} clubName={clubName} leagueName={leagueName} onClose={() => setSimulatorOpen(false)} />}
     </div>
   );
 }
 
-function TransferSimulatorModal({ squad, clubName, onClose }) {
+function TransferSimulatorModal({ squad, clubName, leagueName, onClose }) {
   const [playerOutId, setPlayerOutId] = useState("");
   const [searchText, setSearchText] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [playerIn, setPlayerIn] = useState(null);
+  const [intelligence, setIntelligence] = useState(null);
+  const [loadingIntelligence, setLoadingIntelligence] = useState(false);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !playerOutId || !playerIn) { setIntelligence(null); return; }
+    setLoadingIntelligence(true);
+    const params = new URLSearchParams({
+      club: clubName, league: leagueName,
+      player_in_id: String(playerIn.id), player_out_id: String(playerOutId),
+    });
+    fetch(`${API_BASE_URL}/clubs/transfer-intelligence?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setIntelligence(data))
+      .catch(() => setIntelligence(null))
+      .finally(() => setLoadingIntelligence(false));
+  }, [playerOutId, playerIn, clubName, leagueName]);
 
   useEffect(() => {
     if (!API_BASE_URL || searchText.trim().length < 2) { setSearchResults([]); return; }
@@ -2147,6 +2163,53 @@ function TransferSimulatorModal({ squad, clubName, onClose }) {
             <div className="text-xs text-[#6B8570] mt-3">Pick both a player out and a player in to see the impact.</div>
           )}
         </div>
+
+        {loadingIntelligence && <div className="text-sm text-[#6B8570] mt-4 text-center">Simulating full impact…</div>}
+        {intelligence?.available === false && (
+          <div className="text-xs text-[#6B8570] mt-4 text-center">{intelligence.reason}</div>
+        )}
+        {intelligence?.available && (
+          <div className="mt-5 border-t border-[#2C4A3B] pt-5">
+            <div className="text-[10px] uppercase tracking-wide text-[#E3A857] mb-1">🎯 Transfer Intelligence</div>
+            <div className="text-[10px] text-[#4A5C52] italic mb-4">{intelligence.note}</div>
+
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🧬 Style DNA Shift</div>
+            <div className="h-56 mb-4">
+              <OverlayRadarChart series={[
+                { label: "Before", color: "#6B8570", metrics: {
+                  "Possession": { scaled: intelligence.style_dna_before.possession_tendency ?? 0 },
+                  "Directness": { scaled: intelligence.style_dna_before.directness ?? 0 },
+                  "Defensive Intensity": { scaled: intelligence.style_dna_before.defensive_intensity ?? 0 },
+                  "Physicality": { scaled: intelligence.style_dna_before.physicality ?? 0 },
+                  "Attacking Threat": { scaled: intelligence.style_dna_before.attacking_threat ?? 0 },
+                }},
+                { label: "After", color: "#E3A857", metrics: {
+                  "Possession": { scaled: intelligence.style_dna_after.possession_tendency ?? 0 },
+                  "Directness": { scaled: intelligence.style_dna_after.directness ?? 0 },
+                  "Defensive Intensity": { scaled: intelligence.style_dna_after.defensive_intensity ?? 0 },
+                  "Physicality": { scaled: intelligence.style_dna_after.physicality ?? 0 },
+                  "Attacking Threat": { scaled: intelligence.style_dna_after.attacking_threat ?? 0 },
+                }},
+              ]} />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 mb-2">
+              {intelligence.moneyball_verdict != null && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">💎 Moneyball Verdict</div>
+                  <div className="text-xl font-bold font-plexmono text-[#E3A857]">{intelligence.moneyball_verdict}</div>
+                </div>
+              )}
+              {intelligence.workload_relief?.departing_player_position_share_pct != null && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">🔋 Workload Relief</div>
+                  <div className="text-xl font-bold font-plexmono text-[#E3A857]">{intelligence.workload_relief.departing_player_position_share_pct}%</div>
+                  <div className="text-[10px] text-[#4A5C52] mt-1 italic">{intelligence.workload_relief.note}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
