@@ -324,6 +324,50 @@ const POSITION_METRIC_SETS = {
 };
 const DEFAULT_METRIC_SET = ["Goals/90", "Key Passes/90", "Tackles/90", "Pass Acc %", "Rating"];
 
+// Multiple named tactical roles per position, each weighting a different
+// combination of real per-90 stats — inspired by how recruitment thinks
+// about role fit (a centre-back can be genuinely suited to one style and
+// poorly suited to another, even sharing the same broad position), rather
+// than forcing a single archetype label. Weights use percentile scores
+// already computed elsewhere, so this needs no new backend endpoint.
+const ROLE_TEMPLATES = {
+  "Goalkeeper": {
+    "Shot-Stopper": { "Saves/90": 0.45, "Save %": 0.4, "Rating": 0.15 },
+    "Sweeper-Keeper": { "Pass Acc %": 0.45, "Saves/90": 0.25, "Save %": 0.2, "Rating": 0.1 },
+  },
+  "Defender": {
+    "Ball-Playing Defender": { "Pass Acc %": 0.4, "Take-ons/90": 0.25, "Tackles/90": 0.2, "Interceptions/90": 0.15 },
+    "No-Nonsense Defender": { "Tackles/90": 0.35, "Interceptions/90": 0.35, "Duel Win %": 0.3 },
+    "Wing-Back": { "Take-ons/90": 0.35, "Pass Acc %": 0.25, "Duel Win %": 0.25, "Tackles/90": 0.15 },
+  },
+  "Midfielder": {
+    "Deep-Lying Playmaker": { "Pass Acc %": 0.45, "Key Passes/90": 0.35, "Tackles/90": 0.2 },
+    "Box-to-Box": { "Tackles/90": 0.3, "Take-ons/90": 0.3, "Goals/90": 0.25, "Pass Acc %": 0.15 },
+    "Advanced Playmaker": { "Key Passes/90": 0.45, "Assists/90": 0.35, "Take-ons/90": 0.2 },
+  },
+  "Attacker": {
+    "Poacher": { "Goals/90": 0.55, "Shots on Target/90": 0.35, "Pass Acc %": 0.1 },
+    "Complete Forward": { "Goals/90": 0.35, "Assists/90": 0.3, "Take-ons/90": 0.35 },
+    "Winger": { "Take-ons/90": 0.4, "Assists/90": 0.3, "Key Passes/90": 0.3 },
+  },
+};
+
+function computeRoleFitScores(metrics, position) {
+  const roles = ROLE_TEMPLATES[position];
+  if (!roles) return null;
+  return Object.entries(roles).map(([roleName, weights]) => {
+    let score = 0, totalWeight = 0;
+    Object.entries(weights).forEach(([stat, w]) => {
+      const scaled = metrics[stat]?.scaled;
+      if (scaled != null) { score += scaled * w; totalWeight += w; }
+    });
+    // Genuinely normalize by the weight actually used, so a player
+    // missing one stat still gets a fair score from what's available,
+    // rather than being silently penalized for a data gap.
+    return { role: roleName, score: totalWeight > 0 ? Math.round(score / totalWeight) : null };
+  }).filter(r => r.score != null).sort((a, b) => b.score - a.score);
+}
+
 function rawStatsForRow(row) {
   const minutes = row.minutes_played || 0;
   const hasStats = minutes > 0;
@@ -1170,6 +1214,24 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
                 </div>
               </div>
             )}
+
+            {(() => {
+              const roleFits = computeRoleFitScores(p.metrics, p.position);
+              return roleFits && roleFits.length > 0 && (
+                <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                  <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">🧭 Role Suitability</div>
+                  <div className="text-[10px] text-[#4A5C52] italic mb-2">
+                    How well this player's real stat profile fits each specific tactical role — not just one broad label, since the same position can suit very different styles.
+                  </div>
+                  {roleFits.map(r => (
+                    <div key={r.role} className="flex items-center justify-between text-sm py-1">
+                      <span className="text-[#EDEDE3]">{r.role}</span>
+                      <span className="font-plexmono" style={{ color: r.score >= 70 ? "#7FD99A" : r.score >= 45 ? "#E3A857" : "#9AAA9E" }}>{r.score}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
 
             {details?.history && details.history.length >= 2 && (
               <div className="mt-4 border-b border-[#2C4A3B] pb-4">
