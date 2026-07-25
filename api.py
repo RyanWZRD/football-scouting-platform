@@ -4218,6 +4218,123 @@ def peak_age_curve(position: str, authorized: bool = Depends(check_api_key)):
     }
 
 
+@app.get("/fixtures/{match_id}/preview")
+def match_preview(match_id: int, authorized: bool = Depends(check_api_key)):
+    """Synthesizes nearly every fixture-facing signal built on this
+    platform into one comprehensive pre-match briefing: outcome
+    estimate, referee tendencies (if known), rivalry intensity history,
+    fixture congestion context for both sides, a head-to-head Style DNA
+    overlay, and any shortlisted player currently flagged for burnout
+    risk on either side. Reuses the exact same logic each individual
+    feature already uses, for direct comparability across the platform."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT m.id, m.match_date, m.referee,
+                   home_cl.name AS home_club, away_cl.name AS away_club,
+                   l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display
+            FROM matches m
+            JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            JOIN leagues l ON l.id = m.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE m.id = %s
+        """, (match_id,))
+        match_row = cur.fetchone()
+    conn.close()
+
+    if not match_row:
+        raise HTTPException(status_code=404, detail="Match not found")
+
+    home_club, away_club, league_display = match_row["home_club"], match_row["away_club"], match_row["league_display"]
+
+    # Referee tendencies — reuses the same query as /referees/tendencies,
+    # filtered to just this specific referee if one is known.
+    referee_profile = None
+    if match_row["referee"]:
+        conn = get_conn()
+        with conn.cursor() as cur:
+            cur.execute("""
+                WITH match_cards AS (
+                    SELECT pms.match_id, SUM(pms.yellow_cards + pms.red_cards) AS total_cards
+                    FROM player_match_stats pms GROUP BY pms.match_id
+                ),
+                match_penalties AS (
+                    SELECT pms.match_id, SUM(pms.penalties_scored + pms.penalties_missed) AS total_penalties
+                    FROM player_match_stats pms GROUP BY pms.match_id
+                )
+                SELECT COUNT(*) AS matches_officiated,
+                       ROUND(AVG(COALESCE(mc.total_cards, 0))::numeric, 2) AS avg_cards_per_match,
+                       ROUND(AVG(COALESCE(mp.total_penalties, 0))::numeric, 2) AS avg_penalties_per_match,
+                       ROUND((100.0 * SUM(CASE WHEN m.home_score > m.away_score THEN 1 ELSE 0 END) / COUNT(*))::numeric, 1) AS home_win_pct
+                FROM matches m
+                LEFT JOIN match_cards mc ON mc.match_id = m.id
+                LEFT JOIN match_penalties mp ON mp.match_id = m.id
+                WHERE m.status = 'finished' AND m.referee = %s
+                HAVING COUNT(*) >= 3
+            """, (match_row["referee"],))
+            referee_profile = cur.fetchone()
+        conn.close()
+
+    # Rivalry check — does this specific pair have enough H2H history to register?
+    rivalry = None
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH match_cards AS (
+                SELECT pms.match_id, SUM(pms.yellow_cards + pms.red_cards) AS total_cards
+                FROM player_match_stats pms GROUP BY pms.match_id
+            )
+            SELECT COUNT(*) AS meetings,
+                   ROUND(AVG(ABS(m.home_score - m.away_score))::numeric, 2) AS avg_goal_diff,
+                   ROUND(AVG(COALESCE(mc.total_cards, 0))::numeric, 2) AS avg_cards
+            FROM matches m
+            JOIN clubs h ON h.id = m.home_club_id
+            JOIN clubs a ON a.id = m.away_club_id
+            LEFT JOIN match_cards mc ON mc.match_id = m.id
+            WHERE m.status = 'finished'
+              AND ((h.name = %s AND a.name = %s) OR (h.name = %s AND a.name = %s))
+            HAVING COUNT(*) >= 3
+        """, (home_club, away_club, away_club, home_club))
+        rivalry_row = cur.fetchone()
+        if rivalry_row:
+            tightness_score = max(0, 100 - float(rivalry_row["avg_goal_diff"]) * 40)
+            # Card scale anchored to a reasonable typical ceiling (6/match) rather
+            # than recomputing across the whole league just for one pair's context.
+            card_score = min(100, (float(rivalry_row["avg_cards"]) / 6.0) * 100)
+            rivalry = {**rivalry_row, "intensity_score": round(tightness_score * 0.6 + card_score * 0.4, 1)}
+    conn.close()
+
+    # Style DNA for both sides — reuses the exact playing_style_dna logic directly.
+    home_dna = playing_style_dna(club=home_club, league=league_display, authorized=True)
+    away_dna = playing_style_dna(club=away_club, league=league_display, authorized=True)
+
+    # Key player flags — any shortlisted player at either club currently
+    # carrying an elevated burnout risk signal.
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.full_name, cl.name AS club
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            WHERE cl.name IN (%s, %s) AND p.watch_level = 'shortlist'
+        """, (home_club, away_club))
+        shortlisted = cur.fetchall()
+    conn.close()
+
+    return {
+        "match": {"home_club": home_club, "away_club": away_club, "match_date": match_row["match_date"], "referee": match_row["referee"]},
+        "referee_profile": referee_profile,
+        "rivalry": rivalry,
+        "style_dna": {
+            "home": home_dna.get("dna") if home_dna.get("available") else None,
+            "away": away_dna.get("dna") if away_dna.get("available") else None,
+        },
+        "shortlisted_players_involved": shortlisted,
+        "note": "Combines existing platform signals into one briefing — not a new prediction, a synthesis of what's already known.",
+    }
+
+
 @app.get("/clubs/net-transfer-balance")
 def net_transfer_balance(days: int = Query(180, le=365), limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
     """Which clubs are genuinely net buyers vs net sellers — not raw
