@@ -3951,6 +3951,166 @@ def talent_hotspots(limit: int = Query(20, le=40), authorized: bool = Depends(ch
     return rows
 
 
+def _get_player_aggregate_stats(cur, player_id):
+    """Real season totals for one player — the raw building blocks
+    every simulation below adds/removes from a club's combined totals."""
+    cur.execute("""
+        SELECT p.full_name, p.primary_position,
+               EXTRACT(YEAR FROM age(p.date_of_birth))::int AS age,
+               COALESCE(SUM(pms.minutes_played), 0) AS minutes,
+               COALESCE(SUM(pms.passes_attempted), 0) AS passes_attempted,
+               COALESCE(SUM(pms.take_ons_attempted), 0) AS take_ons_attempted,
+               COALESCE(SUM(pms.tackles + pms.interceptions), 0) AS defensive_actions,
+               COALESCE(SUM(pms.duels_won), 0) AS duels_won,
+               COALESCE(SUM(pms.duels_attempted), 0) AS duels_attempted,
+               COALESCE(SUM(pms.goals + pms.assists), 0) AS goal_contributions
+        FROM players p
+        LEFT JOIN player_match_stats pms ON pms.player_id = p.id
+        WHERE p.id = %s
+        GROUP BY p.id, p.full_name, p.primary_position, p.date_of_birth
+    """, (player_id,))
+    return cur.fetchone()
+
+
+@app.get("/clubs/transfer-intelligence")
+def transfer_intelligence_engine(
+    club: str, league: str, player_in_id: int, player_out_id: int,
+    authorized: bool = Depends(check_api_key),
+):
+    """The full simulated impact of a real signing — not just squad
+    averages, but Style DNA shift, a Moneyball verdict on the incoming
+    player, and workload relief at the affected position, combined into
+    one decision-making view. Simulates the squad's real aggregate stats
+    with the swap applied, then recomputes each signal exactly as it's
+    computed live elsewhere on this platform, for direct comparability."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        player_in = _get_player_aggregate_stats(cur, player_in_id)
+        player_out = _get_player_aggregate_stats(cur, player_out_id)
+        if not player_in or not player_out:
+            conn.close()
+            return {"available": False, "reason": "One or both players not found."}
+
+        # Current club aggregate totals (the "before" state)
+        cur.execute("""
+            SELECT COALESCE(SUM(pms.minutes_played), 0) AS minutes,
+                   COALESCE(SUM(pms.passes_attempted), 0) AS passes_attempted,
+                   COALESCE(SUM(pms.take_ons_attempted), 0) AS take_ons_attempted,
+                   COALESCE(SUM(pms.tackles + pms.interceptions), 0) AS defensive_actions,
+                   COALESCE(SUM(pms.duels_won), 0) AS duels_won,
+                   COALESCE(SUM(pms.duels_attempted), 0) AS duels_attempted,
+                   COALESCE(SUM(pms.goals + pms.assists), 0) AS goal_contributions
+            FROM player_match_stats pms
+            JOIN players p ON p.id = pms.player_id
+            JOIN clubs cl ON cl.id = p.current_club_id
+            WHERE cl.name = %s
+        """, (club,))
+        club_totals = cur.fetchone()
+
+        # Every other club in the league, for percentile comparison —
+        # identical pool used by /clubs/style-dna, for direct comparability.
+        cur.execute("""
+            SELECT cl.name AS club,
+                   SUM(pms.passes_attempted) * 90.0 / NULLIF(SUM(pms.minutes_played), 0) AS possession_tendency,
+                   SUM(pms.take_ons_attempted) * 90.0 / NULLIF(SUM(pms.minutes_played), 0) AS directness,
+                   SUM(pms.tackles + pms.interceptions) * 90.0 / NULLIF(SUM(pms.minutes_played), 0) AS defensive_intensity,
+                   100.0 * SUM(pms.duels_won) / NULLIF(SUM(pms.duels_attempted), 0) AS physicality,
+                   SUM(pms.goals + pms.assists) * 90.0 / NULLIF(SUM(pms.minutes_played), 0) AS attacking_threat
+            FROM player_match_stats pms
+            JOIN players p ON p.id = pms.player_id
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+            GROUP BY cl.id, cl.name
+            HAVING SUM(pms.minutes_played) >= 900
+        """, (league,))
+        all_clubs = cur.fetchall()
+
+        # Position-mates still at the club, for workload-relief context —
+        # how big a share of this position's minutes the departing player carried.
+        cur.execute("""
+            SELECT COALESCE(SUM(pms.minutes_played), 0) AS position_total_minutes
+            FROM player_match_stats pms
+            JOIN players p ON p.id = pms.player_id
+            JOIN clubs cl ON cl.id = p.current_club_id
+            WHERE cl.name = %s AND p.primary_position = %s
+        """, (club, player_out["primary_position"]))
+        position_total = cur.fetchone()
+
+        # Player_in's own potential + top5 status, for the Moneyball verdict
+        cur.execute("""
+            SELECT pps.potential_index, l.is_top5
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE p.id = %s
+        """, (player_in_id,))
+        moneyball_row = cur.fetchone()
+    conn.close()
+
+    def dna_percentiles(minutes, passes, take_ons, defense, duels_won, duels_att, goal_contrib):
+        vals = {
+            "possession_tendency": (passes * 90.0 / minutes) if minutes else None,
+            "directness": (take_ons * 90.0 / minutes) if minutes else None,
+            "defensive_intensity": (defense * 90.0 / minutes) if minutes else None,
+            "physicality": (100.0 * duels_won / duels_att) if duels_att else None,
+            "attacking_threat": (goal_contrib * 90.0 / minutes) if minutes else None,
+        }
+        result = {}
+        for dim, target_val in vals.items():
+            pool = [float(c[dim]) for c in all_clubs if c[dim] is not None]
+            if target_val is None or not pool:
+                result[dim] = None
+                continue
+            below = sum(1 for v in pool if v < target_val)
+            result[dim] = round(100 * below / len(pool))
+        return result
+
+    before_dna = dna_percentiles(
+        club_totals["minutes"], club_totals["passes_attempted"], club_totals["take_ons_attempted"],
+        club_totals["defensive_actions"], club_totals["duels_won"], club_totals["duels_attempted"], club_totals["goal_contributions"],
+    )
+
+    after_minutes = club_totals["minutes"] - player_out["minutes"] + player_in["minutes"]
+    after_dna = dna_percentiles(
+        after_minutes,
+        club_totals["passes_attempted"] - player_out["passes_attempted"] + player_in["passes_attempted"],
+        club_totals["take_ons_attempted"] - player_out["take_ons_attempted"] + player_in["take_ons_attempted"],
+        club_totals["defensive_actions"] - player_out["defensive_actions"] + player_in["defensive_actions"],
+        club_totals["duels_won"] - player_out["duels_won"] + player_in["duels_won"],
+        club_totals["duels_attempted"] - player_out["duels_attempted"] + player_in["duels_attempted"],
+        club_totals["goal_contributions"] - player_out["goal_contributions"] + player_in["goal_contributions"],
+    )
+
+    moneyball_verdict = None
+    if moneyball_row and moneyball_row["potential_index"] is not None:
+        potential = float(moneyball_row["potential_index"])
+        confidence_mult = 1.0 if player_in["minutes"] >= 1800 else 0.9 if player_in["minutes"] >= 900 else 0.75 if player_in["minutes"] >= 300 else 0.5
+        obscurity_bonus = 0.15 if not moneyball_row["is_top5"] else 0
+        moneyball_verdict = round(potential * (1 + obscurity_bonus) * confidence_mult, 1)
+
+    position_share_pct = round(100 * player_out["minutes"] / position_total["position_total_minutes"], 1) if position_total["position_total_minutes"] else None
+
+    return {
+        "available": True,
+        "player_in": {"full_name": player_in["full_name"], "position": player_in["primary_position"], "age": player_in["age"]},
+        "player_out": {"full_name": player_out["full_name"], "position": player_out["primary_position"], "age": player_out["age"]},
+        "style_dna_before": before_dna,
+        "style_dna_after": after_dna,
+        "moneyball_verdict": moneyball_verdict,
+        "workload_relief": {
+            "departing_player_position_share_pct": position_share_pct,
+            "note": "Share of this position's total minutes the departing player carried — a high share means a real gap this signing needs to fill." if position_share_pct is not None else None,
+        },
+        "note": "A simulation from real aggregate stats — doesn't account for tactics, fitness, or squad chemistry. A decision-support tool, not a guarantee.",
+    }
+
+
 @app.get("/clubs/net-transfer-balance")
 def net_transfer_balance(days: int = Query(180, le=365), limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
     """Which clubs are genuinely net buyers vs net sellers — not raw
