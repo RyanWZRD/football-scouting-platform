@@ -1,4 +1,4 @@
-﻿name: Refresh Transfer News
+name: Refresh Transfer News
 
 on:
   schedule:
