@@ -36,16 +36,28 @@ def run(season):
     with conn.cursor() as cur:
         # For each player, find the club they have the MOST minutes with
         # this season, and compare to their currently-stored club.
+        # BUG FIX: the original query had no deterministic tie-breaker.
+        # When a player has genuinely similar total minutes split across
+        # two clubs (a mid-season loan, or cup vs domestic appearances
+        # landing under different club_ids), PostgreSQL has no reliable
+        # way to pick between rows tied on minutes — the "winner" could
+        # differ from one run to the next, causing this script to flip
+        # a player's club assignment back and forth on successive nights
+        # even though nothing had genuinely changed. Confirmed directly:
+        # this was inflating player_club_transfers with hundreds of fake
+        # "transfers" per club that never happened. Fixed by adding a
+        # real, deterministic tie-breaker — most recent match date wins.
         cur.execute("""
             SELECT DISTINCT ON (pms.player_id)
                 pms.player_id, pms.club_id, p.current_club_id,
-                SUM(pms.minutes_played) OVER (PARTITION BY pms.player_id, pms.club_id) AS minutes
+                SUM(pms.minutes_played) OVER (PARTITION BY pms.player_id, pms.club_id) AS minutes,
+                MAX(m.match_date) OVER (PARTITION BY pms.player_id, pms.club_id) AS latest_match
             FROM player_match_stats pms
             JOIN matches m ON m.id = pms.match_id
             JOIN leagues l ON l.id = m.league_id
             JOIN players p ON p.id = pms.player_id
             WHERE l.season = %s
-            ORDER BY pms.player_id, minutes DESC
+            ORDER BY pms.player_id, minutes DESC, latest_match DESC
         """, (str(season),))
         rows = cur.fetchall()
 
