@@ -4129,7 +4129,7 @@ function FixtureRow({ m }) {
         <span>{m.away_win_pct}%</span>
       </div>
       {!tracked ? (
-        <button onClick={trackPrediction} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] mb-2">
+        <button onClick={trackPrediction} className="block text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] mb-2">
           📌 Track this prediction
         </button>
       ) : (
@@ -4137,7 +4137,7 @@ function FixtureRow({ m }) {
       )}
 
       {!apiPrediction && (
-        <button onClick={loadApiPrediction} disabled={loadingApi} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] disabled:opacity-50">
+        <button onClick={loadApiPrediction} disabled={loadingApi} className="block text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] disabled:opacity-50 mb-2">
           {loadingApi ? "Loading…" : "Compare against API-Football's own prediction →"}
         </button>
       )}
@@ -4156,7 +4156,7 @@ function FixtureRow({ m }) {
       )}
 
       {!marketOdds && (
-        <button onClick={loadMarketOdds} disabled={loadingOdds} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] disabled:opacity-50 mt-2">
+        <button onClick={loadMarketOdds} disabled={loadingOdds} className="block text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] disabled:opacity-50 mt-2">
           {loadingOdds ? "Loading…" : "Compare against real betting odds →"}
         </button>
       )}
