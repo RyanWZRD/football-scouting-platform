@@ -449,14 +449,24 @@ async def live_poll_loop():
                     # substitution or VAR check — goals and cards are what
                     # a scout actually wants to know about instantly.
                     if ev.get("type") in ("Goal", "Card"):
+                        event_type = ev.get("type")
+                        player_name = ev.get("player", {}).get("name")
+                        team_name = ev.get("team", {}).get("name")
+                        minute = ev.get("time", {}).get("elapsed")
+                        detail = ev.get("detail")
+
+                        if event_type == "Goal":
+                            drafted_tweet = f"🚨 GOAL! {player_name} scores for {team_name} in the {minute}' — one of your shortlisted players delivering live. #Football #Scouting"
+                        else:
+                            drafted_tweet = f"🟨 {player_name} ({team_name}) booked in the {minute}' — {detail or 'card shown'}. #Football"
+
                         await live_manager.broadcast({
                             "player_event": {
                                 "fixture_id": fixture_id,
                                 "home_club": m["home_club"], "away_club": m["away_club"],
-                                "type": ev.get("type"), "detail": ev.get("detail"),
-                                "player": ev.get("player", {}).get("name"),
-                                "team": ev.get("team", {}).get("name"),
-                                "minute": ev.get("time", {}).get("elapsed"),
+                                "type": event_type, "detail": detail,
+                                "player": player_name, "team": team_name, "minute": minute,
+                                "drafted_tweet": drafted_tweet,
                             }
                         })
 
@@ -3373,6 +3383,38 @@ def digest_thread(authorized: bool = Depends(check_api_key)):
         part += 1
 
     return {"available": True, "generated_at": row["generated_at"], "thread": thread}
+
+
+@app.get("/content/season-callback")
+def season_callback(authorized: bool = Depends(check_api_key)):
+    """A 'seasons ago' callback — genuinely couldn't build a literal
+    'on this exact day' version, since player_season_history stores
+    season-level totals only, not per-match dates. This is the honest,
+    achievable version: real historical season output, once historical
+    seasons have actually been ingested (a currently-pending task).
+    Returns a clear 'not available yet' response rather than pretending
+    otherwise if no historical data exists."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.full_name, psh.season, psh.club_name, psh.league_name,
+                   psh.goals, psh.assists, psh.appearances, psh.avg_rating
+            FROM player_season_history psh
+            JOIN players p ON p.id = psh.player_id
+            WHERE psh.goals IS NOT NULL AND psh.goals >= 5
+            ORDER BY RANDOM() LIMIT 1
+        """)
+        r = cur.fetchone()
+    conn.close()
+
+    if not r:
+        return {"available": False, "reason": "No historical season data ingested yet — run historical_seasons_ingest.py first."}
+
+    rating_clause = f", averaging a {r['avg_rating']} rating" if r["avg_rating"] else ""
+    text = (f"📅 Back in {r['season']}, {r['full_name']} ({r['club_name']}, {r['league_name']}) recorded "
+            f"{r['goals']} goals and {r['assists']} assists across {r['appearances']} appearances"
+            f"{rating_clause}. #Football #OnThisDay")
+    return {"available": True, "text": text, "data": r}
 
 
 @app.post("/predictions/track")
