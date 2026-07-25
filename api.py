@@ -2744,6 +2744,138 @@ def search_scout_notes(q: str, limit: int = Query(20, le=50), authorized: bool =
     return rows
 
 
+@app.get("/players/padj-defense")
+def padj_defensive_metrics(position: str = "Defender", limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
+    """Possession-adjusted tackles+interceptions — a real, established
+    professional metric (StatsBomb calls this 'PAdj'). Raw defensive
+    counts are misleading on their own: a low-possession team's
+    defenders rack up more tackles simply from facing more pressure,
+    not necessarily from being better defenders. This uses each team's
+    pass volume as a possession proxy (since true possession% isn't
+    available from this data source), adjusting each player's raw
+    numbers relative to how much time their team actually spent without
+    the ball. HONEST LIMITATION: pass volume is a reasonable proxy for
+    possession share, not a perfect one — teams with very different
+    passing styles at similar true possession levels could be adjusted
+    slightly off from their real number."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH match_team_passes AS (
+                SELECT match_id, club_id, SUM(passes_attempted) AS team_passes
+                FROM player_match_stats
+                GROUP BY match_id, club_id
+            ),
+            match_pass_share AS (
+                SELECT mtp.match_id, mtp.club_id,
+                       mtp.team_passes::float / NULLIF(mtp.team_passes + opp.team_passes, 0) AS pass_share
+                FROM match_team_passes mtp
+                JOIN matches m ON m.id = mtp.match_id
+                JOIN match_team_passes opp ON opp.match_id = mtp.match_id AND opp.club_id != mtp.club_id
+            ),
+            player_avg_share AS (
+                SELECT pms.player_id,
+                       SUM(mps.pass_share * pms.minutes_played) / NULLIF(SUM(pms.minutes_played), 0) AS avg_pass_share,
+                       SUM(pms.tackles + pms.interceptions) * 90.0 / NULLIF(SUM(pms.minutes_played), 0) AS raw_defensive_per90,
+                       SUM(pms.minutes_played) AS total_minutes
+                FROM player_match_stats pms
+                JOIN match_pass_share mps ON mps.match_id = pms.match_id AND mps.club_id = pms.club_id
+                GROUP BY pms.player_id
+                HAVING SUM(pms.minutes_played) >= 450
+            ),
+            league_avg AS (
+                SELECT AVG(avg_pass_share) AS league_share FROM player_avg_share
+            )
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club,
+                   ROUND(pas.raw_defensive_per90::numeric, 2) AS raw_defensive_per90,
+                   ROUND((pas.raw_defensive_per90 * (pas.avg_pass_share / la.league_share))::numeric, 2) AS padj_defensive_per90
+            FROM player_avg_share pas
+            JOIN players p ON p.id = pas.player_id
+            LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            CROSS JOIN league_avg la
+            WHERE p.primary_position = %s
+            ORDER BY padj_defensive_per90 DESC
+            LIMIT %s
+        """, (position, limit))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/players/xg-proxy")
+def xg_proxy(limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
+    """A simplified shot-quality proxy — NOT true xG. Real xG models
+    (like StatsBomb's) use shot coordinates, defender/keeper positions,
+    and shot height, none of which this data source provides. This
+    instead weights on-target shots heavily and off-target shots
+    lightly, on the reasoning that on-target attempts are far more
+    likely to represent genuine scoring chances — a real improvement
+    over treating every shot as equal value, but an honest
+    approximation, not a positional model. Requires 5+ shots to appear,
+    avoiding a misleading read from a tiny sample."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club,
+                   SUM(pms.shots) AS total_shots, SUM(pms.shots_on_target) AS shots_on_target,
+                   SUM(pms.goals) AS actual_goals,
+                   ROUND((
+                       (SUM(pms.shots_on_target) * 90.0 / NULLIF(SUM(pms.minutes_played), 0)) * 0.30 +
+                       (GREATEST(SUM(pms.shots) - SUM(pms.shots_on_target), 0) * 90.0 / NULLIF(SUM(pms.minutes_played), 0)) * 0.05
+                   )::numeric, 3) AS xg_proxy_per90
+            FROM player_match_stats pms
+            JOIN players p ON p.id = pms.player_id
+            LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            GROUP BY p.id, p.full_name, p.photo_url, cl.name
+            HAVING SUM(pms.shots) >= 5 AND SUM(pms.minutes_played) >= 450
+            ORDER BY xg_proxy_per90 DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.post("/templates")
+def save_template(body: TemplateRequest, authorized: bool = Depends(check_api_key)):
+    """Save a Target Profile Search as a reusable named template — the
+    equivalent of StatsBomb's saved custom radar templates. Define what
+    you're looking for once, reuse it without re-entering every field."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO scouting_templates
+                (name, position, goals_p90, assists_p90, key_passes_p90, defensive_p90, take_ons_p90, pass_acc, age_max)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (body.name, body.position, body.goals_p90, body.assists_p90, body.key_passes_p90,
+              body.defensive_p90, body.take_ons_p90, body.pass_acc, body.age_max))
+        new_id = cur.fetchone()["id"]
+    conn.commit()
+    conn.close()
+    return {"id": new_id, "saved": True}
+
+
+@app.get("/templates")
+def list_templates(authorized: bool = Depends(check_api_key)):
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT * FROM scouting_templates ORDER BY created_at DESC")
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.delete("/templates/{template_id}")
+def delete_template(template_id: int, authorized: bool = Depends(check_api_key)):
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM scouting_templates WHERE id = %s", (template_id,))
+    conn.commit()
+    conn.close()
+    return {"deleted": True}
+
+
 @app.get("/transfers")
 def recent_transfers(limit: int = Query(20, le=100), authorized: bool = Depends(check_api_key)):
     """Recent club changes, detected automatically by a database trigger
@@ -3946,6 +4078,18 @@ def set_watch_level(player_id: int, body: WatchRequest, authorized: bool = Depen
     conn.commit()
     conn.close()
     return result
+
+
+class TemplateRequest(BaseModel):
+    name: str
+    position: str
+    goals_p90: Optional[float] = None
+    assists_p90: Optional[float] = None
+    key_passes_p90: Optional[float] = None
+    defensive_p90: Optional[float] = None
+    take_ons_p90: Optional[float] = None
+    pass_acc: Optional[float] = None
+    age_max: Optional[int] = None
 
 
 class ScoutRatingRequest(BaseModel):
