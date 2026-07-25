@@ -1723,6 +1723,7 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
   const [partnerships, setPartnerships] = useState(null);
   const [positionContinuity, setPositionContinuity] = useState(null);
   const [rotationAdvisor, setRotationAdvisor] = useState(null);
+  const [styleDna, setStyleDna] = useState(null);
   useEffect(() => {
     if (!API_BASE_URL) return;
     const params = new URLSearchParams({ club: clubName, league: leagueName });
@@ -1762,6 +1763,10 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
       .then(res => res.ok ? res.json() : null)
       .then(data => setRotationAdvisor(data))
       .catch(() => setRotationAdvisor(null));
+    fetch(`${API_BASE_URL}/clubs/style-dna?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setStyleDna(data))
+      .catch(() => setStyleDna(null));
   }, [clubName, leagueName]);
 
   return (
@@ -1966,6 +1971,27 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
                 </span>
               </div>
             ))}
+          </div>
+        )}
+
+        {styleDna?.available && (
+          <div className="mt-6 border-t border-[#2C4A3B] pt-5">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">🧬 Playing Style DNA</div>
+            <div className="text-[10px] text-[#4A5C52] italic mb-3">
+              A tactical fingerprint from real aggregate stats, percentile-ranked against every other club in this league.
+            </div>
+            <div className="h-64">
+              <OverlayRadarChart series={[{
+                label: clubName, color: "#E3A857",
+                metrics: {
+                  "Possession": { scaled: styleDna.dna.possession_tendency ?? 0 },
+                  "Directness": { scaled: styleDna.dna.directness ?? 0 },
+                  "Defensive Intensity": { scaled: styleDna.dna.defensive_intensity ?? 0 },
+                  "Physicality": { scaled: styleDna.dna.physicality ?? 0 },
+                  "Attacking Threat": { scaled: styleDna.dna.attacking_threat ?? 0 },
+                },
+              }]} />
+            </div>
           </div>
         )}
 
@@ -4913,6 +4939,130 @@ function FixtureDifficultyModal({ allLeagueOptions, onClose }) {
   );
 }
 
+function MoneyballModal({ onClose, onSelectPlayer }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/players/moneyball?limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">💎 Moneyball Score</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Combines raw potential, how reliable that score is, and market obscurity (outside the top 5 leagues) into one score — genuinely good players hiding in plain sight, not just any obscure name.
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.length === 0 && <div className="text-sm text-[#6B8570] text-center py-4">Not enough qualifying players yet.</div>}
+        {rows?.map((r, i) => (
+          <button key={r.id} onClick={() => onSelectPlayer(r)} className="w-full flex items-center justify-between text-sm py-2 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+            <span className="flex items-center gap-2 text-[#EDEDE3] truncate">
+              <span className="text-[#6B8570] w-5">{i + 1}.</span>
+              <Avatar name={r.full_name} photoUrl={r.photo_url} size={26} />
+              <span className="truncate">{r.full_name}</span>
+              <span className="text-[#6B8570] text-xs shrink-0">· {r.club} · {r.league_display}</span>
+            </span>
+            <span className="text-xs font-plexmono text-[#E3A857] shrink-0">{r.moneyball_score}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RivalryIntensityModal({ allLeagueOptions, onClose }) {
+  const [league, setLeague] = useState("");
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !league) { setRows(null); return; }
+    setRows(null);
+    fetch(`${API_BASE_URL}/clubs/rivalry-intensity?league=${encodeURIComponent(league)}&limit=15`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, [league]);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🔥 Rivalry Intensity Index</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Real head-to-head history — tighter scorelines and elevated cards in these specific meetings signal a genuinely heated rivalry, not just table position.
+        </div>
+
+        <select value={league} onChange={e => setLeague(e.target.value)}
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-4">
+          <option value="">Select a league...</option>
+          {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+
+        {league && rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.length === 0 && <div className="text-sm text-[#6B8570] text-center py-4">Not enough head-to-head history yet for this league.</div>}
+        {rows?.map((r, i) => (
+          <div key={i} className="flex items-center justify-between text-sm py-2.5 border-b border-[#1C2E26]">
+            <span className="text-[#EDEDE3]">{r.club_a} <span className="text-[#6B8570]">vs</span> {r.club_b} <span className="text-[#6B8570] text-xs">({r.meetings} meetings)</span></span>
+            <span className="text-xs font-plexmono text-[#E36B57]">{r.intensity_score}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TalentHotspotsModal({ onClose }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/players/talent-hotspots?limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setRows(data))
+      .catch(() => setRows([]));
+  }, []);
+
+  const maxCount = rows?.length ? Math.max(...rows.map(r => r.high_potential_count)) : 1;
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🗺️ Talent Hotspots</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Which countries are genuinely producing the most high-potential young talent right now — by nationality, not current league.
+        </div>
+
+        {rows === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {rows?.map((r, i) => (
+          <div key={r.country} className="mb-2.5">
+            <div className="flex justify-between text-sm mb-1">
+              <span className="text-[#EDEDE3]">{i + 1}. {r.country}</span>
+              <span className="font-plexmono text-[#E3A857]">{r.high_potential_count} <span className="text-[#6B8570] text-xs">avg {r.avg_potential}</span></span>
+            </div>
+            <div className="h-1.5 bg-[#152922]">
+              <div className="h-full bg-[#E3A857]" style={{ width: `${(r.high_potential_count / maxCount) * 100}%` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function RefereeTendenciesModal({ allLeagueOptions, onClose }) {
   const [league, setLeague] = useState("");
   const [rows, setRows] = useState(null);
@@ -6471,6 +6621,9 @@ function ScoutDashboard() {
   const [acwrOpen, setAcwrOpen] = useState(false);
   const [burnoutRiskOpen, setBurnoutRiskOpen] = useState(false);
   const [refereeTendenciesOpen, setRefereeTendenciesOpen] = useState(false);
+  const [moneyballOpen, setMoneyballOpen] = useState(false);
+  const [rivalryIntensityOpen, setRivalryIntensityOpen] = useState(false);
+  const [talentHotspotsOpen, setTalentHotspotsOpen] = useState(false);
   const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
   const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
@@ -6527,6 +6680,9 @@ function ScoutDashboard() {
     { icon: "📈", label: "Workload Ratio (ACWR)", section: "Data & Results", setter: setAcwrOpen },
     { icon: "🚨", label: "Burnout Risk Score", section: "Scouting Intelligence", setter: setBurnoutRiskOpen },
     { icon: "⚖️", label: "Referee Tendencies", section: "Data & Results", setter: setRefereeTendenciesOpen },
+    { icon: "💎", label: "Moneyball Score", section: "Scouting Intelligence", setter: setMoneyballOpen },
+    { icon: "🔥", label: "Rivalry Intensity Index", section: "Club Analysis", setter: setRivalryIntensityOpen },
+    { icon: "🗺️", label: "Talent Hotspots", section: "Scouting Intelligence", setter: setTalentHotspotsOpen },
     { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
   ];
 
@@ -7472,6 +7628,19 @@ function ScoutDashboard() {
       {acwrOpen && <AcwrModal allLeagueOptions={allLeagueOptions} onClose={() => setAcwrOpen(false)} />}
       {burnoutRiskOpen && <BurnoutRiskModal allLeagueOptions={allLeagueOptions} onClose={() => setBurnoutRiskOpen(false)} />}
       {refereeTendenciesOpen && <RefereeTendenciesModal allLeagueOptions={allLeagueOptions} onClose={() => setRefereeTendenciesOpen(false)} />}
+      {moneyballOpen && (
+        <MoneyballModal
+          onClose={() => setMoneyballOpen(false)}
+          onSelectPlayer={(row) => {
+            setMoneyballOpen(false);
+            if (row.league_display) setLeague(row.league_display);
+            if (row.club) setClub(row.club);
+            setDeepLinkPlayerId(String(row.id));
+          }}
+        />
+      )}
+      {rivalryIntensityOpen && <RivalryIntensityModal allLeagueOptions={allLeagueOptions} onClose={() => setRivalryIntensityOpen(false)} />}
+      {talentHotspotsOpen && <TalentHotspotsModal onClose={() => setTalentHotspotsOpen(false)} />}
       {commandPaletteOpen && (
         <CommandPaletteModal
           items={ALL_MENU_ITEMS}
