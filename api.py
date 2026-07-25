@@ -1172,7 +1172,7 @@ def fixture_estimates(league: str, limit: int = Query(10, le=30), authorized: bo
             form[club] = (points / (len(recent) * 3)) * 100  # 0-100 scale
 
         cur.execute("""
-            SELECT m.id, m.match_date, home_cl.name AS home_club, away_cl.name AS away_club
+            SELECT m.id, m.match_date, home_cl.name AS home_club, away_cl.name AS away_club, m.referee
             FROM matches m
             JOIN clubs home_cl ON home_cl.id = m.home_club_id
             JOIN clubs away_cl ON away_cl.id = m.away_club_id
@@ -1212,6 +1212,7 @@ def fixture_estimates(league: str, limit: int = Query(10, le=30), authorized: bo
             "home_win_pct": round(raw_home / total * 100),
             "draw_pct": round(raw_draw / total * 100),
             "away_win_pct": round(raw_away / total * 100),
+            "referee": m["referee"],
         })
 
     return results
@@ -3717,6 +3718,49 @@ def squad_rotation_advisor(club: str, league: str, authorized: bool = Depends(ch
 
     return {"club": club, "positions": result,
             "note": "Suggests where genuine rotation options exist, based on real recent minutes — doesn't account for tactics, form-on-the-day, or fitness status."}
+
+
+@app.get("/referees/tendencies")
+def referee_tendencies(league: str, limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
+    """Real referee tendency profiles — average cards per match, penalty
+    frequency, and home-team win rate under each referee. A genuine,
+    measurable signal actual analysts and betting markets track. Only
+    covers matches ingested since referee tracking began — historical
+    matches won't retroactively have this. Requires 5+ matches per
+    referee to avoid a misleading read from a tiny sample."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH match_cards AS (
+                SELECT pms.match_id, SUM(pms.yellow_cards + pms.red_cards) AS total_cards
+                FROM player_match_stats pms
+                GROUP BY pms.match_id
+            ),
+            match_penalties AS (
+                SELECT pms.match_id, SUM(pms.penalties_scored + pms.penalties_missed) AS total_penalties
+                FROM player_match_stats pms
+                GROUP BY pms.match_id
+            )
+            SELECT m.referee,
+                   COUNT(*) AS matches_officiated,
+                   ROUND(AVG(COALESCE(mc.total_cards, 0))::numeric, 2) AS avg_cards_per_match,
+                   ROUND(AVG(COALESCE(mp.total_penalties, 0))::numeric, 2) AS avg_penalties_per_match,
+                   ROUND((100.0 * SUM(CASE WHEN m.home_score > m.away_score THEN 1 ELSE 0 END) / COUNT(*))::numeric, 1) AS home_win_pct
+            FROM matches m
+            JOIN leagues l ON l.id = m.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            LEFT JOIN match_cards mc ON mc.match_id = m.id
+            LEFT JOIN match_penalties mp ON mp.match_id = m.id
+            WHERE m.status = 'finished' AND m.referee IS NOT NULL
+              AND (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+            GROUP BY m.referee
+            HAVING COUNT(*) >= 5
+            ORDER BY avg_cards_per_match DESC
+            LIMIT %s
+        """, (league, limit))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
 
 
 @app.get("/clubs/net-transfer-balance")
