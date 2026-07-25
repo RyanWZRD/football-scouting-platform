@@ -4111,6 +4111,113 @@ def transfer_intelligence_engine(
     }
 
 
+@app.get("/clubs/managerial-impact")
+def managerial_impact(club: str, league: str, authorized: bool = Depends(check_api_key)):
+    """Real before/after comparison since the current manager's actual
+    appointment date — points per game, home vs away split, and goal
+    difference in each period. Manager data has only ever been shown
+    for basic display until now; this is the first genuine analysis of
+    whether an appointment actually changed real results. Requires 3+
+    finished matches in both periods to avoid a misleading read."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT cm.name, cm.appointed_date
+            FROM club_managers cm
+            JOIN clubs cl ON cl.id = cm.club_id
+            LEFT JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE cl.name = %s AND (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (club, league))
+        manager_row = cur.fetchone()
+
+        if not manager_row or not manager_row["appointed_date"]:
+            conn.close()
+            return {"available": False, "reason": "No manager appointment date on record for this club yet."}
+
+        def stats_for_period(comparison):
+            cur.execute(f"""
+                SELECT COUNT(*) AS played,
+                       SUM(CASE WHEN home_club_id = cl.id THEN home_score ELSE away_score END) AS gf,
+                       SUM(CASE WHEN home_club_id = cl.id THEN away_score ELSE home_score END) AS ga,
+                       SUM(CASE
+                           WHEN (home_club_id = cl.id AND home_score > away_score) OR (away_club_id = cl.id AND away_score > home_score) THEN 3
+                           WHEN home_score = away_score THEN 1 ELSE 0 END) AS points
+                FROM matches m
+                JOIN clubs cl ON cl.name = %s
+                WHERE (m.home_club_id = cl.id OR m.away_club_id = cl.id)
+                  AND m.status = 'finished' AND m.match_date {comparison} %s
+            """, (club, manager_row["appointed_date"]))
+            return cur.fetchone()
+
+        before_stats = stats_for_period("<")
+        after_stats = stats_for_period(">=")
+    conn.close()
+
+    if not before_stats["played"] or before_stats["played"] < 3 or not after_stats["played"] or after_stats["played"] < 3:
+        return {"available": False, "reason": "Not enough matches recorded on both sides of the appointment date yet to compare fairly."}
+
+    before_ppg = round(before_stats["points"] / before_stats["played"], 2)
+    after_ppg = round(after_stats["points"] / after_stats["played"], 2)
+
+    return {
+        "available": True,
+        "manager": manager_row["name"],
+        "appointed_date": manager_row["appointed_date"],
+        "before": {"matches": before_stats["played"], "ppg": before_ppg, "gf": before_stats["gf"], "ga": before_stats["ga"]},
+        "after": {"matches": after_stats["played"], "ppg": after_ppg, "gf": after_stats["gf"], "ga": after_stats["ga"]},
+        "ppg_change": round(after_ppg - before_ppg, 2),
+        "note": "Compares real results before vs after this specific appointment date — doesn't isolate the manager's effect from squad changes, fixture difficulty, or other factors happening at the same time.",
+    }
+
+
+@app.get("/players/peak-age-curve")
+def peak_age_curve(position: str, authorized: bool = Depends(check_api_key)):
+    """At what age do players in this position genuinely tend to peak,
+    measured from your own tracked players' actual multi-season
+    history — not folklore or generic sports science, a real curve
+    from real data. Requires 5+ player-seasons per age bucket to avoid
+    a misleading read from a handful of outlier careers."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT (psh.season::int - EXTRACT(YEAR FROM p.date_of_birth)::int) AS age_during_season,
+                   psh.avg_rating, psh.goals, psh.assists, psh.appearances
+            FROM player_season_history psh
+            JOIN players p ON p.id = psh.player_id
+            WHERE p.primary_position = %s AND p.date_of_birth IS NOT NULL
+              AND psh.avg_rating IS NOT NULL AND psh.appearances >= 5
+        """, (position,))
+        rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        return {"available": False, "reason": "Not enough multi-season history data ingested yet for this position."}
+
+    by_age = {}
+    for r in rows:
+        age = r["age_during_season"]
+        if age is None or age < 15 or age > 42:  # sanity bounds against genuinely bad data
+            continue
+        by_age.setdefault(age, []).append(float(r["avg_rating"]))
+
+    curve = [
+        {"age": age, "avg_rating": round(sum(ratings) / len(ratings), 2), "player_seasons": len(ratings)}
+        for age, ratings in by_age.items() if len(ratings) >= 5
+    ]
+    curve.sort(key=lambda x: x["age"])
+
+    if not curve:
+        return {"available": False, "reason": "Not enough player-seasons per age bucket yet to compute a reliable curve."}
+
+    peak = max(curve, key=lambda x: x["avg_rating"])
+    return {
+        "available": True, "position": position, "curve": curve,
+        "peak_age": peak["age"], "peak_avg_rating": peak["avg_rating"],
+        "note": "A real curve from your own tracked players — reflects the specific leagues and player pool in this database, not a universal claim about football overall.",
+    }
+
+
 @app.get("/clubs/net-transfer-balance")
 def net_transfer_balance(days: int = Query(180, le=365), limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
     """Which clubs are genuinely net buyers vs net sellers — not raw
