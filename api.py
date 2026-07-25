@@ -24,7 +24,7 @@ import time
 import asyncio
 from datetime import datetime
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Query, Header, Depends, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Header, Depends, WebSocket, WebSocketDisconnect, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -4425,7 +4425,7 @@ def club_strategy_dashboard(club: str, league: str, authorized: bool = Depends(c
 
 
 @app.post("/pipeline/add")
-def add_to_pipeline(body: PipelineAddRequest, authorized: bool = Depends(check_api_key)):
+def add_to_pipeline(body: PipelineAddRequest = Body(...), authorized: bool = Depends(check_api_key)):
     """Adds a player to the Recruitment Pipeline at the 'identified'
     stage — the start of a genuine, tracked pursuit, distinct from
     just shortlisting someone."""
@@ -4446,7 +4446,7 @@ def add_to_pipeline(body: PipelineAddRequest, authorized: bool = Depends(check_a
 
 
 @app.post("/pipeline/{pipeline_id}/stage")
-def update_pipeline_stage(pipeline_id: int, body: PipelineStageUpdateRequest, authorized: bool = Depends(check_api_key)):
+def update_pipeline_stage(pipeline_id: int, body: PipelineStageUpdateRequest = Body(...), authorized: bool = Depends(check_api_key)):
     """Moves a target to a new stage — the drag in a Kanban board,
     the actual update to where this pursuit genuinely stands."""
     valid_stages = {"identified", "contacted", "negotiating", "agreed", "signed", "rejected", "cold"}
