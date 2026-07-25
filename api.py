@@ -3165,6 +3165,284 @@ def fixture_market_odds(match_id: int, authorized: bool = Depends(check_api_key)
     }
 
 
+@app.get("/content/season-preview")
+def season_preview_content(authorized: bool = Depends(check_api_key)):
+    """A genuinely shareable pre-season content pack — breakout
+    candidates, squad rebuilds, and standout home records, each with
+    Twitter-ready text pre-written. Template-based, not AI-generated —
+    reliable and immediate, no external AI dependency required."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.full_name, cl.name AS club, l.name || ' (' || co.name || ')' AS league,
+                   EXTRACT(YEAR FROM age(p.date_of_birth))::int AS age, pps.potential_index
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE p.date_of_birth IS NOT NULL AND age(p.date_of_birth) < interval '22 years'
+              AND l.is_top5 = false AND pps.potential_index >= 85
+            ORDER BY pps.potential_index DESC LIMIT 5
+        """)
+        breakouts = cur.fetchall()
+
+        cur.execute("""
+            SELECT cl.name AS club, l.name || ' (' || co.name || ')' AS league, COUNT(*) AS transfers_in
+            FROM player_club_transfers pct
+            JOIN clubs cl ON cl.id = pct.new_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE pct.changed_at >= now() - interval '90 days'
+            GROUP BY cl.name, l.name, co.name
+            HAVING COUNT(*) >= 3
+            ORDER BY transfers_in DESC LIMIT 5
+        """)
+        rebuilds = cur.fetchall()
+
+        cur.execute("""
+            WITH home_results AS (
+                SELECT home_club_id AS club_id,
+                    CASE WHEN home_score > away_score THEN 3 WHEN home_score = away_score THEN 1 ELSE 0 END AS pts
+                FROM matches WHERE status = 'finished'
+            ),
+            away_results AS (
+                SELECT away_club_id AS club_id,
+                    CASE WHEN away_score > home_score THEN 3 WHEN away_score = home_score THEN 1 ELSE 0 END AS pts
+                FROM matches WHERE status = 'finished'
+            ),
+            home_agg AS (SELECT club_id, AVG(pts) AS home_ppg FROM home_results GROUP BY club_id HAVING COUNT(*) >= 3),
+            away_agg AS (SELECT club_id, AVG(pts) AS away_ppg FROM away_results GROUP BY club_id HAVING COUNT(*) >= 3)
+            SELECT cl.name AS club, ROUND((h.home_ppg - a.away_ppg)::numeric, 2) AS home_advantage_gap
+            FROM home_agg h JOIN away_agg a ON a.club_id = h.club_id JOIN clubs cl ON cl.id = h.club_id
+            ORDER BY home_advantage_gap DESC LIMIT 3
+        """)
+        home_fortresses = cur.fetchall()
+    conn.close()
+
+    tweets = []
+    if breakouts:
+        lines = "\n".join(f"{i+1}. {p['full_name']} ({p['club']}, {p['league']}) — {p['age']}yo, {round(p['potential_index'])} potential"
+                           for i, p in enumerate(breakouts))
+        tweets.append(f"🔍 Breakout candidates to watch this season, outside the big 5 leagues:\n\n{lines}\n\n#Scouting #Football")
+    if rebuilds:
+        lines = "\n".join(f"{r['club']} ({r['league']}) — {r['transfers_in']} new signings" for r in rebuilds)
+        tweets.append(f"🏗️ Clubs going through the biggest rebuilds this window:\n\n{lines}\n\n#Football #TransferWindow")
+    if home_fortresses:
+        lines = "\n".join(f"{h['club']} — +{h['home_advantage_gap']} pts/game at home vs away" for h in home_fortresses)
+        tweets.append(f"🏠 Genuine fortresses — biggest home vs away gaps in points per game:\n\n{lines}\n\n#Football #Data")
+
+    return {"breakouts": breakouts, "rebuilds": rebuilds, "home_fortresses": home_fortresses, "tweet_ready_text": tweets}
+
+
+@app.get("/content/daily-insight")
+def daily_insight(authorized: bool = Depends(check_api_key)):
+    """One genuinely interesting finding, rotating deterministically by
+    day of year so it's consistent all day but changes daily — never
+    stare at a blank page looking for an angle. Template-based, not
+    AI-generated, reusing the same signals already built and verified
+    elsewhere on this platform (Super-Subs, Home Advantage, PAdj Defense,
+    Shot Quality Proxy)."""
+    import datetime as _dt
+    day_index = _dt.date.today().timetuple().tm_yday % 4
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        if day_index == 0:
+            cur.execute("""
+                WITH split_stats AS (
+                    SELECT pms.player_id,
+                        SUM(goals + assists) FILTER (WHERE minutes_played < 45) AS sub_ga,
+                        SUM(minutes_played) FILTER (WHERE minutes_played < 45) AS sub_minutes,
+                        COUNT(*) FILTER (WHERE minutes_played < 45) AS sub_apps
+                    FROM player_match_stats pms GROUP BY pms.player_id
+                    HAVING COUNT(*) FILTER (WHERE minutes_played < 45) >= 5
+                       AND SUM(minutes_played) FILTER (WHERE minutes_played < 45) > 0
+                )
+                SELECT p.full_name, cl.name AS club, s.sub_apps,
+                       ROUND((s.sub_ga * 90.0 / NULLIF(s.sub_minutes, 0))::numeric, 2) AS sub_ga_per90
+                FROM split_stats s JOIN players p ON p.id = s.player_id LEFT JOIN clubs cl ON cl.id = p.current_club_id
+                ORDER BY sub_ga_per90 DESC LIMIT 1
+            """)
+            r = cur.fetchone()
+            text = (f"⚡ Super-sub spotlight: {r['full_name']} ({r['club']}) is producing {r['sub_ga_per90']} goals+assists per 90 "
+                    f"off the bench across {r['sub_apps']} sub appearances — genuinely different from a great starter. #Scouting") if r else None
+
+        elif day_index == 1:
+            cur.execute("""
+                WITH home_results AS (
+                    SELECT home_club_id AS club_id, CASE WHEN home_score > away_score THEN 3 WHEN home_score = away_score THEN 1 ELSE 0 END AS pts
+                    FROM matches WHERE status = 'finished'),
+                away_results AS (
+                    SELECT away_club_id AS club_id, CASE WHEN away_score > home_score THEN 3 WHEN away_score = home_score THEN 1 ELSE 0 END AS pts
+                    FROM matches WHERE status = 'finished'),
+                home_agg AS (SELECT club_id, AVG(pts) AS home_ppg FROM home_results GROUP BY club_id HAVING COUNT(*) >= 3),
+                away_agg AS (SELECT club_id, AVG(pts) AS away_ppg FROM away_results GROUP BY club_id HAVING COUNT(*) >= 3)
+                SELECT cl.name AS club, ROUND((h.home_ppg - a.away_ppg)::numeric, 2) AS gap
+                FROM home_agg h JOIN away_agg a ON a.club_id = h.club_id JOIN clubs cl ON cl.id = h.club_id
+                ORDER BY gap DESC LIMIT 1
+            """)
+            r = cur.fetchone()
+            text = (f"🏠 {r['club']} are a genuine fortress at home — averaging {r['gap']} more points per game at home than away. "
+                    f"Real home advantage, not just a narrative. #Football #Data") if r else None
+
+        elif day_index == 2:
+            cur.execute("""
+                WITH match_team_passes AS (
+                    SELECT match_id, club_id, SUM(passes_attempted) AS team_passes FROM player_match_stats GROUP BY match_id, club_id),
+                match_pass_share AS (
+                    SELECT mtp.match_id, mtp.club_id, mtp.team_passes::float / NULLIF(mtp.team_passes + opp.team_passes, 0) AS pass_share
+                    FROM match_team_passes mtp JOIN match_team_passes opp ON opp.match_id = mtp.match_id AND opp.club_id != mtp.club_id),
+                player_avg_share AS (
+                    SELECT pms.player_id,
+                        SUM(mps.pass_share * pms.minutes_played) / NULLIF(SUM(pms.minutes_played), 0) AS avg_pass_share,
+                        SUM(pms.tackles + pms.interceptions) * 90.0 / NULLIF(SUM(pms.minutes_played), 0) AS raw_per90
+                    FROM player_match_stats pms JOIN match_pass_share mps ON mps.match_id = pms.match_id AND mps.club_id = pms.club_id
+                    GROUP BY pms.player_id HAVING SUM(pms.minutes_played) >= 450),
+                league_avg AS (SELECT AVG(avg_pass_share) AS league_share FROM player_avg_share)
+                SELECT p.full_name, cl.name AS club,
+                       ROUND((pas.raw_per90 * (pas.avg_pass_share / la.league_share))::numeric, 2) AS padj
+                FROM player_avg_share pas JOIN players p ON p.id = pas.player_id LEFT JOIN clubs cl ON cl.id = p.current_club_id
+                CROSS JOIN league_avg la WHERE p.primary_position = 'Defender'
+                ORDER BY padj DESC LIMIT 1
+            """)
+            r = cur.fetchone()
+            text = (f"🛡️ Possession-adjusted defense leader: {r['full_name']} ({r['club']}) — {r['padj']} adjusted defensive actions per 90. "
+                    f"Raw tackle counts lie; this accounts for how much time their team actually spends without the ball. #Scouting") if r else None
+
+        else:
+            cur.execute("""
+                SELECT p.full_name, cl.name AS club,
+                       ROUND(((SUM(pms.shots_on_target) * 90.0 / NULLIF(SUM(pms.minutes_played), 0)) * 0.30 +
+                              (GREATEST(SUM(pms.shots) - SUM(pms.shots_on_target), 0) * 90.0 / NULLIF(SUM(pms.minutes_played), 0)) * 0.05)::numeric, 3) AS xg_proxy,
+                       SUM(pms.goals) AS goals
+                FROM player_match_stats pms JOIN players p ON p.id = pms.player_id LEFT JOIN clubs cl ON cl.id = p.current_club_id
+                GROUP BY p.id, p.full_name, cl.name
+                HAVING SUM(pms.shots) >= 5 AND SUM(pms.minutes_played) >= 450
+                ORDER BY xg_proxy DESC LIMIT 1
+            """)
+            r = cur.fetchone()
+            text = (f"🎯 Shot quality leader: {r['full_name']} ({r['club']}) is generating the highest-quality chances in the pool — "
+                    f"{r['goals']} goals from consistently dangerous shot selection. #Scouting #Football") if r else None
+    conn.close()
+
+    return {"text": text, "day_index": day_index}
+
+
+@app.get("/content/digest-thread")
+def digest_thread(authorized: bool = Depends(check_api_key)):
+    """Reformats the latest scheduled Weekly Digest into an actual
+    numbered Twitter thread, ready to paste directly — reuses data
+    that's already being generated automatically every Monday, zero
+    new ingestion or computation needed."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT generated_at, content FROM weekly_digests ORDER BY generated_at DESC LIMIT 1")
+        row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        return {"available": False, "reason": "No weekly digest generated yet."}
+
+    content = row["content"]
+    movers = content.get("biggest_movers", [])
+    highlights = content.get("shortlist_highlights", [])
+    debuts = content.get("debuts_this_week", [])
+
+    total_parts = 1 + (1 if movers else 0) + (1 if highlights else 0) + (1 if debuts else 0)
+    thread = []
+    part = 1
+
+    thread.append(f"📊 This week's biggest football data stories ({part}/{total_parts})\n\nBiggest movers, standout performances, and new debuts — all from real match data. 🧵")
+    part += 1
+
+    if movers:
+        lines = "\n".join(f"• {m['full_name']} ({m['club']}) +{m['delta']}" for m in movers[:5])
+        thread.append(f"📈 Biggest risers this week ({part}/{total_parts}):\n\n{lines}")
+        part += 1
+    if highlights:
+        lines = "\n".join(f"• {h['full_name']} ({h['club']}) — {h['rating']} rating" for h in highlights[:5])
+        thread.append(f"⭐ Standout performances this week ({part}/{total_parts}):\n\n{lines}")
+        part += 1
+    if debuts:
+        lines = "\n".join(f"• {d['full_name']} ({d['club']})" for d in debuts[:5])
+        thread.append(f"🌟 New debuts this week ({part}/{total_parts}):\n\n{lines}")
+        part += 1
+
+    return {"available": True, "generated_at": row["generated_at"], "thread": thread}
+
+
+@app.post("/predictions/track")
+def track_prediction(body: TrackPredictionRequest, authorized: bool = Depends(check_api_key)):
+    """Saves a prediction for later verification against the real
+    result — the foundation of a genuine, verifiable track record
+    rather than only remembering the ones that turned out right."""
+    outcome = max(
+        [("home", body.predicted_home_pct), ("draw", body.predicted_draw_pct), ("away", body.predicted_away_pct)],
+        key=lambda x: x[1],
+    )[0]
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO tracked_predictions (match_id, predicted_home_pct, predicted_draw_pct, predicted_away_pct, predicted_outcome)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+        """, (body.match_id, body.predicted_home_pct, body.predicted_draw_pct, body.predicted_away_pct, outcome))
+        new_id = cur.fetchone()["id"]
+    conn.commit()
+    conn.close()
+    return {"id": new_id, "predicted_outcome": outcome, "tracked": True}
+
+
+@app.get("/predictions/track-record")
+def prediction_track_record(authorized: bool = Depends(check_api_key)):
+    """Every tracked prediction compared against real results — computed
+    live at query time, not stored, so this is always accurate without
+    needing a separate scheduled verification job. Only finished
+    matches count toward accuracy; predictions for matches not yet
+    played are shown as pending."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT tp.id, tp.predicted_outcome, tp.predicted_home_pct, tp.predicted_draw_pct, tp.predicted_away_pct,
+                   tp.predicted_at, m.status, m.home_score, m.away_score,
+                   home_cl.name AS home_club, away_cl.name AS away_club
+            FROM tracked_predictions tp
+            JOIN matches m ON m.id = tp.match_id
+            JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            ORDER BY tp.predicted_at DESC
+        """)
+        rows = cur.fetchall()
+    conn.close()
+
+    results = []
+    correct_count = 0
+    finished_count = 0
+    for r in rows:
+        actual_outcome = None
+        was_correct = None
+        if r["status"] == "finished":
+            finished_count += 1
+            if r["home_score"] > r["away_score"]:
+                actual_outcome = "home"
+            elif r["away_score"] > r["home_score"]:
+                actual_outcome = "away"
+            else:
+                actual_outcome = "draw"
+            was_correct = actual_outcome == r["predicted_outcome"]
+            if was_correct:
+                correct_count += 1
+        results.append({**r, "actual_outcome": actual_outcome, "was_correct": was_correct})
+
+    accuracy_pct = round(100 * correct_count / finished_count, 1) if finished_count else None
+    return {"predictions": results, "total_tracked": len(rows), "finished": finished_count, "correct": correct_count, "accuracy_pct": accuracy_pct}
+
+
 @app.get("/fixtures/{match_id}/events")
 def match_events(match_id: int, authorized: bool = Depends(check_api_key)):
     """Full minute-by-minute event timeline (goals, cards, subs). On-demand
@@ -4197,6 +4475,13 @@ def set_watch_level(player_id: int, body: WatchRequest, authorized: bool = Depen
     conn.commit()
     conn.close()
     return result
+
+
+class TrackPredictionRequest(BaseModel):
+    match_id: int
+    predicted_home_pct: float
+    predicted_draw_pct: float
+    predicted_away_pct: float
 
 
 class TemplateRequest(BaseModel):
