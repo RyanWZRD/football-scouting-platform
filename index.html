@@ -4294,6 +4294,7 @@ function FixtureRow({ m }) {
   const [loadingApi, setLoadingApi] = useState(false);
   const [marketOdds, setMarketOdds] = useState(null);
   const [loadingOdds, setLoadingOdds] = useState(false);
+  const [fullPreviewOpen, setFullPreviewOpen] = useState(false);
 
   const loadApiPrediction = () => {
     if (!API_BASE_URL) return;
@@ -4403,6 +4404,10 @@ function FixtureRow({ m }) {
           </div>
         </>
       )}
+      <button onClick={() => setFullPreviewOpen(true)} className="block text-[10px] uppercase tracking-wide text-[#E3A857] hover:text-[#7FD99A] mt-3">
+        🎯 View Full Match Preview →
+      </button>
+      {fullPreviewOpen && <MatchPreviewModal matchId={m.id} onClose={() => setFullPreviewOpen(false)} />}
     </div>
   );
 }
@@ -5021,6 +5026,95 @@ function FixtureDifficultyModal({ allLeagueOptions, onClose }) {
             </span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function MatchPreviewModal({ matchId, onClose }) {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !matchId) return;
+    fetch(`${API_BASE_URL}/fixtures/${matchId}/preview`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setData(d))
+      .catch(() => setData(null));
+  }, [matchId]);
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[70]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-8" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🎯 Match Preview</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        {data === null && <div className="text-sm text-[#6B8570]">Loading full preview…</div>}
+        {data && (
+          <>
+            <div className="text-center mb-6">
+              <div className="text-2xl text-[#EDEDE3] font-display">{data.match.home_club} <span className="text-[#6B8570]">vs</span> {data.match.away_club}</div>
+              <div className="text-xs text-[#6B8570] mt-1">{new Date(data.match.match_date).toLocaleDateString()}{data.match.referee && ` · Referee: ${data.match.referee}`}</div>
+            </div>
+
+            {data.referee_profile && (
+              <div className="mb-5 border border-[#2C4A3B] p-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">⚖️ Referee Tendencies ({data.referee_profile.matches_officiated} matches)</div>
+                <div className="text-sm text-[#EDEDE3]">
+                  <span className="text-[#E3A857]">{data.referee_profile.avg_cards_per_match} cards</span>
+                  <span className="text-[#6B8570] mx-2">·</span>
+                  <span className="text-[#9AAA9E]">{data.referee_profile.avg_penalties_per_match} pens</span>
+                  <span className="text-[#6B8570] mx-2">·</span>
+                  <span className="text-[#7FD99A]">{data.referee_profile.home_win_pct}% home win rate</span>
+                </div>
+              </div>
+            )}
+
+            {data.rivalry && (
+              <div className="mb-5 border border-[#E36B57] p-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🔥 Rivalry Intensity ({data.rivalry.meetings} meetings)</div>
+                <div className="text-xl font-bold font-plexmono text-[#E36B57]">{data.rivalry.intensity_score}</div>
+                <div className="text-xs text-[#9AAA9E] mt-1">Avg goal diff {data.rivalry.avg_goal_diff} · Avg cards {data.rivalry.avg_cards}</div>
+              </div>
+            )}
+
+            {(data.style_dna.home || data.style_dna.away) && (
+              <div className="mb-5">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🧬 Style DNA Head-to-Head</div>
+                <div className="h-64">
+                  <OverlayRadarChart series={[
+                    ...(data.style_dna.home ? [{ label: data.match.home_club, color: "#E3A857", metrics: {
+                      "Possession": { scaled: data.style_dna.home.possession_tendency ?? 0 },
+                      "Directness": { scaled: data.style_dna.home.directness ?? 0 },
+                      "Defensive Intensity": { scaled: data.style_dna.home.defensive_intensity ?? 0 },
+                      "Physicality": { scaled: data.style_dna.home.physicality ?? 0 },
+                      "Attacking Threat": { scaled: data.style_dna.home.attacking_threat ?? 0 },
+                    }}] : []),
+                    ...(data.style_dna.away ? [{ label: data.match.away_club, color: "#7FB3D5", metrics: {
+                      "Possession": { scaled: data.style_dna.away.possession_tendency ?? 0 },
+                      "Directness": { scaled: data.style_dna.away.directness ?? 0 },
+                      "Defensive Intensity": { scaled: data.style_dna.away.defensive_intensity ?? 0 },
+                      "Physicality": { scaled: data.style_dna.away.physicality ?? 0 },
+                      "Attacking Threat": { scaled: data.style_dna.away.attacking_threat ?? 0 },
+                    }}] : []),
+                  ]} />
+                </div>
+              </div>
+            )}
+
+            {data.shortlisted_players_involved?.length > 0 && (
+              <div className="mb-2 border border-[#2C4A3B] p-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">⭐ Your Shortlisted Players in This Match</div>
+                {data.shortlisted_players_involved.map((p, i) => (
+                  <div key={i} className="text-sm text-[#EDEDE3] py-1">{p.full_name} <span className="text-[#6B8570] text-xs">({p.club})</span></div>
+                ))}
+              </div>
+            )}
+
+            <div className="text-[10px] text-[#4A5C52] mt-4 italic text-center">{data.note}</div>
+          </>
+        )}
       </div>
     </div>
   );
