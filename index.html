@@ -2109,16 +2109,42 @@ function ComparePanel({ players, onClose }) {
   const COLORS = ["#E3A857", "#7FB3D5", "#E36B57", "#7FD99A"];
   const allMetrics = Array.from(new Set(players.flatMap(p => Object.keys(p.metrics))));
   const gridColsClass = players.length === 2 ? "sm:grid-cols-2" : players.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-4";
+  const compareGraphicRef = useRef(null);
+  const [exportingGraphic, setExportingGraphic] = useState(false);
+
+  const downloadComparisonGraphic = () => {
+    if (!compareGraphicRef.current || typeof html2canvas === "undefined") {
+      alert("Image export isn't available right now — check your connection and try again.");
+      return;
+    }
+    setExportingGraphic(true);
+    html2canvas(compareGraphicRef.current, { backgroundColor: "#0E1A15", scale: 2, useCORS: true })
+      .then(canvas => {
+        const link = document.createElement("a");
+        link.download = `${players.map(p => p.name.replace(/\s+/g, "_")).join("_vs_")}_comparison.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      })
+      .catch(() => alert("Image export failed — please try again."))
+      .finally(() => setExportingGraphic(false));
+  };
+
   return (
     <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50" onClick={onClose}>
       <div className="bg-[#0E1A15] border border-[#E3A857] max-w-4xl w-full max-h-[90vh] overflow-y-auto p-4 sm:p-8 relative"
         onClick={e => e.stopPropagation()}>
         <button aria-label="Close" onClick={onClose} className="absolute top-5 right-5 text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
-        <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono mb-4">
-          {players.length === 2 ? "Head to Head" : `Comparing ${players.length} Players`}
+        <div className="flex items-center gap-4 mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">
+            {players.length === 2 ? "Head to Head" : `Comparing ${players.length} Players`}
+          </div>
+          <button onClick={downloadComparisonGraphic} disabled={exportingGraphic}
+            className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] disabled:opacity-50">
+            {exportingGraphic ? "Exporting…" : "📸 Export Graphic"}
+          </button>
         </div>
 
-        <div className={`grid grid-cols-1 ${gridColsClass} gap-4 sm:gap-6`}>
+        <div ref={compareGraphicRef} className={`grid grid-cols-1 ${gridColsClass} gap-4 sm:gap-6`}>
           {players.map((p, i) => (
             <div key={p.id}>
               <div className="flex items-center gap-2">
@@ -3085,9 +3111,12 @@ function LiveScoresModal({ onClose }) {
           <div className="mb-4 border border-[#E3A857] bg-[#1A2E22] p-3">
             <div className="text-[10px] uppercase tracking-wide text-[#E3A857] mb-2">⭐ Your Shortlist, Live</div>
             {playerEvents.map((ev, i) => (
-              <div key={i} className="text-sm text-[#EDEDE3] py-1">
-                {ev.type === "Goal" ? "⚽" : "🟨"} <span className="font-bold">{ev.player}</span> ({ev.team})
-                <span className="text-[#6B8570] text-xs ml-2">{ev.minute}' · {ev.home_club} vs {ev.away_club}</span>
+              <div key={i} className="py-1">
+                <div className="text-sm text-[#EDEDE3]">
+                  {ev.type === "Goal" ? "⚽" : "🟨"} <span className="font-bold">{ev.player}</span> ({ev.team})
+                  <span className="text-[#6B8570] text-xs ml-2">{ev.minute}' · {ev.home_club} vs {ev.away_club}</span>
+                </div>
+                {ev.drafted_tweet && <CopyableTweetBlock text={ev.drafted_tweet} />}
               </div>
             ))}
           </div>
@@ -4681,6 +4710,34 @@ function DailyInsightModal({ onClose }) {
   );
 }
 
+function SeasonCallbackModal({ onClose }) {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/content/season-callback`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setData(d))
+      .catch(() => setData(null));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📅 Season Callback</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">A real historical season, randomly surfaced — genuine "seasons ago" data, not a specific-date callback.</div>
+
+        {data === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {data && !data.available && <div className="text-sm text-[#6B8570] text-center py-4">{data.reason}</div>}
+        {data?.available && <CopyableTweetBlock text={data.text} />}
+      </div>
+    </div>
+  );
+}
+
 function DigestThreadModal({ onClose }) {
   const [data, setData] = useState(null);
 
@@ -5832,6 +5889,7 @@ function ScoutDashboard() {
   const [dailyInsightOpen, setDailyInsightOpen] = useState(false);
   const [digestThreadOpen, setDigestThreadOpen] = useState(false);
   const [predictionTrackRecordOpen, setPredictionTrackRecordOpen] = useState(false);
+  const [seasonCallbackOpen, setSeasonCallbackOpen] = useState(false);
   const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
   const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
@@ -5878,6 +5936,7 @@ function ScoutDashboard() {
     { icon: "📝", label: "Today's Insight", section: "Content Creation", setter: setDailyInsightOpen },
     { icon: "🧵", label: "Weekly Digest Thread", section: "Content Creation", setter: setDigestThreadOpen },
     { icon: "📊", label: "Prediction Track Record", section: "Content Creation", setter: setPredictionTrackRecordOpen },
+    { icon: "📅", label: "Season Callback", section: "Content Creation", setter: setSeasonCallbackOpen },
     { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
   ];
 
@@ -6798,6 +6857,7 @@ function ScoutDashboard() {
       {dailyInsightOpen && <DailyInsightModal onClose={() => setDailyInsightOpen(false)} />}
       {digestThreadOpen && <DigestThreadModal onClose={() => setDigestThreadOpen(false)} />}
       {predictionTrackRecordOpen && <PredictionTrackRecordModal onClose={() => setPredictionTrackRecordOpen(false)} />}
+      {seasonCallbackOpen && <SeasonCallbackModal onClose={() => setSeasonCallbackOpen(false)} />}
       {commandPaletteOpen && (
         <CommandPaletteModal
           items={ALL_MENU_ITEMS}
