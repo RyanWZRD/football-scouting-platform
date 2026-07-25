@@ -257,16 +257,17 @@ def upsert_matches_for_league(conn, league_external_id, season, db_league_id, ma
             cur.execute(
                 """
                 INSERT INTO matches (external_id, league_id, home_club_id, away_club_id,
-                                      match_date, home_score, away_score, status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, 'finished')
+                                      match_date, home_score, away_score, status, referee)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'finished', %s)
                 ON CONFLICT (external_id) DO UPDATE SET
                     home_score = EXCLUDED.home_score,
                     away_score = EXCLUDED.away_score,
-                    status = 'finished'
+                    status = 'finished',
+                    referee = COALESCE(EXCLUDED.referee, matches.referee)
                 RETURNING id
                 """,
                 (str(fx["id"]), db_league_id, home_club_id, away_club_id,
-                 fx["date"], goals["home"], goals["away"]),
+                 fx["date"], goals["home"], goals["away"], fx.get("referee")),
             )
             conn.commit()
             db_match_ids.append((cur.fetchone()[0], fx["id"]))
@@ -302,14 +303,15 @@ def upsert_upcoming_fixtures_for_league(conn, league_external_id, fixture_season
             cur.execute(
                 """
                 INSERT INTO matches (external_id, league_id, home_club_id, away_club_id,
-                                      match_date, home_score, away_score, status)
-                VALUES (%s, %s, %s, %s, %s, NULL, NULL, 'scheduled')
+                                      match_date, home_score, away_score, status, referee)
+                VALUES (%s, %s, %s, %s, %s, NULL, NULL, 'scheduled', %s)
                 ON CONFLICT (external_id) DO UPDATE SET
-                    match_date = EXCLUDED.match_date
+                    match_date = EXCLUDED.match_date,
+                    referee = COALESCE(EXCLUDED.referee, matches.referee)
                     -- deliberately does NOT touch home_score/away_score/status —
                     -- if this match was already finished, don't un-finish it
                 """,
-                (str(fx["id"]), db_league_id, home_club_id, away_club_id, fx["date"]),
+                (str(fx["id"]), db_league_id, home_club_id, away_club_id, fx["date"], fx.get("referee")),
             )
             conn.commit()
             count += 1
