@@ -4317,7 +4317,11 @@ def match_preview(match_id: int, authorized: bool = Depends(check_api_key)):
             SELECT p.full_name, cl.name AS club
             FROM players p
             JOIN clubs cl ON cl.id = p.current_club_id
-            WHERE cl.name IN (%s, %s) AND p.watch_level = 'shortlist'
+            JOIN LATERAL (
+                SELECT watch_level FROM scout_notes sn
+                WHERE sn.player_id = p.id ORDER BY created_at DESC LIMIT 1
+            ) latest_note ON true
+            WHERE cl.name IN (%s, %s) AND latest_note.watch_level = 'shortlist'
         """, (home_club, away_club))
         shortlisted = cur.fetchall()
     conn.close()
