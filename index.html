@@ -1673,6 +1673,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
 
 function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer }) {
   const [simulatorOpen, setSimulatorOpen] = useState(false);
+  const [strategyDashboardOpen, setStrategyDashboardOpen] = useState(false);
   const scored = players.filter(p => p.potential != null);
   const avgPotential = scored.length ? Math.round(scored.reduce((s, p) => s + p.potential, 0) / scored.length) : null;
   const agesKnown = players.filter(p => p.age != null);
@@ -1783,9 +1784,14 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
         <h2 className="text-3xl text-[#EDEDE3] font-display mt-2">{clubName}</h2>
         <div className="flex items-center justify-between mt-1">
           <div className="text-[#9AAA9E]">{leagueName}</div>
-          <button onClick={() => setSimulatorOpen(true)} className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
-            🔄 Simulate Transfer
-          </button>
+          <div className="flex items-center gap-4">
+            <button onClick={() => setStrategyDashboardOpen(true)} className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
+              📋 Strategy Dashboard
+            </button>
+            <button onClick={() => setSimulatorOpen(true)} className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
+              🔄 Simulate Transfer
+            </button>
+          </div>
         </div>
 
         {manager && (
@@ -2063,6 +2069,12 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
         )}
       </div>
       {simulatorOpen && <TransferSimulatorModal squad={players} clubName={clubName} leagueName={leagueName} onClose={() => setSimulatorOpen(false)} />}
+      {strategyDashboardOpen && (
+        <StrategyDashboardModal
+          club={clubName} league={leagueName} players={players} balance={balance}
+          onClose={() => setStrategyDashboardOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -5026,6 +5038,106 @@ function FixtureDifficultyModal({ allLeagueOptions, onClose }) {
             </span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function StrategyDashboardModal({ club, league, players, balance, onClose }) {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    const params = new URLSearchParams({ club, league });
+    fetch(`${API_BASE_URL}/clubs/strategy-dashboard?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setData(d))
+      .catch(() => setData(null));
+  }, [club, league]);
+
+  const u21s = players.filter(p => p.age != null && p.age <= 21 && p.potential != null);
+  const youthPipeline = u21s.length > 0 ? {
+    count: u21s.length,
+    avgPotential: (u21s.reduce((s, p) => s + p.potential, 0) / u21s.length).toFixed(1),
+  } : null;
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[70]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-8" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📋 Club Strategy Dashboard</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-2xl text-[#EDEDE3] font-display mb-5">{club}</div>
+
+        {data === null && <div className="text-sm text-[#6B8570]">Loading strategic snapshot…</div>}
+        {data && (
+          <>
+            <div className="grid grid-cols-2 gap-4 mb-5">
+              {youthPipeline && (
+                <div className="border border-[#2C4A3B] p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">🌱 Youth Pipeline</div>
+                  <div className="text-lg font-bold font-plexmono text-[#E3A857]">{youthPipeline.count} U21s</div>
+                  <div className="text-xs text-[#9AAA9E]">avg potential {youthPipeline.avgPotential}</div>
+                </div>
+              )}
+              {data.rebuild_signal && (
+                <div className="border border-[#E3A857] p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">🏗️ Rebuild Signal</div>
+                  <div className="text-lg font-bold font-plexmono text-[#E3A857]">{data.rebuild_signal.rebuild_score}</div>
+                  <div className="text-xs text-[#9AAA9E]">{data.rebuild_signal.churn} moves, avg age {data.rebuild_signal.avg_age}</div>
+                </div>
+              )}
+              <div className="border border-[#2C4A3B] p-3">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">📅 Fixture Congestion</div>
+                <div className="text-lg font-bold font-plexmono" style={{ color: data.fixture_congestion.flag ? "#E36B57" : "#7FD99A" }}>
+                  {data.fixture_congestion.upcoming_matches_14d} in 14d
+                </div>
+                {data.fixture_congestion.flag && <div className="text-xs text-[#E36B57]">{data.fixture_congestion.flag}</div>}
+              </div>
+              {data.squad_workload.avg_squad_acwr != null && (
+                <div className="border border-[#2C4A3B] p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">🔋 Squad Workload</div>
+                  <div className="text-lg font-bold font-plexmono" style={{ color: data.squad_workload.flag ? "#E36B57" : "#7FD99A" }}>
+                    {data.squad_workload.avg_squad_acwr} avg ACWR
+                  </div>
+                  {data.squad_workload.flag && <div className="text-xs text-[#E36B57]">{data.squad_workload.flag}</div>}
+                </div>
+              )}
+            </div>
+
+            {balance && Object.keys(balance).length > 0 && (
+              <div className="mb-5 border border-[#2C4A3B] p-3">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">⚖️ Squad Balance</div>
+                {Object.entries(balance).map(([position, bdata]) => (
+                  <div key={position} className="flex items-center justify-between text-sm py-1">
+                    <span className="text-[#EDEDE3]">{position}</span>
+                    <span className="text-xs" style={{ color: bdata.balanced ? "#7FD99A" : "#E36B57" }}>
+                      {bdata.balanced ? "✓ Balanced" : "⚠ Lopsided"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {data.style_dna && (
+              <div className="mb-2">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🧬 Style DNA</div>
+                <div className="h-56">
+                  <OverlayRadarChart series={[{ label: club, color: "#E3A857", metrics: {
+                    "Possession": { scaled: data.style_dna.possession_tendency ?? 0 },
+                    "Directness": { scaled: data.style_dna.directness ?? 0 },
+                    "Defensive Intensity": { scaled: data.style_dna.defensive_intensity ?? 0 },
+                    "Physicality": { scaled: data.style_dna.physicality ?? 0 },
+                    "Attacking Threat": { scaled: data.style_dna.attacking_threat ?? 0 },
+                  }}]} />
+                </div>
+              </div>
+            )}
+
+            <div className="text-[10px] text-[#4A5C52] mt-4 italic text-center">{data.note}</div>
+          </>
+        )}
       </div>
     </div>
   );
