@@ -3417,6 +3417,74 @@ def season_callback(authorized: bool = Depends(check_api_key)):
     return {"available": True, "text": text, "data": r}
 
 
+@app.get("/clubs/net-transfer-balance")
+def net_transfer_balance(days: int = Query(180, le=365), limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
+    """Which clubs are genuinely net buyers vs net sellers — not raw
+    transfer volume (a busy club could just be churning, in and out in
+    equal measure), but real directional balance. Uses your own
+    accumulated transfer data, now that the underlying tracking bug
+    (non-deterministic club-assignment flip-flopping) has been fixed."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH transfers_in AS (
+                SELECT new_club_id AS club_id, COUNT(*) AS in_count
+                FROM player_club_transfers
+                WHERE changed_at >= now() - make_interval(days => %s) AND new_club_id IS NOT NULL
+                GROUP BY new_club_id
+            ),
+            transfers_out AS (
+                SELECT old_club_id AS club_id, COUNT(*) AS out_count
+                FROM player_club_transfers
+                WHERE changed_at >= now() - make_interval(days => %s) AND old_club_id IS NOT NULL
+                GROUP BY old_club_id
+            )
+            SELECT cl.name AS club, l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league,
+                   COALESCE(ti.in_count, 0) AS transfers_in, COALESCE(tout.out_count, 0) AS transfers_out,
+                   COALESCE(ti.in_count, 0) - COALESCE(tout.out_count, 0) AS net_balance
+            FROM clubs cl
+            LEFT JOIN transfers_in ti ON ti.club_id = cl.id
+            LEFT JOIN transfers_out tout ON tout.club_id = cl.id
+            LEFT JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE COALESCE(ti.in_count, 0) + COALESCE(tout.out_count, 0) >= 2
+            ORDER BY net_balance DESC
+            LIMIT %s
+        """, (days, days, limit))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/transfers/pathways")
+def transfer_pathways(days: int = Query(180, le=365), limit: int = Query(15, le=30), authorized: bool = Depends(check_api_key)):
+    """The most common league-to-league transfer routes — a genuine
+    pattern in the data pure club-level counts never surface. Which
+    leagues function as real feeder pipelines into others."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT old_l.name || ' (' || COALESCE(old_co.name, 'Unknown') || ')' AS from_league,
+                   new_l.name || ' (' || COALESCE(new_co.name, 'Unknown') || ')' AS to_league,
+                   COUNT(*) AS transfer_count
+            FROM player_club_transfers pct
+            JOIN clubs old_cl ON old_cl.id = pct.old_club_id
+            JOIN clubs new_cl ON new_cl.id = pct.new_club_id
+            JOIN leagues old_l ON old_l.id = old_cl.league_id
+            JOIN leagues new_l ON new_l.id = new_cl.league_id
+            LEFT JOIN countries old_co ON old_co.id = old_l.country_id
+            LEFT JOIN countries new_co ON new_co.id = new_l.country_id
+            WHERE pct.changed_at >= now() - make_interval(days => %s) AND old_l.id != new_l.id
+            GROUP BY from_league, to_league
+            HAVING COUNT(*) >= 2
+            ORDER BY transfer_count DESC
+            LIMIT %s
+        """, (days, limit))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 @app.post("/predictions/track")
 def track_prediction(body: TrackPredictionRequest, authorized: bool = Depends(check_api_key)):
     """Saves a prediction for later verification against the real
