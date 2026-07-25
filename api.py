@@ -3485,6 +3485,119 @@ def transfer_pathways(days: int = Query(180, le=365), limit: int = Query(15, le=
     return rows
 
 
+@app.get("/clubs/fixture-difficulty")
+def fixture_difficulty(club: str, league: str, num_fixtures: int = Query(6, le=10), authorized: bool = Depends(check_api_key)):
+    """The classic FPL concept — a 1-5 difficulty rating for each of a
+    club's next fixtures, based on opponent squad quality. Genuinely
+    achievable with the same squad-quality data already powering Match
+    Estimator. Difficulty is the opponent's percentile rank within the
+    league, bucketed 1 (easiest) to 5 (hardest) — not an arbitrary
+    guess, a real relative comparison against every other club in the
+    same league."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        cur.execute("""
+            SELECT cl.name AS club, AVG(pps.potential_index) AS avg_potential
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE cl.league_id = %s
+            GROUP BY cl.name
+            HAVING COUNT(*) >= 8
+        """, (league_id,))
+        quality_rows = cur.fetchall()
+
+        cur.execute("""
+            SELECT m.id, m.match_date, home_cl.name AS home_club, away_cl.name AS away_club
+            FROM matches m
+            JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            WHERE m.league_id = %s AND m.status = 'scheduled' AND (home_cl.name = %s OR away_cl.name = %s)
+            ORDER BY m.match_date ASC LIMIT %s
+        """, (league_id, club, club, num_fixtures))
+        fixtures = cur.fetchall()
+    conn.close()
+
+    if not quality_rows:
+        return {"available": False, "reason": "Not enough scored players in this league to compute fixture difficulty yet."}
+
+    qualities = sorted([r["avg_potential"] for r in quality_rows])
+    quality_map = {r["club"]: r["avg_potential"] for r in quality_rows}
+
+    def difficulty_bucket(opponent_quality):
+        # Percentile rank of the opponent's quality among every club in
+        # the league, bucketed into 1 (easiest) - 5 (hardest).
+        rank = sum(1 for q in qualities if q <= opponent_quality) / len(qualities)
+        return min(5, max(1, round(rank * 4) + 1))
+
+    results = []
+    for f in fixtures:
+        is_home = f["home_club"] == club
+        opponent = f["away_club"] if is_home else f["home_club"]
+        opponent_quality = quality_map.get(opponent)
+        if opponent_quality is None:
+            continue
+        results.append({
+            "match_date": f["match_date"], "opponent": opponent, "is_home": is_home,
+            "difficulty": difficulty_bucket(opponent_quality),
+        })
+
+    return {"available": True, "fixtures": results}
+
+
+@app.get("/players/{player_id}/rotation-risk")
+def rotation_risk(player_id: int, authorized: bool = Depends(check_api_key)):
+    """Not 'how good is this player' but 'will they actually play' —
+    genuinely different signal from anything else on this platform.
+    Uses their actual recent minutes pattern (last 10 matches) rather
+    than assuming, since squad status changes constantly and a
+    player's role can shift well before it shows up in season totals."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT pms.minutes_played, m.match_date
+            FROM player_match_stats pms
+            JOIN matches m ON m.id = pms.match_id
+            WHERE pms.player_id = %s AND m.status = 'finished'
+            ORDER BY m.match_date DESC LIMIT 10
+        """, (player_id,))
+        rows = cur.fetchall()
+    conn.close()
+
+    if len(rows) < 3:
+        return {"available": False, "reason": "Not enough recent match data to assess rotation risk yet."}
+
+    starts = sum(1 for r in rows if r["minutes_played"] >= 60)
+    start_pct = round(100 * starts / len(rows), 1)
+
+    if start_pct >= 80:
+        tier = "Nailed"
+    elif start_pct >= 40:
+        tier = "Rotation Risk"
+    else:
+        tier = "Bench Risk"
+
+    return {
+        "available": True, "tier": tier, "start_pct": start_pct,
+        "matches_considered": len(rows), "starts_60plus_mins": starts,
+        "note": "Based on actual recent minutes, not a season-long average — reflects current role, not history.",
+    }
+
+
 @app.post("/predictions/track")
 def track_prediction(body: TrackPredictionRequest, authorized: bool = Depends(check_api_key)):
     """Saves a prediction for later verification against the real
