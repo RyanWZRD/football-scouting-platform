@@ -24,6 +24,19 @@
   .font-display { font-family: 'Archivo Black', sans-serif; }
   .font-plexmono { font-family: 'IBM Plex Mono', monospace; }
 
+  /* Light mode — a pragmatic filter-based approach rather than
+     hand-rewriting thousands of hardcoded dark-theme colors across
+     this file. Images/photos are counter-inverted so they still look
+     like real photos rather than inverted negatives. */
+  body.light-mode {
+    filter: invert(1) hue-rotate(180deg);
+    background: #EDEDE3;
+  }
+  body.light-mode img,
+  body.light-mode svg image {
+    filter: invert(1) hue-rotate(180deg);
+  }
+
   @media print {
     body * { visibility: hidden; }
     .printable-dossier, .printable-dossier * { visibility: visible; }
@@ -2467,8 +2480,37 @@ function ComparePanel({ players, onClose }) {
 
 function RankingsTable({ players, sortBy, onSelect, onToggleCompare, compareIds, compareDisabled, topProspectIds }) {
   const showStatColumn = sortBy !== "potential" && sortBy !== "name" && sortBy !== "age";
+  const [highlighted, setHighlighted] = useState(0);
+  const rowRefs = useRef([]);
+
+  useEffect(() => { setHighlighted(0); }, [players]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      // Never intercept while typing in a search box or any other input.
+      const tag = e.target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "j" || e.key === "J") {
+        e.preventDefault();
+        setHighlighted(h => Math.min(h + 1, players.length - 1));
+      } else if (e.key === "k" || e.key === "K") {
+        e.preventDefault();
+        setHighlighted(h => Math.max(h - 1, 0));
+      } else if (e.key === "Enter" && players[highlighted]) {
+        onSelect(players[highlighted]);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [players, highlighted, onSelect]);
+
+  useEffect(() => {
+    rowRefs.current[highlighted]?.scrollIntoView({ block: "nearest" });
+  }, [highlighted]);
+
   return (
     <div className="px-6 md:px-10 pb-24 overflow-x-auto">
+      <div className="text-[10px] text-[#4A5C52] italic mb-2">J/K to move, Enter to open</div>
       <table className="w-full text-sm border-collapse">
         <thead>
           <tr className="text-left text-[10px] uppercase tracking-wide text-[#6B8570] border-b border-[#2C4A3B]">
@@ -2483,8 +2525,8 @@ function RankingsTable({ players, sortBy, onSelect, onToggleCompare, compareIds,
         </thead>
         <tbody>
           {players.map((p, i) => (
-            <tr key={p.id}
-              className={`border-b border-[#1C332A] hover:bg-[#152922] cursor-pointer ${topProspectIds.has(p.id) ? "bg-[#152922]" : ""}`}
+            <tr key={p.id} ref={el => rowRefs.current[i] = el}
+              className={`border-b border-[#1C332A] hover:bg-[#152922] cursor-pointer ${topProspectIds.has(p.id) ? "bg-[#152922]" : ""} ${i === highlighted ? "outline outline-1 outline-[#E3A857]" : ""}`}
               onClick={() => onSelect(p)}>
               <td className="py-2 pr-3 font-plexmono text-[#6B8570]">{i + 1}</td>
               <td className="py-2 pr-3">
@@ -5076,6 +5118,117 @@ const PIPELINE_STAGES = [
   { key: "cold", label: "Cold", color: "#4A5C52" },
 ];
 
+const BACKUP_KEYS = {
+  "scoutindex_favorite_clubs_v1": "Favorite Clubs",
+  "scoutindex_saved_views_v1": "Saved Views",
+  "scoutindex_dream_xi_v2": "Dream XI",
+  "scoutindex_recent_menu_items_v1": "Recently Used Menu Items",
+  "scoutindex_theme_v1": "Theme Preference",
+};
+
+function RecentlyViewedModal({ recentlyViewed, onClose, onSelectPlayer }) {
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[70]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-md w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🕐 Recently Viewed</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        {recentlyViewed.length === 0 && (
+          <div className="text-sm text-[#6B8570] text-center py-8">Nothing viewed yet this session — opens up as you browse player dossiers.</div>
+        )}
+        {recentlyViewed.map((r, i) => (
+          <button key={`${r.id}-${i}`} onClick={() => onSelectPlayer(r)}
+            className="w-full flex items-center justify-between text-sm py-2.5 border-b border-[#1C2E26] hover:bg-[#152922] text-left">
+            <span className="text-[#EDEDE3]">{r.name} <span className="text-[#6B8570] text-xs">· {r.club}</span></span>
+            <span className="text-[10px] text-[#4A5C52]">{relativeTime(new Date(r.viewedAt).toISOString())}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BackupRestoreModal({ onClose }) {
+  const [importStatus, setImportStatus] = useState(null);
+  const fileInputRef = useRef(null);
+
+  const exportBackup = () => {
+    const backup = { exported_at: new Date().toISOString(), data: {} };
+    Object.keys(BACKUP_KEYS).forEach(key => {
+      const value = localStorage.getItem(key);
+      if (value != null) backup.data[key] = value;
+    });
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `scout_index_backup_${new Date().toISOString().split("T")[0]}.json`;
+    link.click();
+  };
+
+  const importBackup = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target.result);
+        if (!parsed.data) throw new Error("Not a valid backup file");
+        Object.entries(parsed.data).forEach(([key, value]) => {
+          if (BACKUP_KEYS[key]) localStorage.setItem(key, value);
+        });
+        setImportStatus({ success: true, count: Object.keys(parsed.data).length });
+      } catch (err) {
+        setImportStatus({ success: false });
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[70]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-lg w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">💾 Backup & Restore</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-5 italic">
+          Backs up your browser preferences — favorite clubs, saved views, Dream XI, recent menu history, and theme. Your shortlist, pipeline, and scout notes are already safely stored on the server and don't need backing up.
+        </div>
+
+        <div className="mb-6">
+          <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">What gets backed up</div>
+          {Object.entries(BACKUP_KEYS).map(([key, label]) => (
+            <div key={key} className="flex items-center justify-between text-sm py-1">
+              <span className="text-[#EDEDE3]">{label}</span>
+              <span className="text-xs" style={{ color: localStorage.getItem(key) != null ? "#7FD99A" : "#4A5C52" }}>
+                {localStorage.getItem(key) != null ? "✓ present" : "— empty"}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <button onClick={exportBackup} className="w-full bg-[#E3A857] text-[#0E1A15] font-bold py-2.5 text-sm uppercase tracking-wide mb-4">
+          ⬇ Download Backup
+        </button>
+
+        <div className="border-t border-[#2C4A3B] pt-4">
+          <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Restore from a backup file</div>
+          <input ref={fileInputRef} type="file" accept="application/json" onChange={importBackup}
+            className="text-xs text-[#9AAA9E] w-full" />
+          {importStatus?.success && (
+            <div className="text-xs text-[#7FD99A] mt-2">✓ Restored {importStatus.count} item(s). Refresh the page to see changes take effect.</div>
+          )}
+          {importStatus?.success === false && (
+            <div className="text-xs text-[#E36B57] mt-2">Couldn't read that file — make sure it's a genuine backup exported from here.</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PipelineModal({ onClose, onSelectPlayer }) {
   const [data, setData] = useState(null);
 
@@ -6886,6 +7039,24 @@ function ClubCompareModal({ allLeagueOptions, onClose }) {
 }
 
 function BriefingView({ movers, topProspects, onSelectPlayer }) {
+  const HOMEPAGE_SETTINGS_KEY = "scoutindex_homepage_sections_v1";
+  const DEFAULT_SECTIONS = {
+    today: true, shortlistAlerts: true, shortlistInjuries: true,
+    topProspects: true, shortlistHighlights: true, risers: true, transfers: true,
+  };
+  const [sectionSettings, setSectionSettings] = useState(() => {
+    try { return { ...DEFAULT_SECTIONS, ...JSON.parse(localStorage.getItem(HOMEPAGE_SETTINGS_KEY) || "{}") }; }
+    catch (e) { return DEFAULT_SECTIONS; }
+  });
+  const [homepageSettingsOpen, setHomepageSettingsOpen] = useState(false);
+  const toggleSection = (key) => {
+    setSectionSettings(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      try { localStorage.setItem(HOMEPAGE_SETTINGS_KEY, JSON.stringify(next)); } catch (e) { /* skip if unavailable */ }
+      return next;
+    });
+  };
+
   const [transfers, setTransfers] = useState(null);
   const [shortlistHighlights, setShortlistHighlights] = useState(null);
   const [shortlistAlerts, setShortlistAlerts] = useState(null);
@@ -6941,7 +7112,29 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
 
   return (
     <div className="px-6 md:px-10 py-8">
-      {todayData && (
+      <div className="flex justify-end mb-2">
+        <button onClick={() => setHomepageSettingsOpen(o => !o)} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
+          ⚙ Customize Homepage
+        </button>
+      </div>
+      {homepageSettingsOpen && (
+        <div className="mb-6 border border-[#2C4A3B] p-4">
+          <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-3">Show sections</div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {[
+              ["today", "📋 Today"], ["shortlistAlerts", "🎯 Shortlist Alerts"], ["shortlistInjuries", "🩹 Injury Watch"],
+              ["topProspects", "🏆 Top Prospects"], ["shortlistHighlights", "⭐ Shortlist Highlights"],
+              ["risers", "📈 Biggest Risers"], ["transfers", "🔄 Recent Transfers"],
+            ].map(([key, label]) => (
+              <label key={key} className="flex items-center gap-2 text-xs text-[#EDEDE3] cursor-pointer">
+                <input type="checkbox" checked={sectionSettings[key]} onChange={() => toggleSection(key)} />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+      {sectionSettings.today && todayData && (
         (todayData.stale_pipeline_targets?.length > 0 || todayData.workload_flags?.length > 0 ||
          todayData.upcoming_fixtures_with_referee?.length > 0 || todayData.recent_division_changes?.length > 0) && (
           <div className="mb-8 border border-[#E3A857] bg-[#152922] p-4 sm:p-6">
@@ -6985,6 +7178,7 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10">
+      {sectionSettings.shortlistAlerts && (
       <Section title="🎯 Shortlist Alerts — Standout Performances">
         {shortlistAlerts === null && <div className="text-xs text-[#6B8570]">Loading…</div>}
         {shortlistAlerts?.length === 0 && <div className="text-xs text-[#6B8570]">No standout performances from your shortlist yet.</div>}
@@ -7003,8 +7197,9 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
             } />
         ))}
       </Section>
+      )}
 
-      {shortlistInjuries && shortlistInjuries.length > 0 && (
+      {sectionSettings.shortlistInjuries && shortlistInjuries && shortlistInjuries.length > 0 && (
         <Section title="🩹 Shortlist Injury Watch">
           {shortlistInjuries.map(row => (
             <PlayerRow key={row.id} name={row.full_name} club={row.club} league={null} photoUrl={row.photo_url}
@@ -7019,13 +7214,16 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
         </Section>
       )}
 
+      {sectionSettings.topProspects && (
       <Section title="🏆 Top Prospects Right Now">
         {topProspects.slice(0, 5).map(p => (
           <PlayerRow key={p.id} name={p.name} club={p.club} league={p.league} potential={p.potential} photoUrl={p.photoUrl}
             onClick={() => onSelectPlayer({ league_display: p.league, club: p.club, id: p.id.replace("live-", "") })} />
         ))}
       </Section>
+      )}
 
+      {sectionSettings.shortlistHighlights && (
       <Section title="⭐ Your Shortlist Highlights">
         {shortlistHighlights === null && <div className="text-xs text-[#6B8570]">Loading…</div>}
         {shortlistHighlights?.length === 0 && <div className="text-xs text-[#6B8570]">Nothing shortlisted yet.</div>}
@@ -7035,7 +7233,9 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
             onClick={() => onSelectPlayer({ league_display: row.league_display, club: row.club, id: row.id })} />
         ))}
       </Section>
+      )}
 
+      {sectionSettings.risers && (
       <Section title="📈 Biggest Risers Since Last Visit">
         {(!movers || movers.risers.length === 0) && <div className="text-xs text-[#6B8570]">No movement detected yet — check back after your next visit.</div>}
         {movers?.risers.map(r => (
@@ -7044,7 +7244,9 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
             rightExtra={<span className="font-plexmono text-[#7FD99A] shrink-0">{r.from} → {r.potential}</span>} />
         ))}
       </Section>
+      )}
 
+      {sectionSettings.transfers && (
       <Section title="🔄 Recent Transfers">
         {transfers === null && <div className="text-xs text-[#6B8570]">Loading…</div>}
         {transfers?.length === 0 && <div className="text-xs text-[#6B8570]">No transfers detected yet.</div>}
@@ -7054,6 +7256,7 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
             rightExtra={<span className="text-xs text-[#9AAA9E] font-plexmono">{t.old_club} → <span className="text-[#E3A857]">{t.new_club}</span></span>} />
         ))}
       </Section>
+      )}
       </div>
     </div>
   );
@@ -7066,6 +7269,42 @@ function ScoutDashboard() {
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState(null); // null = not actively searching
   const [moreMenuOpen, setMoreMenuOpen] = useState(false); // nav overflow dropdown
+
+  const [lightMode, setLightMode] = useState(() => {
+    try { return localStorage.getItem("scoutindex_theme_v1") === "light"; } catch (e) { return false; }
+  });
+  useEffect(() => {
+    document.body.classList.toggle("light-mode", lightMode);
+    try { localStorage.setItem("scoutindex_theme_v1", lightMode ? "light" : "dark"); } catch (e) { /* skip if unavailable */ }
+  }, [lightMode]);
+
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  useEffect(() => {
+    const goOnline = () => setIsOffline(false);
+    const goOffline = () => setIsOffline(true);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
+
+  const [listening, setListening] = useState(false);
+  const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const startVoiceSearch = () => {
+    if (!SpeechRecognitionAPI) return;
+    const recognition = new SpeechRecognitionAPI();
+    recognition.lang = "en-GB";
+    recognition.onstart = () => setListening(true);
+    recognition.onend = () => setListening(false);
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      setQuery(transcript);
+    };
+    recognition.onerror = () => setListening(false);
+    recognition.start();
+  };
 
   // Real server-side search across the WHOLE database, not just whatever's
   // currently loaded — otherwise anyone outside the top-200 default view
@@ -7093,6 +7332,20 @@ function ScoutDashboard() {
   const [scatterX, setScatterX] = useState("Goals/90");
   const [scatterY, setScatterY] = useState("Key Passes/90");
   const [selected, setSelected] = useState(null);
+  const RECENTLY_VIEWED_KEY = "scoutindex_recently_viewed_v1";
+  const [recentlyViewed, setRecentlyViewed] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(RECENTLY_VIEWED_KEY) || "[]"); } catch (e) { return []; }
+  });
+  useEffect(() => {
+    if (!selected || !String(selected.id).startsWith("live-")) return;
+    setRecentlyViewed(prev => {
+      const entry = { id: selected.id, name: selected.name, club: selected.club, league: selected.league, viewedAt: Date.now() };
+      const next = [entry, ...prev.filter(r => r.id !== selected.id)].slice(0, 20);
+      try { localStorage.setItem(RECENTLY_VIEWED_KEY, JSON.stringify(next)); } catch (e) { /* skip if unavailable */ }
+      return next;
+    });
+  }, [selected]);
+
   const [clubProfileOpen, setClubProfileOpen] = useState(false);
   const [transfersOpen, setTransfersOpen] = useState(false);
   const [dreamXIOpen, setDreamXIOpen] = useState(false);
@@ -7144,6 +7397,8 @@ function ScoutDashboard() {
   const [talentHotspotsOpen, setTalentHotspotsOpen] = useState(false);
   const [peakAgeCurveOpen, setPeakAgeCurveOpen] = useState(false);
   const [pipelineOpen, setPipelineOpen] = useState(false);
+  const [recentlyViewedOpen, setRecentlyViewedOpen] = useState(false);
+  const [backupRestoreOpen, setBackupRestoreOpen] = useState(false);
   const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
   const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
@@ -7205,6 +7460,8 @@ function ScoutDashboard() {
     { icon: "🗺️", label: "Talent Hotspots", section: "Scouting Intelligence", setter: setTalentHotspotsOpen },
     { icon: "📈", label: "Peak Age Curve", section: "Scouting Intelligence", setter: setPeakAgeCurveOpen },
     { icon: "📌", label: "Recruitment Pipeline", section: "Scouting Intelligence", setter: setPipelineOpen },
+    { icon: "🕐", label: "Recently Viewed", section: "Data & Results", setter: setRecentlyViewedOpen },
+    { icon: "💾", label: "Backup & Restore", section: "Data & Results", setter: setBackupRestoreOpen },
     { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
   ];
 
@@ -7647,6 +7904,15 @@ function ScoutDashboard() {
             {connectionStatus === "live" && <>📡 Live API</>}
             {connectionStatus === "connecting" && <>⏳ Connecting...</>}
             {connectionStatus === "offline" && <>⚠ Seed data</>}
+            {isOffline && (
+              <span className="text-[#E36B57]" title="No internet connection — showing last-seen cached data where available">
+                📴 Offline — last-seen data
+              </span>
+            )}
+            <button onClick={() => setLightMode(m => !m)} title={lightMode ? "Switch to dark mode" : "Switch to light mode"}
+              className="hover:text-[#E3A857]">
+              {lightMode ? "🌙" : "☀️"}
+            </button>
           </div>
         </div>
         <h1 className="text-3xl md:text-5xl leading-[1.05] max-w-3xl font-display">
@@ -7707,6 +7973,11 @@ function ScoutDashboard() {
             <input value={query} onChange={e => setQuery(e.target.value)}
               aria-label="Search player or club" placeholder="Search player or club..."
               className="bg-transparent outline-none text-sm w-full placeholder:text-[#6B8570]" />
+            {SpeechRecognitionAPI && (
+              <button onClick={startVoiceSearch} title="Voice search" className={`shrink-0 ${listening ? "animate-pulse text-[#E36B57]" : "text-[#6B8570] hover:text-[#E3A857]"}`}>
+                🎙️
+              </button>
+            )}
           </div>
           <button onClick={() => setMobileFiltersOpen(o => !o)}
             className="md:hidden h-10 px-3 bg-[#152922] border border-[#2C4A3B] text-sm text-[#9AAA9E] flex items-center gap-1 shrink-0">
@@ -8174,6 +8445,19 @@ function ScoutDashboard() {
           }}
         />
       )}
+      {recentlyViewedOpen && (
+        <RecentlyViewedModal
+          recentlyViewed={recentlyViewed}
+          onClose={() => setRecentlyViewedOpen(false)}
+          onSelectPlayer={(entry) => {
+            setRecentlyViewedOpen(false);
+            if (entry.league) setLeague(entry.league);
+            if (entry.club) setClub(entry.club);
+            setDeepLinkPlayerId(String(entry.id).replace("live-", ""));
+          }}
+        />
+      )}
+      {backupRestoreOpen && <BackupRestoreModal onClose={() => setBackupRestoreOpen(false)} />}
       {commandPaletteOpen && (
         <CommandPaletteModal
           items={ALL_MENU_ITEMS}
