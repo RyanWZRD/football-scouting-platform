@@ -78,7 +78,7 @@ def run(season, offset, limit):
     conn = get_conn()
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT p.id, p.external_id, p.full_name
+            SELECT DISTINCT ON (p.id) p.id, p.external_id, p.full_name
             FROM players p
             JOIN player_potential_scores pps ON pps.player_id = p.id
             ORDER BY p.id
