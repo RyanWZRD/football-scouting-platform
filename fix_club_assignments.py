@@ -61,7 +61,7 @@ def run(season):
         """, (str(season),))
         rows = cur.fetchall()
 
-    mismatches = [(pid, real_club, current_club) for pid, real_club, current_club, _ in rows
+    mismatches = [(pid, real_club, current_club) for pid, real_club, current_club, _, _ in rows
                   if real_club != current_club]
 
     print(f"Checked {len(rows)} players with real match data this season.")
