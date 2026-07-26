@@ -6,6 +6,11 @@
 <title>Scout Index — Cross-League Scouting</title>
 <meta name="description" content="A scouting and analytics index spanning football leagues outside the traditional top five — real match data, potential scoring, and player comparison." />
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚽</text></svg>" />
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<meta name="theme-color" content="#0E1A15" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -6885,9 +6890,14 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
   const [shortlistHighlights, setShortlistHighlights] = useState(null);
   const [shortlistAlerts, setShortlistAlerts] = useState(null);
   const [shortlistInjuries, setShortlistInjuries] = useState(null);
+  const [todayData, setTodayData] = useState(null);
 
   useEffect(() => {
     if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/today`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setTodayData(d))
+      .catch(() => setTodayData(null));
     fetch(`${API_BASE_URL}/transfers?limit=5`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setTransfers(rows))
@@ -6930,7 +6940,51 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
   );
 
   return (
-    <div className="px-6 md:px-10 py-8 grid grid-cols-1 md:grid-cols-2 gap-x-10">
+    <div className="px-6 md:px-10 py-8">
+      {todayData && (
+        (todayData.stale_pipeline_targets?.length > 0 || todayData.workload_flags?.length > 0 ||
+         todayData.upcoming_fixtures_with_referee?.length > 0 || todayData.recent_division_changes?.length > 0) && (
+          <div className="mb-8 border border-[#E3A857] bg-[#152922] p-4 sm:p-6">
+            <div className="text-[10px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono mb-4">📋 Today</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
+              {todayData.stale_pipeline_targets?.length > 0 && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[#E36B57] mb-1.5">📌 Stale Pipeline Targets</div>
+                  {todayData.stale_pipeline_targets.slice(0, 4).map((t, i) => (
+                    <div key={i} className="text-sm text-[#EDEDE3] py-0.5">{t.full_name} <span className="text-[#6B8570] text-xs">— {t.days_in_stage}d in {t.stage}</span></div>
+                  ))}
+                </div>
+              )}
+              {todayData.workload_flags?.length > 0 && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[#E36B57] mb-1.5">🔋 Workload Flags (Shortlist)</div>
+                  {todayData.workload_flags.slice(0, 4).map((w, i) => (
+                    <div key={i} className="text-sm text-[#EDEDE3] py-0.5">{w.full_name} <span className="text-[#6B8570] text-xs">— ACWR {w.acwr}</span></div>
+                  ))}
+                </div>
+              )}
+              {todayData.upcoming_fixtures_with_referee?.length > 0 && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[#7FB3D5] mb-1.5">⚖️ Upcoming, Referee Known</div>
+                  {todayData.upcoming_fixtures_with_referee.slice(0, 4).map((f, i) => (
+                    <div key={i} className="text-sm text-[#EDEDE3] py-0.5">{f.home_club} vs {f.away_club} <span className="text-[#6B8570] text-xs">— {f.referee}</span></div>
+                  ))}
+                </div>
+              )}
+              {todayData.recent_division_changes?.length > 0 && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[#7FD99A] mb-1.5">🔄 Division Changes Detected</div>
+                  {todayData.recent_division_changes.slice(0, 4).map((d, i) => (
+                    <div key={i} className="text-sm text-[#EDEDE3] py-0.5">{d.club} <span className="text-[#6B8570] text-xs">→ {d.fixture_implied_league}</span></div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10">
       <Section title="🎯 Shortlist Alerts — Standout Performances">
         {shortlistAlerts === null && <div className="text-xs text-[#6B8570]">Loading…</div>}
         {shortlistAlerts?.length === 0 && <div className="text-xs text-[#6B8570]">No standout performances from your shortlist yet.</div>}
@@ -7000,6 +7054,7 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
             rightExtra={<span className="text-xs text-[#9AAA9E] font-plexmono">{t.old_club} → <span className="text-[#E3A857]">{t.new_club}</span></span>} />
         ))}
       </Section>
+      </div>
     </div>
   );
 }
@@ -8233,6 +8288,17 @@ function ScoutDashboard() {
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<ScoutDashboard />);
+</script>
+<script>
+  // Registers the PWA service worker — makes the app genuinely
+  // installable (home screen icon, standalone window) on phones and
+  // desktops. Fails silently and harmlessly on browsers without
+  // service worker support; the app works completely normally either way.
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("service-worker.js").catch(() => {});
+    });
+  }
 </script>
 </body>
 </html>

@@ -4536,6 +4536,101 @@ def get_pipeline(stale_days: int = Query(14, le=90), authorized: bool = Depends(
     }
 
 
+@app.get("/today")
+def scouts_today_dashboard(authorized: bool = Depends(check_api_key)):
+    """The unified homepage — everything that genuinely needs attention
+    right now, synthesized from data already tracked elsewhere: stale
+    pipeline targets, workload flags on shortlisted players, upcoming
+    fixtures for shortlisted clubs with a known referee, and any
+    division changes just detected. Reuses the exact same thresholds
+    each individual feature already uses, for direct comparability."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        # Stale pipeline targets — same 14-day threshold as /pipeline
+        cur.execute("""
+            SELECT p.full_name, rp.stage, EXTRACT(DAY FROM now() - rp.stage_updated_at)::int AS days_in_stage
+            FROM recruitment_pipeline rp
+            JOIN players p ON p.id = rp.player_id
+            WHERE rp.stage NOT IN ('signed', 'rejected', 'cold')
+              AND EXTRACT(DAY FROM now() - rp.stage_updated_at) >= 14
+            ORDER BY rp.stage_updated_at ASC
+        """)
+        stale_targets = cur.fetchall()
+
+        # Workload flags on shortlisted players — same ACWR danger
+        # threshold (>=1.5) as /players/acwr and /players/burnout-risk
+        cur.execute("""
+            WITH acute AS (
+                SELECT pms.player_id, SUM(pms.minutes_played) AS acute_minutes
+                FROM player_match_stats pms JOIN matches m ON m.id = pms.match_id
+                WHERE m.status = 'finished' AND m.match_date >= now() - interval '7 days'
+                GROUP BY pms.player_id
+            ),
+            chronic AS (
+                SELECT pms.player_id, SUM(pms.minutes_played) / 4.0 AS chronic_weekly
+                FROM player_match_stats pms JOIN matches m ON m.id = pms.match_id
+                WHERE m.status = 'finished' AND m.match_date >= now() - interval '28 days'
+                GROUP BY pms.player_id HAVING SUM(pms.minutes_played) >= 90
+            )
+            SELECT p.full_name, cl.name AS club,
+                   ROUND((a.acute_minutes / c.chronic_weekly)::numeric, 2) AS acwr
+            FROM chronic c
+            JOIN players p ON p.id = c.player_id
+            JOIN LATERAL (
+                SELECT watch_level FROM scout_notes sn
+                WHERE sn.player_id = p.id ORDER BY created_at DESC LIMIT 1
+            ) latest_note ON true
+            LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            LEFT JOIN acute a ON a.player_id = c.player_id
+            WHERE latest_note.watch_level = 'shortlist' AND a.acute_minutes IS NOT NULL
+              AND (a.acute_minutes / c.chronic_weekly) >= 1.5
+        """)
+        workload_flags = cur.fetchall()
+
+        # Upcoming fixtures with a known referee, for shortlisted players' clubs
+        cur.execute("""
+            SELECT DISTINCT m.id, m.match_date, home_cl.name AS home_club, away_cl.name AS away_club, m.referee
+            FROM matches m
+            JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            JOIN players p ON p.current_club_id = m.home_club_id OR p.current_club_id = m.away_club_id
+            JOIN LATERAL (
+                SELECT watch_level FROM scout_notes sn
+                WHERE sn.player_id = p.id ORDER BY created_at DESC LIMIT 1
+            ) latest_note ON true
+            WHERE latest_note.watch_level = 'shortlist' AND m.status = 'scheduled'
+              AND m.referee IS NOT NULL AND m.match_date BETWEEN now() AND now() + interval '7 days'
+            ORDER BY m.match_date ASC LIMIT 10
+        """)
+        upcoming_with_referee = cur.fetchall()
+
+        # Division changes — same detection query as /clubs/division-changes
+        cur.execute("""
+            SELECT DISTINCT ON (cl.id)
+                cl.name AS club,
+                current_l.name AS current_league,
+                fixture_l.name AS fixture_implied_league
+            FROM matches m
+            JOIN clubs cl ON cl.id = m.home_club_id OR cl.id = m.away_club_id
+            JOIN leagues fixture_l ON fixture_l.id = m.league_id
+            LEFT JOIN leagues current_l ON current_l.id = cl.league_id
+            WHERE m.status = 'scheduled' AND m.match_date >= now()
+              AND (current_l.id IS NULL OR current_l.id != fixture_l.id)
+            ORDER BY cl.id, m.match_date ASC
+            LIMIT 10
+        """)
+        division_changes_result = cur.fetchall()
+    conn.close()
+
+    return {
+        "stale_pipeline_targets": stale_targets,
+        "workload_flags": workload_flags,
+        "upcoming_fixtures_with_referee": upcoming_with_referee,
+        "recent_division_changes": division_changes_result,
+        "note": "Everything here is synthesized from data already tracked elsewhere on the platform — nothing new is computed, just brought together in one place.",
+    }
+
+
 @app.get("/clubs/net-transfer-balance")
 def net_transfer_balance(days: int = Query(180, le=365), limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
     """Which clubs are genuinely net buyers vs net sellers — not raw
