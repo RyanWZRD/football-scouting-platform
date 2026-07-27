@@ -4536,6 +4536,135 @@ def get_pipeline(stale_days: int = Query(14, le=90), authorized: bool = Depends(
     }
 
 
+class SquadBuilderRequest(BaseModel):
+    player_ids: list[int]
+    comparison_league: str
+
+
+@app.post("/squad-builder/analyze")
+def squad_builder_analyze(body: SquadBuilderRequest = Body(...), authorized: bool = Depends(check_api_key)):
+    """The Complete Squad Builder — construct any hypothetical squad from
+    scratch, entirely from players already tracked, and see its full
+    tactical identity form: Style DNA (percentile-ranked against real
+    clubs in the chosen comparison league), Squad Balance by position,
+    total Moneyball value, and age profile. Bigger than Transfer
+    Intelligence (one swap at a time) — this is a whole squad, built
+    from nothing, using zero new API cost."""
+    if not body.player_ids:
+        return {"available": False, "reason": "No players selected yet."}
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        # Raw aggregate totals across every chosen player — same building
+        # blocks Style DNA and Transfer Intelligence already use.
+        cur.execute("""
+            SELECT COALESCE(SUM(pms.minutes_played), 0) AS minutes,
+                   COALESCE(SUM(pms.passes_attempted), 0) AS passes_attempted,
+                   COALESCE(SUM(pms.take_ons_attempted), 0) AS take_ons_attempted,
+                   COALESCE(SUM(pms.tackles + pms.interceptions), 0) AS defensive_actions,
+                   COALESCE(SUM(pms.duels_won), 0) AS duels_won,
+                   COALESCE(SUM(pms.duels_attempted), 0) AS duels_attempted,
+                   COALESCE(SUM(pms.goals + pms.assists), 0) AS goal_contributions
+            FROM player_match_stats pms
+            WHERE pms.player_id = ANY(%s)
+        """, (body.player_ids,))
+        squad_totals = cur.fetchone()
+
+        # Comparison pool — same real clubs used by /clubs/style-dna, for
+        # direct comparability rather than an arbitrary made-up scale.
+        cur.execute("""
+            SELECT cl.name AS club,
+                   SUM(pms.passes_attempted) * 90.0 / NULLIF(SUM(pms.minutes_played), 0) AS possession_tendency,
+                   SUM(pms.take_ons_attempted) * 90.0 / NULLIF(SUM(pms.minutes_played), 0) AS directness,
+                   SUM(pms.tackles + pms.interceptions) * 90.0 / NULLIF(SUM(pms.minutes_played), 0) AS defensive_intensity,
+                   100.0 * SUM(pms.duels_won) / NULLIF(SUM(pms.duels_attempted), 0) AS physicality,
+                   SUM(pms.goals + pms.assists) * 90.0 / NULLIF(SUM(pms.minutes_played), 0) AS attacking_threat
+            FROM player_match_stats pms
+            JOIN players p ON p.id = pms.player_id
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+            GROUP BY cl.id, cl.name
+            HAVING SUM(pms.minutes_played) >= 900
+        """, (body.comparison_league,))
+        all_clubs = cur.fetchall()
+
+        # Squad composition: position counts, age profile, and per-player
+        # potential for the Moneyball total.
+        cur.execute("""
+            SELECT p.id, p.full_name, p.primary_position,
+                   EXTRACT(YEAR FROM age(p.date_of_birth))::int AS age,
+                   pps.potential_index, l.is_top5,
+                   COALESCE(SUM(pms.minutes_played), 0) AS player_minutes
+            FROM players p
+            LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            LEFT JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            LEFT JOIN player_match_stats pms ON pms.player_id = p.id
+            WHERE p.id = ANY(%s)
+            GROUP BY p.id, p.full_name, p.primary_position, p.date_of_birth, pps.potential_index, l.is_top5
+        """, (body.player_ids,))
+        squad_players = cur.fetchall()
+    conn.close()
+
+    if not all_clubs:
+        return {"available": False, "reason": "Not enough data in the comparison league yet."}
+
+    def percentile(target_val, dim):
+        pool = [float(c[dim]) for c in all_clubs if c[dim] is not None]
+        if target_val is None or not pool:
+            return None
+        below = sum(1 for v in pool if v < target_val)
+        return round(100 * below / len(pool))
+
+    minutes = squad_totals["minutes"]
+    style_dna = {
+        "possession_tendency": percentile((squad_totals["passes_attempted"] * 90.0 / minutes) if minutes else None, "possession_tendency"),
+        "directness": percentile((squad_totals["take_ons_attempted"] * 90.0 / minutes) if minutes else None, "directness"),
+        "defensive_intensity": percentile((squad_totals["defensive_actions"] * 90.0 / minutes) if minutes else None, "defensive_intensity"),
+        "physicality": percentile((100.0 * squad_totals["duels_won"] / squad_totals["duels_attempted"]) if squad_totals["duels_attempted"] else None, "physicality"),
+        "attacking_threat": percentile((squad_totals["goal_contributions"] * 90.0 / minutes) if minutes else None, "attacking_threat"),
+    } if minutes else None
+
+    position_counts = {}
+    total_moneyball = 0
+    ages = []
+    roster = []
+    for p in squad_players:
+        pos = p["primary_position"] or "Unknown"
+        position_counts[pos] = position_counts.get(pos, 0) + 1
+        if p["age"]:
+            ages.append(p["age"])
+
+        player_moneyball = None
+        if p["potential_index"] is not None:
+            player_minutes = p["player_minutes"]
+            confidence_mult = 1.0 if player_minutes >= 1800 else 0.9 if player_minutes >= 900 else 0.75 if player_minutes >= 300 else 0.5
+            obscurity_bonus = 0.15 if not p["is_top5"] else 0
+            player_moneyball = round(float(p["potential_index"]) * (1 + obscurity_bonus) * confidence_mult, 1)
+            total_moneyball += player_moneyball
+
+        roster.append({
+            "id": p["id"], "full_name": p["full_name"], "position": p["primary_position"],
+            "age": p["age"], "moneyball_score": player_moneyball,
+        })
+
+    return {
+        "available": True,
+        "squad_size": len(squad_players),
+        "roster": roster,
+        "position_counts": position_counts,
+        "avg_age": round(sum(ages) / len(ages), 1) if ages else None,
+        "total_moneyball_value": round(total_moneyball, 1),
+        "style_dna": style_dna,
+        "note": "Style DNA is percentile-ranked against real clubs in your chosen comparison league — the same method used everywhere else on the platform, applied to a squad that doesn't exist yet.",
+    }
+
+
 @app.get("/today")
 def scouts_today_dashboard(authorized: bool = Depends(check_api_key)):
     """The unified homepage — everything that genuinely needs attention
