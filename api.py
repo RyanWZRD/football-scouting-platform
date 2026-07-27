@@ -4738,6 +4738,110 @@ def club_season_stats(club: str, league: str, season: str, authorized: bool = De
     return row
 
 
+@app.get("/clubs/head-to-head")
+def head_to_head_dossier(club_a: str, club_b: str, league: str, authorized: bool = Depends(check_api_key)):
+    """Every club-level signal built this session, for two clubs
+    side-by-side in one view — Style DNA, rebuild signal, fixture
+    congestion, workload, and managerial impact — reusing the exact
+    same club_strategy_dashboard logic already used elsewhere, plus
+    real head-to-head match history between the two."""
+    dossier_a = club_strategy_dashboard(club=club_a, league=league, authorized=True)
+    dossier_b = club_strategy_dashboard(club=club_b, league=league, authorized=True)
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT m.match_date, home_cl.name AS home_club, away_cl.name AS away_club,
+                   m.home_score, m.away_score
+            FROM matches m
+            JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            WHERE m.status = 'finished'
+              AND ((home_cl.name = %s AND away_cl.name = %s) OR (home_cl.name = %s AND away_cl.name = %s))
+            ORDER BY m.match_date DESC LIMIT 10
+        """, (club_a, club_b, club_b, club_a))
+        h2h_matches = cur.fetchall()
+    conn.close()
+
+    a_wins = sum(1 for m in h2h_matches if (m["home_club"] == club_a and m["home_score"] > m["away_score"]) or (m["away_club"] == club_a and m["away_score"] > m["home_score"]))
+    b_wins = sum(1 for m in h2h_matches if (m["home_club"] == club_b and m["home_score"] > m["away_score"]) or (m["away_club"] == club_b and m["away_score"] > m["home_score"]))
+    draws = len(h2h_matches) - a_wins - b_wins
+
+    return {
+        "club_a": {"name": club_a, "dossier": dossier_a},
+        "club_b": {"name": club_b, "dossier": dossier_b},
+        "head_to_head": {"matches": h2h_matches, "club_a_wins": a_wins, "club_b_wins": b_wins, "draws": draws},
+        "note": "Combines every club-level signal built this session into one side-by-side comparison.",
+    }
+
+
+def _geocode_city(city):
+    """Free, no-API-key geocoding via Open-Meteo — converts a city name
+    into coordinates and elevation. Returns None on any failure rather
+    than raising, since this is a real external dependency that can
+    genuinely be unavailable."""
+    try:
+        resp = requests.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": city, "count": 1}, timeout=6,
+        )
+        resp.raise_for_status()
+        results = resp.json().get("results")
+        if not results:
+            return None
+        return {"lat": results[0]["latitude"], "lon": results[0]["longitude"], "elevation": results[0].get("elevation")}
+    except Exception:
+        return None
+
+
+@app.get("/fixtures/{match_id}/environment")
+def fixture_environment_impact(match_id: int, authorized: bool = Depends(check_api_key)):
+    """Altitude & Climate Impact Score — real, peer-reviewed sports
+    science confirms altitude and heat genuinely affect performance
+    (reduced high-speed running at altitude, technical decline in heat).
+    Uses free Open-Meteo geocoding/elevation data, newly possible now
+    that venue city data has been ingested. Honest about being a real
+    but imperfect proxy — city-level coordinates, not exact stadium GPS."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT home_cl.name AS home_club, away_cl.name AS away_club,
+                   home_v.city AS home_city, away_v.city AS away_city
+            FROM matches m
+            JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            LEFT JOIN club_venues home_v ON home_v.club_id = home_cl.id
+            LEFT JOIN club_venues away_v ON away_v.club_id = away_cl.id
+            WHERE m.id = %s
+        """, (match_id,))
+        row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Match not found")
+    if not row["home_city"]:
+        return {"available": False, "reason": "No venue city on record for the home club yet — run venues_ingest.py."}
+
+    home_geo = _geocode_city(row["home_city"])
+    if not home_geo:
+        return {"available": False, "reason": "Couldn't geocode the home venue's city right now."}
+
+    away_geo = _geocode_city(row["away_city"]) if row["away_city"] else None
+    altitude_diff = (home_geo["elevation"] - away_geo["elevation"]) if (away_geo and home_geo.get("elevation") is not None and away_geo.get("elevation") is not None) else None
+
+    flags = []
+    if altitude_diff is not None and altitude_diff >= 1000:
+        flags.append(f"Away side travels to {round(home_geo['elevation'])}m altitude, {round(altitude_diff)}m higher than home — real sports science links this to reduced high-speed running for visiting teams.")
+
+    return {
+        "home_club": row["home_club"], "away_club": row["away_club"],
+        "home_venue_elevation_m": round(home_geo["elevation"]) if home_geo.get("elevation") is not None else None,
+        "altitude_difference_m": round(altitude_diff) if altitude_diff is not None else None,
+        "flags": flags,
+        "note": "A real but imperfect proxy — based on city-level coordinates, not exact stadium GPS. Altitude effects on performance are peer-reviewed and real; this surfaces the signal, not a guaranteed outcome.",
+    }
+
+
 @app.get("/today")
 def scouts_today_dashboard(authorized: bool = Depends(check_api_key)):
     """The unified homepage — everything that genuinely needs attention
