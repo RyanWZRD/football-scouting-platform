@@ -92,6 +92,29 @@ const API_BASE_URL = "https://football-scouting-api-so8h.onrender.com";
 // treat it as a real security boundary for sensitive data.
 const API_KEY = "scout9x7k2mQpL4vRt8";
 
+// Multi-User Support — Phase 1. The session token is stored in
+// localStorage (same pattern as other persisted state) and read
+// directly here rather than via React state/context, so any component
+// anywhere in the file can build authenticated headers without prop
+// drilling. getAuthHeaders() combines the existing API key (general
+// access gate) with the per-user Bearer token (who's actually asking).
+const AUTH_TOKEN_KEY = "scoutindex_auth_token_v1";
+function getAuthToken() {
+  try { return localStorage.getItem(AUTH_TOKEN_KEY); } catch (e) { return null; }
+}
+function setAuthToken(token) {
+  try {
+    if (token) localStorage.setItem(AUTH_TOKEN_KEY, token);
+    else localStorage.removeItem(AUTH_TOKEN_KEY);
+  } catch (e) { /* skip if unavailable */ }
+}
+function getAuthHeaders() {
+  const headers = API_KEY ? { "X-API-Key": API_KEY } : {};
+  const token = getAuthToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
+}
+
 // ---------------------------------------------------------------------------
 // SEED DATA (fallback if the live API can't be reached)
 // ---------------------------------------------------------------------------
@@ -1211,7 +1234,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
     try {
       const res = await fetch(`${API_BASE_URL}/players/${realId}/watch`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ watch_level: p.watchLevel ?? null, note: noteText.trim(), author: "dashboard" }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1391,7 +1414,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
               <button onClick={() => {
                   fetch(`${API_BASE_URL}/pipeline/add`, {
                     method: "POST",
-                    headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+                    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
                     body: JSON.stringify({ player_id: parseInt(realId) }),
                   }).then(res => {
                     if (!res.ok) { alert("Couldn't add to pipeline — please try again."); return null; }
@@ -2916,7 +2939,7 @@ function RankingsTable({ players, sortBy, onSelect, onToggleCompare, compareIds,
     Promise.all(targets.map(p =>
       fetch(`${API_BASE_URL}/pipeline/add`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ player_id: parseInt(String(p.id).replace("live-", "")) }),
       }).catch(() => null)
     )).then(() => {
@@ -5607,6 +5630,72 @@ function RecentlyViewedModal({ recentlyViewed, onClose, onSelectPlayer }) {
   );
 }
 
+function AuthModal({ onClose, onSuccess }) {
+  const [mode, setMode] = useState("login"); // "login" | "register"
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async () => {
+    if (!email.trim() || !password) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/${mode}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+        body: JSON.stringify({ email: email.trim(), password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.detail || "Something went wrong — please try again.");
+        return;
+      }
+      setAuthToken(data.access_token);
+      onSuccess({ id: data.user_id, email: data.email });
+      onClose();
+    } catch (e) {
+      setError("Couldn't reach the server — please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[80]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-sm w-full p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-5">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">
+            {mode === "login" ? "🔐 Log In" : "🔐 Create Account"}
+          </div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email"
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-3"
+          onKeyDown={e => e.key === "Enter" && submit()} />
+        <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password"
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-1"
+          onKeyDown={e => e.key === "Enter" && submit()} />
+        {mode === "register" && <div className="text-[10px] text-[#6B8570] mb-3">At least 8 characters.</div>}
+
+        {error && <div className="text-xs text-[#E36B57] mt-2 mb-1">{error}</div>}
+
+        <button onClick={submit} disabled={submitting || !email.trim() || !password}
+          className="w-full bg-[#E3A857] text-[#0E1A15] font-bold py-2.5 text-sm uppercase tracking-wide mt-3 disabled:opacity-50">
+          {submitting ? "…" : mode === "login" ? "Log In" : "Create Account"}
+        </button>
+
+        <button onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(null); }}
+          className="w-full text-center text-xs text-[#6B8570] hover:text-[#E3A857] mt-4">
+          {mode === "login" ? "Need an account? Register" : "Already have an account? Log in"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ActivityLogModal({ onClose }) {
   const [log, setLog] = useState(() => {
     try { return JSON.parse(localStorage.getItem(ACTIVITY_LOG_KEY) || "[]"); } catch (e) { return []; }
@@ -6334,7 +6423,7 @@ function PipelineModal({ onClose, onSelectPlayer }) {
 
   const loadPipeline = () => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/pipeline`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/pipeline`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
@@ -6345,14 +6434,14 @@ function PipelineModal({ onClose, onSelectPlayer }) {
   const moveStage = (id, newStage) => {
     fetch(`${API_BASE_URL}/pipeline/${id}/stage`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify({ stage: newStage }),
     }).then(() => loadPipeline()).catch(() => {});
   };
 
   const removeTarget = (id) => {
     if (!window.confirm("Remove this target from the pipeline?")) return;
-    fetch(`${API_BASE_URL}/pipeline/${id}`, { method: "DELETE", headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/pipeline/${id}`, { method: "DELETE", headers: getAuthHeaders() })
       .then(() => loadPipeline()).catch(() => {});
   };
 
@@ -8627,6 +8716,21 @@ function ScoutDashboard() {
   const [aiAssistantOpen, setAiAssistantOpen] = useState(false);
   const [seasonSimulatorOpen, setSeasonSimulatorOpen] = useState(false);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null); // null = checking/logged out; { id, email } once confirmed
+
+  useEffect(() => {
+    if (!API_BASE_URL || !getAuthToken()) return;
+    fetch(`${API_BASE_URL}/auth/me`, { headers: getAuthHeaders() })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => { if (d) setCurrentUser({ id: d.id, email: d.email }); else setAuthToken(null); })
+      .catch(() => setAuthToken(null));
+  }, []);
+
+  const logOut = () => {
+    setAuthToken(null);
+    setCurrentUser(null);
+  };
   const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
   const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
@@ -8912,7 +9016,7 @@ function ScoutDashboard() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          ...(API_KEY ? { "X-API-Key": API_KEY } : {}),
+          ...getAuthHeaders(),
         },
         body: JSON.stringify({ watch_level: newLevel, author: "dashboard" }),
       });
@@ -9188,6 +9292,15 @@ function ScoutDashboard() {
               <option value="pt">PT</option>
               <option value="fr">FR</option>
             </select>
+            {currentUser ? (
+              <button onClick={logOut} title={currentUser.email} className="hover:text-[#E36B57]">
+                🔓 Log Out
+              </button>
+            ) : (
+              <button onClick={() => setAuthModalOpen(true)} className="hover:text-[#E3A857]">
+                🔐 Log In
+              </button>
+            )}
           </div>
         </div>
         <h1 className="text-3xl md:text-5xl leading-[1.05] max-w-3xl font-display">
@@ -9760,6 +9873,7 @@ function ScoutDashboard() {
       )}
       {seasonSimulatorOpen && <SeasonSimulatorModal allLeagueOptions={allLeagueOptions} onClose={() => setSeasonSimulatorOpen(false)} />}
       {activityLogOpen && <ActivityLogModal onClose={() => setActivityLogOpen(false)} />}
+      {authModalOpen && <AuthModal onClose={() => setAuthModalOpen(false)} onSuccess={setCurrentUser} />}
       {commandPaletteOpen && (
         <CommandPaletteModal
           items={ALL_MENU_ITEMS}
