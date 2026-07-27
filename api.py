@@ -5276,6 +5276,57 @@ def player_sidelined_records(player_id: int, authorized: bool = Depends(check_ap
     return rows
 
 
+@app.get("/clubs/transfer-network")
+def club_transfer_network(league: Optional[str] = None, min_transfers: int = Query(1, le=10), authorized: bool = Depends(check_api_key)):
+    """Real club-to-club transfer flow, built from actual recorded
+    transfers (player_transfer_history) — which clubs genuinely feed
+    players to which other clubs. Optionally scoped to clubs within a
+    single league to keep the graph readable rather than showing all
+    27 leagues at once. Returns nodes (clubs) and edges (transfer
+    connections with real counts), the shape a force-directed graph
+    layout needs."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        if league:
+            cur.execute("""
+                SELECT pth.club_from, pth.club_to, COUNT(*) AS transfer_count
+                FROM player_transfer_history pth
+                WHERE pth.club_from IS NOT NULL AND pth.club_to IS NOT NULL
+                  AND pth.club_from IN (
+                      SELECT cl.name FROM clubs cl
+                      JOIN leagues l ON l.id = cl.league_id
+                      LEFT JOIN countries co ON co.id = l.country_id
+                      WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+                  )
+                GROUP BY pth.club_from, pth.club_to
+                HAVING COUNT(*) >= %s
+            """, (league, min_transfers))
+        else:
+            cur.execute("""
+                SELECT club_from, club_to, COUNT(*) AS transfer_count
+                FROM player_transfer_history
+                WHERE club_from IS NOT NULL AND club_to IS NOT NULL
+                GROUP BY club_from, club_to
+                HAVING COUNT(*) >= %s
+            """, (min_transfers,))
+        edges = cur.fetchall()
+    conn.close()
+
+    if not edges:
+        return {"available": False, "reason": "No transfer data matches — try lowering min_transfers or removing the league filter."}
+
+    node_names = set()
+    for e in edges:
+        node_names.add(e["club_from"])
+        node_names.add(e["club_to"])
+
+    return {
+        "available": True,
+        "nodes": [{"id": name} for name in node_names],
+        "edges": [{"source": e["club_from"], "target": e["club_to"], "count": e["transfer_count"]} for e in edges],
+    }
+
+
 @app.get("/leagues/season-simulation")
 def full_season_simulation(league: str, simulations: int = Query(1000, le=5000), authorized: bool = Depends(check_api_key)):
     """The Full Season Simulator — genuine Monte Carlo projection across
