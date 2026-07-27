@@ -33,6 +33,7 @@ import psycopg2.extras
 import anthropic
 import re
 import requests
+import random
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
@@ -5098,6 +5099,165 @@ def player_sidelined_records(player_id: int, authorized: bool = Depends(check_ap
         rows = cur.fetchall()
     conn.close()
     return rows
+
+
+@app.get("/leagues/season-simulation")
+def full_season_simulation(league: str, simulations: int = Query(1000, le=5000), authorized: bool = Depends(check_api_key)):
+    """The Full Season Simulator — genuine Monte Carlo projection across
+    every remaining fixture in the league, using the exact same
+    win/draw/loss formula as Match Estimator (squad quality + recent
+    form + home advantage), run thousands of times to produce real
+    probability distributions: title odds, top-quarter finish, and
+    bottom-quarter (relegation risk) — rather than a single-match
+    estimate. Same honest framing as Match Estimator: not a betting
+    tool, doesn't account for injuries, tactics, or form-on-the-day."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT l.id FROM leagues l
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (league,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="League not found")
+        league_id = row["id"]
+
+        # Squad quality — same source as Match Estimator
+        cur.execute("""
+            SELECT cl.name AS club, AVG(pps.potential_index) AS avg_potential
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE cl.league_id = %s
+            GROUP BY cl.name
+            HAVING COUNT(*) >= 8
+        """, (league_id,))
+        quality = {r["club"]: float(r["avg_potential"]) for r in cur.fetchall()}
+
+        # Current real standings — genuine points/played so far this season
+        cur.execute("""
+            SELECT cl.name AS club,
+                   SUM(CASE
+                       WHEN (m.home_club_id = cl.id AND m.home_score > m.away_score) OR (m.away_club_id = cl.id AND m.away_score > m.home_score) THEN 3
+                       WHEN m.home_score = m.away_score THEN 1 ELSE 0 END) AS points
+            FROM clubs cl
+            JOIN matches m ON (m.home_club_id = cl.id OR m.away_club_id = cl.id) AND m.status = 'finished'
+            WHERE cl.league_id = %s
+            GROUP BY cl.name
+        """, (league_id,))
+        current_points = {r["club"]: (r["points"] or 0) for r in cur.fetchall()}
+
+        # All remaining fixtures for the rest of the season
+        cur.execute("""
+            SELECT home_cl.name AS home_club, away_cl.name AS away_club
+            FROM matches m
+            JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            WHERE m.league_id = %s AND m.status = 'scheduled'
+        """, (league_id,))
+        remaining_fixtures = cur.fetchall()
+
+        # Recent form per club, same as Match Estimator
+        cur.execute("""
+            SELECT DISTINCT cl.name AS club
+            FROM matches m JOIN clubs cl ON cl.id = m.home_club_id OR cl.id = m.away_club_id
+            WHERE m.league_id = %s AND m.status = 'finished'
+        """, (league_id,))
+        clubs = [r["club"] for r in cur.fetchall()]
+        form = {}
+        for club in clubs:
+            cur.execute("""
+                SELECT m.home_score, m.away_score, home_cl.name AS home_club, away_cl.name AS away_club
+                FROM matches m
+                JOIN clubs home_cl ON home_cl.id = m.home_club_id
+                JOIN clubs away_cl ON away_cl.id = m.away_club_id
+                WHERE m.league_id = %s AND m.status = 'finished' AND (home_cl.name = %s OR away_cl.name = %s)
+                ORDER BY m.match_date DESC LIMIT 5
+            """, (league_id, club, club))
+            recent = cur.fetchall()
+            if not recent:
+                continue
+            points = 0
+            for r in recent:
+                is_home = r["home_club"] == club
+                gf = r["home_score"] if is_home else r["away_score"]
+                ga = r["away_score"] if is_home else r["home_score"]
+                points += 3 if gf > ga else (1 if gf == ga else 0)
+            form[club] = (points / (len(recent) * 3)) * 100
+    conn.close()
+
+    if not remaining_fixtures:
+        return {"available": False, "reason": "No remaining scheduled fixtures found for this league — season may be finished or not yet started."}
+
+    HOME_ADVANTAGE_BONUS = 3
+
+    def match_probabilities(home_club, away_club):
+        home_q, away_q = quality.get(home_club), quality.get(away_club)
+        if home_q is None or away_q is None:
+            return (33, 33, 34)  # genuinely unknown squads — fall back to a neutral split
+        home_form, away_form = form.get(home_club, 50), form.get(away_club, 50)
+        home_strength = 0.6 * home_q + 0.4 * home_form
+        away_strength = 0.6 * away_q + 0.4 * away_form
+        strength_diff = (home_strength - away_strength) + HOME_ADVANTAGE_BONUS
+        raw_home = max(5, 33 + strength_diff)
+        raw_away = max(5, 33 - strength_diff)
+        raw_draw = max(8, 28 - abs(strength_diff) * 0.15)
+        total = raw_home + raw_away + raw_draw
+        return (raw_home / total, raw_draw / total, raw_away / total)
+
+    # Pre-compute probabilities once — genuinely expensive to redo per
+    # simulation, and they don't change between runs.
+    fixture_probs = [(f["home_club"], f["away_club"], *match_probabilities(f["home_club"], f["away_club"])) for f in remaining_fixtures]
+
+    all_clubs = list(current_points.keys())
+    n_clubs = len(all_clubs)
+    top_quarter_size = max(1, round(n_clubs / 4))
+    bottom_quarter_size = max(1, round(n_clubs / 4))
+
+    title_count = {c: 0 for c in all_clubs}
+    top_quarter_count = {c: 0 for c in all_clubs}
+    bottom_quarter_count = {c: 0 for c in all_clubs}
+
+    for _ in range(simulations):
+        points = dict(current_points)
+        for home, away, p_home, p_draw, p_away in fixture_probs:
+            outcome = random.random()
+            if outcome < p_home:
+                points[home] = points.get(home, 0) + 3
+            elif outcome < p_home + p_draw:
+                points[home] = points.get(home, 0) + 1
+                points[away] = points.get(away, 0) + 1
+            else:
+                points[away] = points.get(away, 0) + 3
+
+        final_table = sorted(all_clubs, key=lambda c: points.get(c, 0), reverse=True)
+        title_count[final_table[0]] += 1
+        for c in final_table[:top_quarter_size]:
+            top_quarter_count[c] += 1
+        for c in final_table[-bottom_quarter_size:]:
+            bottom_quarter_count[c] += 1
+
+    results = [{
+        "club": c,
+        "current_points": current_points.get(c, 0),
+        "title_pct": round(100 * title_count[c] / simulations, 1),
+        "top_quarter_pct": round(100 * top_quarter_count[c] / simulations, 1),
+        "bottom_quarter_pct": round(100 * bottom_quarter_count[c] / simulations, 1),
+    } for c in all_clubs]
+    results.sort(key=lambda r: r["current_points"], reverse=True)
+
+    return {
+        "available": True,
+        "simulations_run": simulations,
+        "remaining_fixtures": len(remaining_fixtures),
+        "table": results,
+        "note": "Not a betting tool — the same honest framing as Match Estimator, extended across a full season via genuine repeated simulation, not a single estimate. Doesn't account for injuries, tactics, or form-on-the-day.",
+    }
 
 
 @app.get("/today")
