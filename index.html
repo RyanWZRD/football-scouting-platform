@@ -373,6 +373,26 @@ const DEFAULT_METRIC_SET = ["Goals/90", "Key Passes/90", "Tackles/90", "Pass Acc
 // poorly suited to another, even sharing the same broad position), rather
 // than forcing a single archetype label. Weights use percentile scores
 // already computed elsewhere, so this needs no new backend endpoint.
+// Chrome's built-in, on-device AI (Gemini Nano) — genuinely free, zero
+// ongoing cost, nothing sent to any server. Confirmed Chrome-only
+// (not even Edge), requires Chrome 148+, and the model itself may need
+// a one-time download. Every caller must handle "unavailable" and
+// "downloadable" states gracefully — this never assumes availability.
+async function getOnDeviceAISession(systemPrompt) {
+  if (!("LanguageModel" in self)) return { status: "unsupported" };
+  try {
+    const availability = await LanguageModel.availability();
+    if (availability === "unavailable") return { status: "unavailable" };
+    if (availability === "downloadable" || availability === "downloading") {
+      return { status: "downloading" };
+    }
+    const session = await LanguageModel.create(systemPrompt ? { initialPrompts: [{ role: "system", content: systemPrompt }] } : {});
+    return { status: "ready", session };
+  } catch (e) {
+    return { status: "error", error: e };
+  }
+}
+
 const ROLE_TEMPLATES = {
   "Goalkeeper": {
     "Shot-Stopper": { "Saves/90": 0.45, "Save %": 0.4, "Rating": 0.15 },
@@ -877,6 +897,77 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   const [details, setDetails] = useState(null); // full dossier: real notes + trend history
   const [noteText, setNoteText] = useState("");
   const [savingNote, setSavingNote] = useState(false);
+  const [expandingNote, setExpandingNote] = useState(false);
+  const [aiSummary, setAiSummary] = useState(null);
+  const [summarizing, setSummarizing] = useState(false);
+  const [sentimentResults, setSentimentResults] = useState(null);
+  const [analyzingSentiment, setAnalyzingSentiment] = useState(false);
+  const analyzeSentiment = async () => {
+    if (!news?.length) return;
+    setAnalyzingSentiment(true);
+    const { status, session } = await getOnDeviceAISession(
+      `You classify football news headline sentiment. Given a numbered list of headlines, respond with ONLY a JSON array of the same length, each item exactly "positive", "negative", or "neutral" — no other text.`
+    );
+    if (status !== "ready") {
+      alert("Chrome's on-device AI isn't available right now — needs Chrome 148+ and a one-time model download.");
+      setAnalyzingSentiment(false);
+      return;
+    }
+    try {
+      const headlineList = news.map((n, i) => `${i + 1}. ${n.title}`).join("\n");
+      const response = await session.prompt(headlineList);
+      const cleaned = response.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(cleaned);
+      setSentimentResults(parsed);
+    } catch (e) {
+      alert("Couldn't analyze sentiment right now — please try again.");
+    } finally {
+      setAnalyzingSentiment(false);
+      if (session.destroy) session.destroy();
+    }
+  };
+  const generateAISummary = async () => {
+    setSummarizing(true);
+    const { status, session } = await getOnDeviceAISession(
+      "You write a concise, 2-sentence scouting summary from real stats given. Factual tone, no hype, no invented details. Respond with ONLY the summary text."
+    );
+    if (status !== "ready") {
+      setAiSummary("Chrome's on-device AI isn't available right now — needs Chrome 148+ and a one-time model download.");
+      setSummarizing(false);
+      return;
+    }
+    try {
+      const statsText = `${p.name}, ${p.posLabel}, age ${p.age ?? "unknown"}, potential ${p.potential ?? "unknown"}, playing at ${p.club} in ${p.league}.`;
+      const summary = await session.prompt(statsText);
+      setAiSummary(summary.trim());
+    } catch (e) {
+      setAiSummary("Couldn't generate a summary right now.");
+    } finally {
+      setSummarizing(false);
+      if (session.destroy) session.destroy();
+    }
+  };
+  const expandNoteWithAI = async () => {
+    if (!noteText.trim()) return;
+    setExpandingNote(true);
+    const { status, session } = await getOnDeviceAISession(
+      "You expand short football scouting shorthand into a fuller, professional note — 2-3 sentences, factual tone, no invented details beyond what's given. Respond with ONLY the expanded note text, nothing else."
+    );
+    if (status !== "ready") {
+      alert("Chrome's on-device AI isn't available right now — this needs Chrome 148+ and a one-time model download.");
+      setExpandingNote(false);
+      return;
+    }
+    try {
+      const expanded = await session.prompt(noteText);
+      setNoteText(expanded.trim());
+    } catch (e) {
+      alert("Couldn't expand that note — please try again.");
+    } finally {
+      setExpandingNote(false);
+      if (session.destroy) session.destroy();
+    }
+  };
   const [linkCopied, setLinkCopied] = useState(false);
   const [shareCardOpen, setShareCardOpen] = useState(false);
   const [fullReportOpen, setFullReportOpen] = useState(false);
@@ -1306,10 +1397,27 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
             {news?.length === 0 && <div className="text-xs text-[#6B8570] text-center mb-4">No recent news found.</div>}
             {news?.length > 0 && (
               <div className="mb-4 border-b border-[#2C4A3B] pb-4">
-                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">📰 Recent News</div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">📰 Recent News</div>
+                  {!sentimentResults && (
+                    <button onClick={analyzeSentiment} disabled={analyzingSentiment}
+                      title="Free, on-device AI (Chrome 148+ only)"
+                      className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] disabled:opacity-40">
+                      {analyzingSentiment ? "Analyzing…" : "✨ Analyze Sentiment"}
+                    </button>
+                  )}
+                </div>
+                {sentimentResults && sentimentResults.filter(s => s === "negative").length >= Math.ceil(news.length / 2) && (
+                  <div className="text-xs text-[#E36B57] mb-2 border border-[#E36B57] p-2">
+                    ⚠ Reputational risk flag — recent coverage trends genuinely negative.
+                  </div>
+                )}
                 {news.map((n, i) => (
                   <a key={i} href={n.link} target="_blank" rel="noopener noreferrer"
                     className="block text-sm text-[#EDEDE3] hover:text-[#E3A857] py-1.5 border-b border-[#1C2E26]">
+                    {sentimentResults?.[i] === "positive" && "🟢 "}
+                    {sentimentResults?.[i] === "negative" && "🔴 "}
+                    {sentimentResults?.[i] === "neutral" && "⚪ "}
                     {n.title}
                     <div className="text-[10px] text-[#6B8570]">{n.source}</div>
                   </a>
@@ -1367,6 +1475,19 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
                   {p.minutesPlayed != null ? p.minutesPlayed : p.marketValue}
                 </div>
               </div>
+            </div>
+
+            <div className="mt-3">
+              {!aiSummary && (
+                <button onClick={generateAISummary} disabled={summarizing}
+                  title="Free, on-device AI (Chrome 148+ only)"
+                  className="text-xs uppercase tracking-wide px-3 py-1.5 border border-[#2C4A3B] text-[#9AAA9E] hover:border-[#E3A857] hover:text-[#E3A857] disabled:opacity-40">
+                  {summarizing ? "Generating…" : "✨ AI Summary"}
+                </button>
+              )}
+              {aiSummary && (
+                <div className="border border-[#2C4A3B] p-3 text-sm text-[#EDEDE3] italic">{aiSummary}</div>
+              )}
             </div>
 
             {rotationRisk?.available && (
@@ -1739,10 +1860,17 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
               placeholder="What did you see? Technical strengths, weaknesses, injury concerns, transfer chatter..."
               rows={3}
               className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] outline-none focus:border-[#E3A857] resize-none" />
-            <button onClick={saveNote} disabled={!noteText.trim() || savingNote}
-              className="mt-2 text-xs uppercase tracking-wide px-4 py-2 bg-[#E3A857] text-[#0E1A15] font-bold disabled:opacity-40 disabled:cursor-not-allowed">
-              {savingNote ? "Saving..." : "Save Note"}
-            </button>
+            <div className="flex items-center gap-2 mt-2">
+              <button onClick={saveNote} disabled={!noteText.trim() || savingNote}
+                className="text-xs uppercase tracking-wide px-4 py-2 bg-[#E3A857] text-[#0E1A15] font-bold disabled:opacity-40 disabled:cursor-not-allowed">
+                {savingNote ? "Saving..." : "Save Note"}
+              </button>
+              <button onClick={expandNoteWithAI} disabled={!noteText.trim() || expandingNote}
+                title="Free, on-device AI (Chrome 148+ only) — expands shorthand into a fuller note"
+                className="text-xs uppercase tracking-wide px-4 py-2 border border-[#2C4A3B] text-[#9AAA9E] hover:border-[#E3A857] hover:text-[#E3A857] disabled:opacity-40">
+                {expandingNote ? "Expanding…" : "✨ Expand with AI"}
+              </button>
+            </div>
 
             <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mt-6 mb-2">
               {details?.scout_notes?.length ? "Note history" : "No notes yet"}
@@ -5331,6 +5459,96 @@ function RecentlyViewedModal({ recentlyViewed, onClose, onSelectPlayer }) {
   );
 }
 
+function AIAssistantModal({ onClose, onApplyFilters }) {
+  const [aiStatus, setAiStatus] = useState("checking");
+  const [query, setQuery] = useState("");
+  const [thinking, setThinking] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      const check = await getOnDeviceAISession();
+      setAiStatus(check.status);
+    })();
+  }, []);
+
+  const runQuery = async () => {
+    if (!query.trim()) return;
+    setThinking(true);
+    setError(null);
+    setResult(null);
+    const systemPrompt = `You translate scouting search requests into JSON filters. Valid positions: Goalkeeper, Defender, Midfielder, Attacker. Respond with ONLY valid JSON, no other text, in this exact shape: {"position": "Defender" or null, "age_max": number or null, "potential_min": number or null}. If a field isn't mentioned, use null.`;
+    const { status, session, error: sessionError } = await getOnDeviceAISession(systemPrompt);
+    if (status !== "ready") {
+      setError(status === "unsupported" ? "Chrome's on-device AI isn't available in this browser." : "The on-device model isn't ready right now.");
+      setThinking(false);
+      return;
+    }
+    try {
+      const response = await session.prompt(query);
+      const cleaned = response.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(cleaned);
+      setResult(parsed);
+    } catch (e) {
+      setError("Couldn't understand that as a structured search — try rephrasing.");
+    } finally {
+      setThinking(false);
+      if (session.destroy) session.destroy();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-lg w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🤖 AI Scouting Assistant</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Free, runs entirely on your device via Chrome's built-in AI — nothing sent to any server. Chrome-only (not Edge/Firefox/Safari), and needs a one-time model download the first time.
+        </div>
+
+        {aiStatus === "checking" && <div className="text-sm text-[#6B8570]">Checking availability…</div>}
+        {aiStatus === "unsupported" && (
+          <div className="text-sm text-[#E36B57] text-center py-4">
+            Not available in this browser — Chrome's on-device AI requires Chrome 148+ specifically (not Edge, Firefox, or Safari).
+          </div>
+        )}
+        {aiStatus === "unavailable" && <div className="text-sm text-[#E36B57] text-center py-4">Not available on this device.</div>}
+        {(aiStatus === "downloading" || aiStatus === "downloadable") && (
+          <div className="text-sm text-[#E3A857] text-center py-4">The model needs a one-time download — this may take a moment the first time it's used.</div>
+        )}
+        {aiStatus === "ready" && (
+          <>
+            <textarea value={query} onChange={e => setQuery(e.target.value)}
+              placeholder="e.g. young left-backs with high potential"
+              className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-3 h-20 resize-none" />
+            <button onClick={runQuery} disabled={thinking}
+              className="w-full bg-[#E3A857] text-[#0E1A15] font-bold py-2.5 text-sm uppercase tracking-wide mb-4 disabled:opacity-50">
+              {thinking ? "Thinking…" : "🤖 Ask"}
+            </button>
+
+            {error && <div className="text-sm text-[#E36B57] text-center py-2">{error}</div>}
+            {result && (
+              <div className="border border-[#2C4A3B] p-3">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Understood as</div>
+                {result.position && <div className="text-sm text-[#EDEDE3]">Position: {result.position}</div>}
+                {result.age_max && <div className="text-sm text-[#EDEDE3]">Max age: {result.age_max}</div>}
+                {result.potential_min && <div className="text-sm text-[#EDEDE3]">Min potential: {result.potential_min}</div>}
+                <button onClick={() => { onApplyFilters(result); onClose(); }}
+                  className="mt-3 w-full border border-[#E3A857] text-[#E3A857] py-2 text-xs uppercase tracking-wide hover:bg-[#E3A857] hover:text-[#0E1A15]">
+                  Apply these filters
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function UndiscoveredLeaguesModal({ onClose }) {
   const [data, setData] = useState(null);
 
@@ -8061,6 +8279,7 @@ function ScoutDashboard() {
   const [headToHeadOpen, setHeadToHeadOpen] = useState(false);
   const [undiscoveredLeaguesOpen, setUndiscoveredLeaguesOpen] = useState(false);
   const [badgesOpen, setBadgesOpen] = useState(false);
+  const [aiAssistantOpen, setAiAssistantOpen] = useState(false);
   const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
   const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
@@ -8129,6 +8348,7 @@ function ScoutDashboard() {
     { icon: "🥊", label: "Head-to-Head Club Dossier", section: "Club Analysis", setter: setHeadToHeadOpen },
     { icon: "🌍", label: "Undiscovered Leagues", section: "Scouting Intelligence", setter: setUndiscoveredLeaguesOpen },
     { icon: "🏅", label: "Your Badges", section: "Data & Results", setter: setBadgesOpen },
+    { icon: "🤖", label: "AI Scouting Assistant", section: "Scouting Intelligence", setter: setAiAssistantOpen },
     { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
   ];
 
@@ -9132,6 +9352,12 @@ function ScoutDashboard() {
       {headToHeadOpen && <HeadToHeadModal allLeagueOptions={allLeagueOptions} onClose={() => setHeadToHeadOpen(false)} />}
       {undiscoveredLeaguesOpen && <UndiscoveredLeaguesModal onClose={() => setUndiscoveredLeaguesOpen(false)} />}
       {badgesOpen && <BadgesModal onClose={() => setBadgesOpen(false)} />}
+      {aiAssistantOpen && (
+        <AIAssistantModal
+          onClose={() => setAiAssistantOpen(false)}
+          onApplyFilters={(filters) => { if (filters.position) setPosition(filters.position); }}
+        />
+      )}
       {commandPaletteOpen && (
         <CommandPaletteModal
           items={ALL_MENU_ITEMS}
