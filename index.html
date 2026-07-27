@@ -378,6 +378,37 @@ const DEFAULT_METRIC_SET = ["Goals/90", "Key Passes/90", "Tackles/90", "Pass Acc
 // (not even Edge), requires Chrome 148+, and the model itself may need
 // a one-time download. Every caller must handle "unavailable" and
 // "downloadable" states gracefully — this never assumes availability.
+// Multi-language UI — honest, partial coverage of the most visible,
+// high-traffic elements (navigation, headline, search) rather than a
+// claim of full translation across this entire app. Spanish,
+// Portuguese, and French chosen to match where a lot of tracked talent
+// genuinely comes from.
+const TRANSLATIONS = {
+  nav_briefing: { en: "🏠 Briefing", es: "🏠 Resumen", pt: "🏠 Resumo", fr: "🏠 Aperçu" },
+  nav_cards: { en: "Cards", es: "Tarjetas", pt: "Cartões", fr: "Fiches" },
+  nav_rankings: { en: "Rankings", es: "Clasificación", pt: "Classificação", fr: "Classement" },
+  nav_scatter: { en: "Scatter", es: "Dispersión", pt: "Dispersão", fr: "Dispersion" },
+  nav_explore: { en: "Explore", es: "Explorar", pt: "Explorar", fr: "Explorer" },
+  nav_shortlist: { en: "★ My Shortlist", es: "★ Mi Lista", pt: "★ Minha Lista", fr: "★ Ma Sélection" },
+  headline: {
+    en: "Find the player before the big five leagues do.",
+    es: "Encuentra al jugador antes que las cinco grandes ligas.",
+    pt: "Encontre o jogador antes das cinco grandes ligas.",
+    fr: "Trouvez le joueur avant les cinq grands championnats.",
+  },
+  search_placeholder: {
+    en: "Search player or club...", es: "Buscar jugador o club...",
+    pt: "Buscar jogador ou clube...", fr: "Rechercher un joueur ou un club...",
+  },
+  all_leagues: { en: "All leagues", es: "Todas las ligas", pt: "Todas as ligas", fr: "Toutes les ligues" },
+  all_clubs: { en: "All clubs", es: "Todos los clubes", pt: "Todos os clubes", fr: "Tous les clubs" },
+  all_positions: { en: "All positions", es: "Todas las posiciones", pt: "Todas as posições", fr: "Toutes les positions" },
+};
+
+function t(key, lang) {
+  return TRANSLATIONS[key]?.[lang] || TRANSLATIONS[key]?.en || key;
+}
+
 async function getOnDeviceAISession(systemPrompt) {
   if (!("LanguageModel" in self)) return { status: "unsupported" };
   try {
@@ -8293,6 +8324,13 @@ function ScoutDashboard() {
     try { localStorage.setItem("scoutindex_theme_v1", lightMode ? "light" : "dark"); } catch (e) { /* skip if unavailable */ }
   }, [lightMode]);
 
+  const [language, setLanguage] = useState(() => {
+    try { return localStorage.getItem("scoutindex_language_v1") || "en"; } catch (e) { return "en"; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("scoutindex_language_v1", language); } catch (e) { /* skip if unavailable */ }
+  }, [language]);
+
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   useEffect(() => {
     const goOnline = () => setIsOffline(false);
@@ -8953,10 +8991,18 @@ function ScoutDashboard() {
               className="hover:text-[#E3A857]">
               {lightMode ? "🌙" : "☀️"}
             </button>
+            <select value={language} onChange={e => setLanguage(e.target.value)}
+              title="Partial translation coverage — navigation and key labels only"
+              className="bg-transparent border-none text-[11px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] cursor-pointer">
+              <option value="en">EN</option>
+              <option value="es">ES</option>
+              <option value="pt">PT</option>
+              <option value="fr">FR</option>
+            </select>
           </div>
         </div>
         <h1 className="text-3xl md:text-5xl leading-[1.05] max-w-3xl font-display">
-          Find the player before the big five leagues do.
+          {t("headline", language)}
         </h1>
         <p className="text-[#9AAA9E] mt-4 max-w-2xl text-sm md:text-base">
           A scouting index spanning leagues most databases ignore. Filter, sort, and open any
@@ -9012,7 +9058,7 @@ function ScoutDashboard() {
           <div className="h-10 flex items-center gap-2 bg-[#152922] border border-[#2C4A3B] px-3 flex-1">
             🔍
             <input value={query} onChange={e => setQuery(e.target.value)}
-              aria-label="Search player or club" placeholder="Search player or club..."
+              aria-label={t("search_placeholder", language)} placeholder={t("search_placeholder", language)}
               className="bg-transparent outline-none text-sm w-full placeholder:text-[#6B8570]" />
             {SpeechRecognitionAPI && (
               <button onClick={startVoiceSearch} title="Voice search" className={`shrink-0 ${listening ? "animate-pulse text-[#E36B57]" : "text-[#6B8570] hover:text-[#E3A857]"}`}>
@@ -9116,27 +9162,27 @@ function ScoutDashboard() {
         <div className="flex border border-[#2C4A3B] w-full md:w-auto md:ml-auto overflow-x-auto">
           <button onClick={() => setView("briefing")}
             className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide whitespace-nowrap ${view === "briefing" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
-            🏠 Briefing
+            {t("nav_briefing", language)}
           </button>
           <button onClick={() => setView("cards")}
             className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide whitespace-nowrap ${view === "cards" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
-            Cards
+            {t("nav_cards", language)}
           </button>
           <button onClick={() => setView("rankings")}
             className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide whitespace-nowrap ${view === "rankings" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
-            Rankings
+            {t("nav_rankings", language)}
           </button>
           <button onClick={() => setView("scatter")}
             className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide whitespace-nowrap ${view === "scatter" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
-            Scatter
+            {t("nav_scatter", language)}
           </button>
           <button onClick={() => setView("explore")}
             className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide whitespace-nowrap ${view === "explore" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
-            Explore
+            {t("nav_explore", language)}
           </button>
           <button onClick={() => setView("shortlist")}
             className={`flex-1 md:flex-none px-3 py-2 text-xs uppercase tracking-wide whitespace-nowrap ${view === "shortlist" ? "bg-[#E3A857] text-[#0E1A15]" : "text-[#9AAA9E]"}`}>
-            ★ My Shortlist
+            {t("nav_shortlist", language)}
           </button>
         </div>
       </div>
