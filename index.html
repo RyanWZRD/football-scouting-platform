@@ -1045,6 +1045,32 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   const shortlisted = p.watchLevel === "shortlist";
   const realId = String(p.id).replace("live-", "");
 
+  // Real-Time Collaborative Notes — the honest, achievable version:
+  // if a colleague saves a note for this same player while you're
+  // viewing it, it appears live without a refresh. Falls back to
+  // silently doing nothing if the connection fails — not a critical
+  // path, just a nice-to-have.
+  const [liveNoteAlert, setLiveNoteAlert] = useState(null);
+  useEffect(() => {
+    if (!API_BASE_URL || !realId || !String(p.id).startsWith("live-")) return;
+    const wsUrl = API_BASE_URL.replace(/^http/, "ws") + `/ws/player-notes/${realId}` + (API_KEY ? `?key=${encodeURIComponent(API_KEY)}` : "");
+    let ws;
+    try {
+      ws = new WebSocket(wsUrl);
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.new_note) {
+            setDetails(d => d ? { ...d, scout_notes: [data.new_note, ...d.scout_notes] } : d);
+            setLiveNoteAlert(`New note from ${data.new_note.author || "a colleague"}`);
+            setTimeout(() => setLiveNoteAlert(null), 5000);
+          }
+        } catch (e) { /* ignore a malformed frame */ }
+      };
+    } catch (e) { /* WebSocket genuinely unavailable — silently skip, not a critical feature */ }
+    return () => { if (ws) ws.close(); };
+  }, [realId]);
+
   const downloadShareCard = () => {
     if (!shareCardRef.current || typeof html2canvas === "undefined") {
       alert("Image export isn't available right now — check your connection and try again.");
@@ -1995,6 +2021,12 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
                 {expandingNote ? "Expanding…" : "✨ Expand with AI"}
               </button>
             </div>
+
+            {liveNoteAlert && (
+              <div className="mt-3 text-xs text-[#7FD99A] bg-[#152922] border border-[#7FD99A] px-3 py-2">
+                🟢 {liveNoteAlert} — just now
+              </div>
+            )}
 
             <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mt-6 mb-2">
               {details?.scout_notes?.length ? "Note history" : "No notes yet"}
