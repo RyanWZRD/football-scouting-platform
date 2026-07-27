@@ -5510,6 +5510,80 @@ function RecentlyViewedModal({ recentlyViewed, onClose, onSelectPlayer }) {
   );
 }
 
+function SeasonSimulatorModal({ allLeagueOptions, onClose }) {
+  const [league, setLeague] = useState("");
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const runSimulation = () => {
+    if (!league || !API_BASE_URL) return;
+    setLoading(true);
+    setData(null);
+    fetch(`${API_BASE_URL}/leagues/season-simulation?league=${encodeURIComponent(league)}&simulations=1000`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setData(d))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-8" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🎲 Full Season Simulator</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Not a betting tool — the same honest framing as Match Estimator, run 1,000 times across every remaining fixture to produce genuine probability distributions. Doesn't account for injuries, tactics, or form-on-the-day.
+        </div>
+
+        <div className="flex gap-3 mb-5">
+          <select value={league} onChange={e => setLeague(e.target.value)}
+            className="flex-1 bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3]">
+            <option value="">Select a league...</option>
+            {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+          </select>
+          <button onClick={runSimulation} disabled={!league || loading}
+            className="bg-[#E3A857] text-[#0E1A15] font-bold px-4 py-2 text-sm uppercase tracking-wide disabled:opacity-50 shrink-0">
+            {loading ? "Simulating…" : "Run 1,000 Simulations"}
+          </button>
+        </div>
+
+        {loading && <div className="text-sm text-[#6B8570] text-center py-6">Running 1,000 full-season simulations — this may take a few seconds…</div>}
+        {data?.available === false && <div className="text-sm text-[#6B8570] text-center py-6">{data.reason}</div>}
+        {data?.available && (
+          <>
+            <div className="text-xs text-[#6B8570] mb-3">{data.simulations_run.toLocaleString()} simulations · {data.remaining_fixtures} remaining fixtures</div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[10px] uppercase tracking-wide text-[#6B8570] border-b border-[#2C4A3B] text-left">
+                  <th className="py-2">Club</th>
+                  <th className="py-2 text-right">Pts</th>
+                  <th className="py-2 text-right">🏆 Title</th>
+                  <th className="py-2 text-right">📈 Top Quarter</th>
+                  <th className="py-2 text-right">📉 Bottom Quarter</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.table.map((r, i) => (
+                  <tr key={r.club} className="border-b border-[#1C2E26] text-[#EDEDE3]">
+                    <td className="py-1.5">{r.club}</td>
+                    <td className="py-1.5 text-right font-plexmono">{r.current_points}</td>
+                    <td className="py-1.5 text-right font-plexmono" style={{ color: r.title_pct >= 10 ? "#E3A857" : "#6B8570" }}>{r.title_pct}%</td>
+                    <td className="py-1.5 text-right font-plexmono" style={{ color: r.top_quarter_pct >= 50 ? "#7FD99A" : "#9AAA9E" }}>{r.top_quarter_pct}%</td>
+                    <td className="py-1.5 text-right font-plexmono" style={{ color: r.bottom_quarter_pct >= 50 ? "#E36B57" : "#9AAA9E" }}>{r.bottom_quarter_pct}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="text-[10px] text-[#4A5C52] mt-4 italic text-center">{data.note}</div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AIAssistantModal({ onClose, onApplyFilters }) {
   const [aiStatus, setAiStatus] = useState("checking");
   const [query, setQuery] = useState("");
@@ -8356,6 +8430,7 @@ function ScoutDashboard() {
   const [undiscoveredLeaguesOpen, setUndiscoveredLeaguesOpen] = useState(false);
   const [badgesOpen, setBadgesOpen] = useState(false);
   const [aiAssistantOpen, setAiAssistantOpen] = useState(false);
+  const [seasonSimulatorOpen, setSeasonSimulatorOpen] = useState(false);
   const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
   const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
@@ -8425,6 +8500,7 @@ function ScoutDashboard() {
     { icon: "🌍", label: "Undiscovered Leagues", section: "Scouting Intelligence", setter: setUndiscoveredLeaguesOpen },
     { icon: "🏅", label: "Your Badges", section: "Data & Results", setter: setBadgesOpen },
     { icon: "🤖", label: "AI Scouting Assistant", section: "Scouting Intelligence", setter: setAiAssistantOpen },
+    { icon: "🎲", label: "Full Season Simulator", section: "Data & Results", setter: setSeasonSimulatorOpen },
     { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
   ];
 
@@ -9434,6 +9510,7 @@ function ScoutDashboard() {
           onApplyFilters={(filters) => { if (filters.position) setPosition(filters.position); }}
         />
       )}
+      {seasonSimulatorOpen && <SeasonSimulatorModal allLeagueOptions={allLeagueOptions} onClose={() => setSeasonSimulatorOpen(false)} />}
       {commandPaletteOpen && (
         <CommandPaletteModal
           items={ALL_MENU_ITEMS}
