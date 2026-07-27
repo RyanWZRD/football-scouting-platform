@@ -38,15 +38,24 @@ self.addEventListener("activate", (event) => {
 // Web Push notification. The actual sending happens server-side, via
 // send_discovery_alerts.py using the stored subscription.
 self.addEventListener("push", (event) => {
+  console.log("[push] event received", event);
   let data = { title: "New Discovery", body: "Check the app for details." };
   try {
-    if (event.data) data = event.data.json();
-  } catch (e) { /* fall back to the default text above */ }
+    if (event.data) {
+      data = event.data.json();
+      console.log("[push] parsed data:", data);
+    } else {
+      console.log("[push] event.data was empty, using default text");
+    }
+  } catch (e) {
+    console.log("[push] failed to parse event.data as JSON:", e);
+  }
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
       icon: "./icon-192.png",
-    })
+    }).then(() => console.log("[push] showNotification succeeded"))
+      .catch((e) => console.log("[push] showNotification failed:", e))
   );
 });
 
