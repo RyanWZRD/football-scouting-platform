@@ -4615,6 +4615,9 @@ class PipelineAddRequest(BaseModel):
 class PipelineStageUpdateRequest(BaseModel):
     stage: str
     notes: Optional[str] = None
+    agent_name: Optional[str] = None
+    agent_contact: Optional[str] = None
+    agent_notes: Optional[str] = None
 
 
 @app.post("/pipeline/add")
@@ -4652,10 +4655,12 @@ def update_pipeline_stage(pipeline_id: int, body: PipelineStageUpdateRequest = B
     with conn.cursor() as cur:
         cur.execute("""
             UPDATE recruitment_pipeline
-            SET stage = %s, stage_updated_at = now(), notes = COALESCE(%s, notes)
+            SET stage = %s, stage_updated_at = now(), notes = COALESCE(%s, notes),
+                agent_name = COALESCE(%s, agent_name), agent_contact = COALESCE(%s, agent_contact),
+                agent_notes = COALESCE(%s, agent_notes)
             WHERE id = %s AND user_id = %s
             RETURNING id
-        """, (body.stage, body.notes, pipeline_id, user_id))
+        """, (body.stage, body.notes, body.agent_name, body.agent_contact, body.agent_notes, pipeline_id, user_id))
         row = cur.fetchone()
     conn.commit()
     conn.close()
@@ -4687,6 +4692,7 @@ def get_pipeline(stale_days: int = Query(14, le=90), user_id: int = Depends(get_
     with conn.cursor() as cur:
         cur.execute("""
             SELECT rp.id, rp.stage, rp.notes, rp.created_at, rp.stage_updated_at,
+                   rp.agent_name, rp.agent_contact, rp.agent_notes,
                    p.id AS player_id, p.full_name, p.photo_url, cl.name AS club,
                    EXTRACT(DAY FROM now() - rp.stage_updated_at)::int AS days_in_stage
             FROM recruitment_pipeline rp
@@ -5671,6 +5677,169 @@ def historical_replay(player_id: int, authorized: bool = Depends(check_api_key))
         "available": True,
         "replays": replays,
         "note": "Uses current potential, not a reconstruction of potential at the time of each transfer — a real but imperfect retrospective.",
+    }
+
+
+@app.get("/fixtures/{match_id}/poll-draft")
+def fixture_poll_draft(match_id: int, authorized: bool = Depends(check_api_key)):
+    """Community Prediction Poll — the same honest, transparent
+    Match Estimator formula used elsewhere (squad quality + recent
+    form + home advantage), applied to one specific fixture, plus a
+    genuinely drafted poll question ready to post. Not a betting tool."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT m.league_id, home_cl.name AS home_club, away_cl.name AS away_club
+            FROM matches m
+            JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            WHERE m.id = %s
+        """, (match_id,))
+        match_row = cur.fetchone()
+        if not match_row:
+            conn.close()
+            raise HTTPException(status_code=404, detail="Match not found")
+        league_id = match_row["league_id"]
+
+        cur.execute("""
+            SELECT cl.name AS club, AVG(pps.potential_index) AS avg_potential
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE cl.league_id = %s AND cl.name IN (%s, %s)
+            GROUP BY cl.name
+            HAVING COUNT(*) >= 8
+        """, (league_id, match_row["home_club"], match_row["away_club"]))
+        quality = {r["club"]: float(r["avg_potential"]) for r in cur.fetchall()}
+
+        form = {}
+        for club in (match_row["home_club"], match_row["away_club"]):
+            cur.execute("""
+                SELECT m.home_score, m.away_score, home_cl.name AS home_club, away_cl.name AS away_club
+                FROM matches m
+                JOIN clubs home_cl ON home_cl.id = m.home_club_id
+                JOIN clubs away_cl ON away_cl.id = m.away_club_id
+                WHERE m.league_id = %s AND m.status = 'finished' AND (home_cl.name = %s OR away_cl.name = %s)
+                ORDER BY m.match_date DESC LIMIT 5
+            """, (league_id, club, club))
+            recent = cur.fetchall()
+            if not recent:
+                continue
+            points = 0
+            for r in recent:
+                is_home = r["home_club"] == club
+                gf = r["home_score"] if is_home else r["away_score"]
+                ga = r["away_score"] if is_home else r["home_score"]
+                points += 3 if gf > ga else (1 if gf == ga else 0)
+            form[club] = (points / (len(recent) * 3)) * 100
+    conn.close()
+
+    home_q, away_q = quality.get(match_row["home_club"]), quality.get(match_row["away_club"])
+    if home_q is None or away_q is None:
+        return {"available": False, "reason": "Not enough squad data for this fixture yet."}
+
+    HOME_ADVANTAGE_BONUS = 3
+    home_form, away_form = form.get(match_row["home_club"], 50), form.get(match_row["away_club"], 50)
+    home_strength = 0.6 * home_q + 0.4 * home_form
+    away_strength = 0.6 * away_q + 0.4 * away_form
+    strength_diff = (home_strength - away_strength) + HOME_ADVANTAGE_BONUS
+
+    raw_home = max(5, 33 + strength_diff)
+    raw_away = max(5, 33 - strength_diff)
+    raw_draw = max(8, 28 - abs(strength_diff) * 0.15)
+    total = raw_home + raw_away + raw_draw
+    home_pct, draw_pct, away_pct = round(100 * raw_home / total), round(100 * raw_draw / total), round(100 * raw_away / total)
+
+    poll_text = f"🗳️ Prediction: {match_row['home_club']} vs {match_row['away_club']} — who wins? (Model odds: {home_pct}% / {draw_pct}% draw / {away_pct}%)"
+
+    return {
+        "available": True,
+        "home_club": match_row["home_club"], "away_club": match_row["away_club"],
+        "home_pct": home_pct, "draw_pct": draw_pct, "away_pct": away_pct,
+        "poll_text": poll_text,
+        "note": "Not a betting tool — the same honest, transparent formula used across the platform.",
+    }
+
+
+@app.get("/players/guess-the-player-quiz")
+def guess_the_player_quiz(authorized: bool = Depends(check_api_key)):
+    """'Guess the Player' Quiz — a random, genuinely interesting
+    high-potential player with progressive clues, for building
+    shareable quiz content. Returns the answer alongside the clues
+    since this is content-generation for the person's own posting,
+    not a genuine anti-cheat multiplayer game."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.full_name, p.primary_position,
+                   EXTRACT(YEAR FROM age(p.date_of_birth))::int AS age,
+                   cl.name AS club, l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display,
+                   pps.potential_index
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE pps.potential_index >= 78
+            ORDER BY random()
+            LIMIT 1
+        """)
+        player = cur.fetchone()
+    conn.close()
+
+    if not player:
+        return {"available": False, "reason": "Not enough high-potential players scored yet."}
+
+    clues = [
+        f"Clue 1: Plays in {player['league_display']}.",
+        f"Clue 2: A {player['primary_position']}, age {player['age']}.",
+        f"Clue 3: Potential rating of {round(float(player['potential_index']))}+ on our index.",
+        f"Clue 4: Currently at {player['club']}.",
+    ]
+
+    return {
+        "available": True,
+        "answer": player["full_name"],
+        "clues": clues,
+        "note": "Real stats, genuinely random selection — not a guaranteed unknown player, just a real one worth guessing.",
+    }
+
+
+@app.get("/newsletter-data")
+def newsletter_data(authorized: bool = Depends(check_api_key)):
+    """Weekly Newsletter/Digest — aggregates the key weekly signals into
+    one concise payload for the on-device AI to synthesize into a
+    longer-form digest. Reuses The Autonomous Scout's discovery logic
+    directly rather than duplicating it."""
+    discoveries = autonomous_discovery(limit=3, authorized=True)
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH division_changes AS (
+                SELECT DISTINCT ON (cl.id) cl.id AS club_id, cl.name AS club, fixture_l.name AS new_league
+                FROM matches m
+                JOIN clubs cl ON cl.id = m.home_club_id OR cl.id = m.away_club_id
+                JOIN leagues fixture_l ON fixture_l.id = m.league_id
+                LEFT JOIN leagues current_l ON current_l.id = cl.league_id
+                WHERE m.status = 'scheduled' AND m.match_date >= now()
+                  AND (current_l.id IS NULL OR current_l.id != fixture_l.id)
+                ORDER BY cl.id, m.match_date ASC
+            )
+            SELECT club, new_league FROM division_changes LIMIT 5
+        """)
+        recent_changes = cur.fetchall()
+    conn.close()
+
+    return {
+        "top_discoveries": discoveries.get("discoveries", []),
+        "division_changes": recent_changes,
     }
 
 
