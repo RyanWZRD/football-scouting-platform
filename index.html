@@ -5150,6 +5150,145 @@ function RecentlyViewedModal({ recentlyViewed, onClose, onSelectPlayer }) {
   );
 }
 
+function SquadBuilderModal({ allLeagueOptions, onClose }) {
+  const [comparisonLeague, setComparisonLeague] = useState("");
+  const [roster, setRoster] = useState([]); // {id, full_name} pairs picked so far
+  const [searchText, setSearchText] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [analysis, setAnalysis] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL || searchText.trim().length < 2) { setSearchResults([]); return; }
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams({ search: searchText.trim(), limit: "10" });
+      fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+        .then(res => res.ok ? res.json() : [])
+        .then(rows => setSearchResults(rows))
+        .catch(() => setSearchResults([]));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchText]);
+
+  useEffect(() => {
+    if (!API_BASE_URL || roster.length === 0 || !comparisonLeague) { setAnalysis(null); return; }
+    fetch(`${API_BASE_URL}/squad-builder/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+      body: JSON.stringify({ player_ids: roster.map(r => r.id), comparison_league: comparisonLeague }),
+    })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setAnalysis(d))
+      .catch(() => setAnalysis(null));
+  }, [roster, comparisonLeague]);
+
+  const addPlayer = (p) => {
+    if (roster.some(r => r.id === p.id)) return;
+    setRoster([...roster, { id: p.id, full_name: p.full_name }]);
+    setSearchText("");
+    setSearchResults([]);
+  };
+  const removePlayer = (id) => setRoster(roster.filter(r => r.id !== id));
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[70]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-8" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🏟️ Complete Squad Builder</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-5 italic">
+          Build any hypothetical squad from scratch, entirely from players already tracked — see its full tactical identity form in real time.
+        </div>
+
+        <select value={comparisonLeague} onChange={e => setComparisonLeague(e.target.value)}
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-3">
+          <option value="">Select a comparison league for Style DNA context...</option>
+          {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+
+        <div className="relative mb-4">
+          <input value={searchText} onChange={e => setSearchText(e.target.value)} placeholder="Search for a player to add..."
+            className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3]" />
+          {searchResults.length > 0 && (
+            <div className="absolute z-10 w-full bg-[#152922] border border-[#2C4A3B] mt-1 max-h-48 overflow-y-auto">
+              {searchResults.map(row => (
+                <button key={row.id} onClick={() => addPlayer(row)} className="w-full text-left px-3 py-2 text-sm text-[#EDEDE3] hover:bg-[#0E1A15]">
+                  {row.full_name} <span className="text-[#6B8570] text-xs">· {row.club}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {roster.length > 0 && (
+          <div className="mb-5 border border-[#2C4A3B] p-3">
+            <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Squad ({roster.length})</div>
+            <div className="flex flex-wrap gap-2">
+              {roster.map(r => (
+                <span key={r.id} className="text-xs bg-[#152922] px-2 py-1 flex items-center gap-1.5">
+                  {r.full_name}
+                  <button onClick={() => removePlayer(r.id)} className="text-[#6B8570] hover:text-[#E36B57]">✕</button>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {roster.length > 0 && !comparisonLeague && (
+          <div className="text-xs text-[#6B8570] text-center py-3">Pick a comparison league above to see the full analysis.</div>
+        )}
+
+        {analysis?.available === false && <div className="text-xs text-[#6B8570] text-center py-3">{analysis.reason}</div>}
+        {analysis?.available && (
+          <>
+            <div className="grid grid-cols-3 gap-4 mb-5">
+              <div className="border border-[#2C4A3B] p-3 text-center">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">Avg Age</div>
+                <div className="text-xl font-bold font-plexmono text-[#EDEDE3]">{analysis.avg_age ?? "—"}</div>
+              </div>
+              <div className="border border-[#2C4A3B] p-3 text-center">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">Moneyball Total</div>
+                <div className="text-xl font-bold font-plexmono text-[#E3A857]">{analysis.total_moneyball_value}</div>
+              </div>
+              <div className="border border-[#2C4A3B] p-3 text-center">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">Squad Size</div>
+                <div className="text-xl font-bold font-plexmono text-[#EDEDE3]">{analysis.squad_size}</div>
+              </div>
+            </div>
+
+            <div className="mb-5">
+              <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Position Breakdown</div>
+              {Object.entries(analysis.position_counts).map(([pos, count]) => (
+                <div key={pos} className="flex items-center justify-between text-sm py-1">
+                  <span className="text-[#EDEDE3]">{pos}</span>
+                  <span className="font-plexmono text-[#9AAA9E]">{count}</span>
+                </div>
+              ))}
+            </div>
+
+            {analysis.style_dna && (
+              <div className="mb-2">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🧬 Style DNA</div>
+                <div className="h-56">
+                  <OverlayRadarChart series={[{ label: "This Squad", color: "#E3A857", metrics: {
+                    "Possession": { scaled: analysis.style_dna.possession_tendency ?? 0 },
+                    "Directness": { scaled: analysis.style_dna.directness ?? 0 },
+                    "Defensive Intensity": { scaled: analysis.style_dna.defensive_intensity ?? 0 },
+                    "Physicality": { scaled: analysis.style_dna.physicality ?? 0 },
+                    "Attacking Threat": { scaled: analysis.style_dna.attacking_threat ?? 0 },
+                  }}]} />
+                </div>
+              </div>
+            )}
+
+            <div className="text-[10px] text-[#4A5C52] mt-4 italic text-center">{analysis.note}</div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BackupRestoreModal({ onClose }) {
   const [importStatus, setImportStatus] = useState(null);
   const fileInputRef = useRef(null);
@@ -7399,6 +7538,7 @@ function ScoutDashboard() {
   const [pipelineOpen, setPipelineOpen] = useState(false);
   const [recentlyViewedOpen, setRecentlyViewedOpen] = useState(false);
   const [backupRestoreOpen, setBackupRestoreOpen] = useState(false);
+  const [squadBuilderOpen, setSquadBuilderOpen] = useState(false);
   const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
   const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
@@ -7462,6 +7602,7 @@ function ScoutDashboard() {
     { icon: "📌", label: "Recruitment Pipeline", section: "Scouting Intelligence", setter: setPipelineOpen },
     { icon: "🕐", label: "Recently Viewed", section: "Data & Results", setter: setRecentlyViewedOpen },
     { icon: "💾", label: "Backup & Restore", section: "Data & Results", setter: setBackupRestoreOpen },
+    { icon: "🏟️", label: "Complete Squad Builder", section: "Scouting Intelligence", setter: setSquadBuilderOpen },
     { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
   ];
 
@@ -8458,6 +8599,7 @@ function ScoutDashboard() {
         />
       )}
       {backupRestoreOpen && <BackupRestoreModal onClose={() => setBackupRestoreOpen(false)} />}
+      {squadBuilderOpen && <SquadBuilderModal allLeagueOptions={allLeagueOptions} onClose={() => setSquadBuilderOpen(false)} />}
       {commandPaletteOpen && (
         <CommandPaletteModal
           items={ALL_MENU_ITEMS}
