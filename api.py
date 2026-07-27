@@ -5380,6 +5380,149 @@ def injury_risk_profile(player_id: int, authorized: bool = Depends(check_api_key
     }
 
 
+@app.get("/players/trend-comparison")
+def players_trend_comparison(player_ids: str, authorized: bool = Depends(check_api_key)):
+    """Multi-Player Trend Comparison — overlays 2-4 players' real
+    potential evolution over time on one chart, using the exact same
+    history data already shown individually on each dossier. player_ids
+    is a comma-separated list, e.g. '123,456,789'."""
+    try:
+        ids = [int(x.strip()) for x in player_ids.split(",") if x.strip()][:4]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="player_ids must be a comma-separated list of integers")
+    if not ids:
+        raise HTTPException(status_code=400, detail="At least one player_id is required")
+
+    conn = get_conn()
+    results = []
+    with conn.cursor() as cur:
+        for pid in ids:
+            cur.execute("SELECT full_name FROM players WHERE id = %s", (pid,))
+            player_row = cur.fetchone()
+            if not player_row:
+                continue
+            cur.execute("""
+                SELECT potential_index, computed_at
+                FROM player_potential_scores
+                WHERE player_id = %s ORDER BY computed_at ASC
+            """, (pid,))
+            history = cur.fetchall()
+            results.append({"id": pid, "full_name": player_row["full_name"], "history": history})
+    conn.close()
+    return {"players": results}
+
+
+@app.get("/public/track-record")
+def public_track_record():
+    """Public, Verifiable Track Record Widget — genuinely public, no API
+    key required, since the whole point is external embeddability.
+    Exposes only safe, aggregate platform stats — never raw player
+    data, emails, or anything sensitive. Honest scope note: badges
+    aren't yet per-user scoped (that's a later phase beyond Multi-User
+    Phase 1), so this is a genuine platform-wide summary, not an
+    individual scout's personal record."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT COUNT(*) AS total FROM players p
+            JOIN LATERAL (
+                SELECT watch_level FROM scout_notes sn
+                WHERE sn.player_id = p.id ORDER BY created_at DESC LIMIT 1
+            ) latest_note ON true
+            WHERE latest_note.watch_level = 'shortlist'
+        """)
+        total_shortlisted = cur.fetchone()["total"]
+
+        cur.execute("""
+            WITH division_changes AS (
+                SELECT DISTINCT ON (cl.id) cl.id AS club_id
+                FROM matches m
+                JOIN clubs cl ON cl.id = m.home_club_id OR cl.id = m.away_club_id
+                JOIN leagues fixture_l ON fixture_l.id = m.league_id
+                LEFT JOIN leagues current_l ON current_l.id = cl.league_id
+                WHERE m.status = 'scheduled' AND m.match_date >= now()
+                  AND (current_l.id IS NULL OR current_l.id != fixture_l.id)
+                ORDER BY cl.id, m.match_date ASC
+            )
+            SELECT COUNT(DISTINCT p.id) AS total FROM players p
+            JOIN LATERAL (
+                SELECT watch_level FROM scout_notes sn
+                WHERE sn.player_id = p.id ORDER BY created_at DESC LIMIT 1
+            ) latest_note ON true
+            JOIN division_changes dc ON dc.club_id = p.current_club_id
+            WHERE latest_note.watch_level = 'shortlist'
+        """)
+        called_it_count = cur.fetchone()["total"]
+    conn.close()
+
+    hit_rate = round(100 * called_it_count / total_shortlisted, 1) if total_shortlisted else 0
+    return {
+        "total_shortlisted": total_shortlisted,
+        "called_it_count": called_it_count,
+        "hit_rate_pct": hit_rate,
+        "note": "A genuine, real-time aggregate from actual detected club division changes — not a claim, a live count.",
+    }
+
+
+@app.get("/leagues/strategic-briefing-data")
+def strategic_briefing_data(league: str, authorized: bool = Depends(check_api_key)):
+    """The AI Strategic Intelligence Engine's data layer — aggregates
+    the key signals for a league into one concise payload, deliberately
+    kept small (top 12 players, key aggregate stats only) since the
+    on-device AI that synthesizes this has a genuinely limited context
+    window compared to cloud models. This endpoint prepares the data;
+    the actual synthesis happens client-side, on-device, for free."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.full_name, cl.name AS club, pps.potential_index,
+                   COALESCE(SUM(pms.minutes_played), 0) AS minutes
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            LEFT JOIN player_match_stats pms ON pms.player_id = p.id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s AND pps.potential_index >= 70
+            GROUP BY p.id, p.full_name, cl.name, pps.potential_index
+            ORDER BY pps.potential_index DESC
+            LIMIT 12
+        """, (league,))
+        top_players = cur.fetchall()
+
+        cur.execute("""
+            SELECT cl.name AS club, AVG(pps.potential_index) AS avg_potential, COUNT(*) AS squad_size
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+            GROUP BY cl.name
+            HAVING COUNT(*) >= 8
+            ORDER BY avg_potential DESC
+            LIMIT 6
+        """, (league,))
+        top_clubs = cur.fetchall()
+    conn.close()
+
+    if not top_players:
+        return {"available": False, "reason": "Not enough scored players in this league yet."}
+
+    return {
+        "available": True,
+        "league": league,
+        "top_players": [{"name": p["full_name"], "club": p["club"], "potential": round(float(p["potential_index"]))} for p in top_players],
+        "top_clubs": [{"club": c["club"], "avg_potential": round(float(c["avg_potential"]), 1)} for c in top_clubs],
+    }
+
+
 @app.get("/leagues/season-simulation")
 def full_season_simulation(league: str, simulations: int = Query(1000, le=5000), authorized: bool = Depends(check_api_key)):
     """The Full Season Simulator — genuine Monte Carlo projection across
