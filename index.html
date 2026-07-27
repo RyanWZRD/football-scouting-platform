@@ -9062,6 +9062,8 @@ function ScoutDashboard() {
       {squadBuilderOpen && <SquadBuilderModal allLeagueOptions={allLeagueOptions} onClose={() => setSquadBuilderOpen(false)} />}
       {mostCardedOpen && <MostCardedModal allLeagueOptions={allLeagueOptions} onClose={() => setMostCardedOpen(false)} />}
       {headToHeadOpen && <HeadToHeadModal allLeagueOptions={allLeagueOptions} onClose={() => setHeadToHeadOpen(false)} />}
+      {undiscoveredLeaguesOpen && <UndiscoveredLeaguesModal onClose={() => setUndiscoveredLeaguesOpen(false)} />}
+      {badgesOpen && <BadgesModal onClose={() => setBadgesOpen(false)} />}
       {commandPaletteOpen && (
         <CommandPaletteModal
           items={ALL_MENU_ITEMS}
