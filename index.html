@@ -22,6 +22,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
   body { background:#0E1A15; margin:0; font-family: 'Inter', sans-serif; }
   .font-display { font-family: 'Archivo Black', sans-serif; }
@@ -1015,6 +1017,30 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
       if (session.destroy) session.destroy();
     }
   };
+  const [threadDraft, setThreadDraft] = useState(null);
+  const [draftingThread, setDraftingThread] = useState(false);
+  const generateThreadDraft = async () => {
+    setDraftingThread(true);
+    setThreadDraft(null);
+    const { status, session } = await getOnDeviceAISession(
+      "You write a genuinely engaging, data-backed 3-tweet scouting thread about a football prospect, using ONLY the real stats given — no invented numbers or claims. Format as three separate tweets, each under 280 characters, numbered 1/3, 2/3, 3/3, separated by a blank line. Confident but factual tone."
+    );
+    if (status !== "ready") {
+      setThreadDraft("Chrome's on-device AI isn't available right now — needs Chrome 148+ and a one-time model download.");
+      setDraftingThread(false);
+      return;
+    }
+    try {
+      const statsText = `${p.name}, ${p.posLabel}, age ${p.age ?? "unknown"}, potential index ${p.potential ?? "unknown"}, currently at ${p.club} in ${p.league}.`;
+      const thread = await session.prompt(statsText);
+      setThreadDraft(thread.trim());
+    } catch (e) {
+      setThreadDraft("Couldn't draft a thread right now — please try again.");
+    } finally {
+      setDraftingThread(false);
+      if (session.destroy) session.destroy();
+    }
+  };
   const expandNoteWithAI = async () => {
     if (!noteText.trim()) return;
     setExpandingNote(true);
@@ -1143,6 +1169,10 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
       .then(res => res.ok ? res.json() : [])
       .then(data => setTransferHistory(data))
       .catch(() => setTransferHistory([]));
+    fetch(`${API_BASE_URL}/players/${realId}/historical-replay`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setHistoricalReplay(data))
+      .catch(() => setHistoricalReplay(null));
     fetch(`${API_BASE_URL}/players/${realId}/sidelined`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
       .then(res => res.ok ? res.json() : [])
       .then(data => setSidelinedRecords(data))
@@ -1167,6 +1197,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   const [news, setNews] = useState(null);
   const [trophies, setTrophies] = useState(null);
   const [transferHistory, setTransferHistory] = useState(null);
+  const [historicalReplay, setHistoricalReplay] = useState(null);
   const [sidelinedRecords, setSidelinedRecords] = useState(null);
   const [injuryRiskProfile, setInjuryRiskProfile] = useState(null);
   const [loadingNews, setLoadingNews] = useState(false);
@@ -1597,7 +1628,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
               </div>
             </div>
 
-            <div className="mt-3">
+            <div className="mt-3 flex items-center gap-2">
               {!aiSummary && (
                 <button onClick={generateAISummary} disabled={summarizing}
                   title="Free, on-device AI (Chrome 148+ only)"
@@ -1605,10 +1636,26 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
                   {summarizing ? "Generating…" : "✨ AI Summary"}
                 </button>
               )}
-              {aiSummary && (
-                <div className="border border-[#2C4A3B] p-3 text-sm text-[#EDEDE3] italic">{aiSummary}</div>
+              {!threadDraft && (
+                <button onClick={generateThreadDraft} disabled={draftingThread}
+                  title="Free, on-device AI (Chrome 148+ only)"
+                  className="text-xs uppercase tracking-wide px-3 py-1.5 border border-[#2C4A3B] text-[#9AAA9E] hover:border-[#E3A857] hover:text-[#E3A857] disabled:opacity-40">
+                  {draftingThread ? "Drafting…" : "🧵 Draft Thread"}
+                </button>
               )}
             </div>
+            {aiSummary && (
+              <div className="mt-2 border border-[#2C4A3B] p-3 text-sm text-[#EDEDE3] italic">{aiSummary}</div>
+            )}
+            {threadDraft && (
+              <div className="mt-2 border border-[#2C4A3B] p-3">
+                <div className="text-sm text-[#EDEDE3] whitespace-pre-wrap mb-2">{threadDraft}</div>
+                <button onClick={() => navigator.clipboard?.writeText(threadDraft)}
+                  className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
+                  📋 Copy Thread
+                </button>
+              </div>
+            )}
 
             {rotationRisk?.available && (
               <div className="flex items-center justify-between mt-3 mb-1">
@@ -1855,6 +1902,19 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
                   <div key={i} className="flex items-center justify-between text-sm py-1">
                     <span className="text-[#EDEDE3]">{t.club_from} <span className="text-[#6B8570]">→</span> {t.club_to}</span>
                     <span className="text-xs font-plexmono text-[#E3A857]">{t.fee_type}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {historicalReplay?.available && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">⏮️ "What If" Historical Replay</div>
+                <div className="text-[10px] text-[#4A5C52] italic mb-2">{historicalReplay.note}</div>
+                {historicalReplay.replays.map((r, i) => (
+                  <div key={i} className="text-sm py-1">
+                    <span className="text-[#EDEDE3]">{r.club_from} → {r.club_to} ({r.fee_type})</span>
+                    <div className="text-xs text-[#9AAA9E]">{r.verdict}</div>
                   </div>
                 ))}
               </div>
@@ -5788,6 +5848,202 @@ function ActivityLogModal({ onClose }) {
   );
 }
 
+function ItineraryModal({ onClose }) {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/scouting-itinerary?days_ahead=30`, { headers: getAuthHeaders() })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setData(d))
+      .catch(() => setData(null));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📅 Scouting Itinerary</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">Real upcoming fixtures for your shortlisted players' clubs, next 30 days — where and when to actually go watch.</div>
+
+        {data === null && <div className="text-sm text-[#6B8570] text-center py-6">Loading…</div>}
+        {data?.available === false && <div className="text-sm text-[#6B8570] text-center py-6">{data.reason}</div>}
+        {data?.available && data.fixtures.length === 0 && <div className="text-sm text-[#6B8570] text-center py-6">No upcoming fixtures found in the next 30 days.</div>}
+        {data?.available && data.fixtures.map((f, i) => (
+          <div key={i} className="border border-[#2C4A3B] p-3 mb-2">
+            <div className="text-sm text-[#EDEDE3]">{f.home_club} <span className="text-[#6B8570]">vs</span> {f.away_club}</div>
+            <div className="text-xs text-[#9AAA9E] mt-1">{new Date(f.date).toLocaleDateString()} · {f.venue_name || "Venue TBC"}</div>
+            {f.address && <div className="text-[10px] text-[#6B8570] mt-0.5">{f.address}</div>}
+            {f.lat && f.lon && (
+              <a href={`https://www.google.com/maps?q=${f.lat},${f.lon}`} target="_blank" rel="noopener noreferrer"
+                className="text-[10px] text-[#E3A857] hover:underline mt-1 inline-block">📍 Directions</a>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MapViewModal({ allLeagueOptions, onClose }) {
+  const [league, setLeague] = useState("");
+  const [data, setData] = useState(null);
+  const mapContainerRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+
+  const loadClubs = () => {
+    const params = new URLSearchParams();
+    if (league) params.set("league", league);
+    fetch(`${API_BASE_URL}/clubs/map-data?${params.toString()}`, { headers: getAuthHeaders() })
+      .then(res => res.ok ? res.json() : [])
+      .then(d => setData(d))
+      .catch(() => setData([]));
+  };
+
+  useEffect(() => { loadClubs(); }, [league]);
+
+  useEffect(() => {
+    if (!mapContainerRef.current || typeof L === "undefined") return;
+    if (!mapInstanceRef.current) {
+      mapInstanceRef.current = L.map(mapContainerRef.current).setView([48, 10], 4);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "© OpenStreetMap contributors",
+      }).addTo(mapInstanceRef.current);
+    }
+    const map = mapInstanceRef.current;
+    // Clear previous markers before drawing fresh ones
+    map.eachLayer(layer => { if (layer instanceof L.Marker) map.removeLayer(layer); });
+
+    (data || []).forEach(club => {
+      L.marker([club.lat, club.lon]).addTo(map).bindPopup(`<b>${club.club}</b><br/>${club.venue_name || ""}`);
+    });
+
+    return () => { /* keep map instance alive across data refreshes, only clean up on unmount below */ };
+  }, [data]);
+
+  useEffect(() => {
+    return () => { if (mapInstanceRef.current) { mapInstanceRef.current.remove(); mapInstanceRef.current = null; } };
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-3xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🗺️ Geographic Map View</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">Real venue coordinates for tracked clubs. Empty for venues not yet geocoded via geocode_venues.py.</div>
+
+        <select value={league} onChange={e => setLeague(e.target.value)}
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-3">
+          <option value="">All leagues</option>
+          {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+
+        <div ref={mapContainerRef} style={{ height: 450, width: "100%" }} className="border border-[#2C4A3B]" />
+      </div>
+    </div>
+  );
+}
+
+function HeadToHeadReportModal({ onClose }) {
+  const [searchText, setSearchText] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [playerA, setPlayerA] = useState(null); // {id, full_name}
+  const [playerB, setPlayerB] = useState(null);
+  const [detailsA, setDetailsA] = useState(null);
+  const [detailsB, setDetailsB] = useState(null);
+  const [pickingSlot, setPickingSlot] = useState("A"); // which slot the next search result fills
+
+  useEffect(() => {
+    if (!API_BASE_URL || searchText.trim().length < 2) { setSearchResults([]); return; }
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams({ search: searchText.trim(), limit: "10" });
+      fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: getAuthHeaders() })
+        .then(res => res.ok ? res.json() : [])
+        .then(rows => setSearchResults(rows))
+        .catch(() => setSearchResults([]));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchText]);
+
+  const pickPlayer = (p) => {
+    if (pickingSlot === "A") setPlayerA(p); else setPlayerB(p);
+    setSearchText(""); setSearchResults([]);
+  };
+
+  useEffect(() => {
+    if (!playerA) { setDetailsA(null); return; }
+    fetch(`${API_BASE_URL}/players/${playerA.id}`, { headers: getAuthHeaders() })
+      .then(res => res.ok ? res.json() : null).then(setDetailsA).catch(() => setDetailsA(null));
+  }, [playerA]);
+  useEffect(() => {
+    if (!playerB) { setDetailsB(null); return; }
+    fetch(`${API_BASE_URL}/players/${playerB.id}`, { headers: getAuthHeaders() })
+      .then(res => res.ok ? res.json() : null).then(setDetailsB).catch(() => setDetailsB(null));
+  }, [playerB]);
+
+  const renderColumn = (player, details) => (
+    <div className="flex-1">
+      {!player && <div className="text-xs text-[#6B8570] text-center py-8">No player selected</div>}
+      {player && !details && <div className="text-xs text-[#6B8570] text-center py-8">Loading…</div>}
+      {player && details && (
+        <>
+          <div className="text-lg text-[#EDEDE3] font-display mb-3">{player.full_name}</div>
+          <div className="space-y-1.5 text-sm">
+            <div className="flex justify-between"><span className="text-[#6B8570]">Age</span><span className="text-[#EDEDE3]">{details.age ?? "—"}</span></div>
+            <div className="flex justify-between"><span className="text-[#6B8570]">Position</span><span className="text-[#EDEDE3]">{details.position ?? "—"}</span></div>
+            <div className="flex justify-between"><span className="text-[#6B8570]">Potential</span><span style={{ color: potentialColor(details.potential) }}>{details.potential ?? "—"}</span></div>
+            <div className="flex justify-between"><span className="text-[#6B8570]">Nationality</span><span className="text-[#EDEDE3]">{details.nationality ?? "—"}</span></div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[70]" onClick={onClose}>
+      <div className="printable-dossier bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-8" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4 no-print">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🥊 Head-to-Head Comparison Report</div>
+          <div className="flex items-center gap-4">
+            <button onClick={() => window.print()} className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">🖨️ Print / Save PDF</button>
+            <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+          </div>
+        </div>
+
+        <div className="no-print mb-4">
+          <div className="flex gap-2 mb-2">
+            <button onClick={() => setPickingSlot("A")} className={`text-xs px-3 py-1.5 uppercase tracking-wide ${pickingSlot === "A" ? "bg-[#E3A857] text-[#0E1A15]" : "border border-[#2C4A3B] text-[#9AAA9E]"}`}>Player A</button>
+            <button onClick={() => setPickingSlot("B")} className={`text-xs px-3 py-1.5 uppercase tracking-wide ${pickingSlot === "B" ? "bg-[#E3A857] text-[#0E1A15]" : "border border-[#2C4A3B] text-[#9AAA9E]"}`}>Player B</button>
+          </div>
+          <div className="relative">
+            <input value={searchText} onChange={e => setSearchText(e.target.value)} placeholder={`Search for Player ${pickingSlot}...`}
+              className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3]" />
+            {searchResults.length > 0 && (
+              <div className="absolute z-10 w-full bg-[#152922] border border-[#2C4A3B] mt-1 max-h-48 overflow-y-auto">
+                {searchResults.map(row => (
+                  <button key={row.id} onClick={() => pickPlayer(row)} className="w-full text-left px-3 py-2 text-sm text-[#EDEDE3] hover:bg-[#0E1A15]">
+                    {row.full_name} <span className="text-[#6B8570] text-xs">· {row.club}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="flex gap-6 border-t border-[#2C4A3B] pt-4">
+          {renderColumn(playerA, detailsA)}
+          <div className="w-px bg-[#2C4A3B]" />
+          {renderColumn(playerB, detailsB)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StrategicIntelModal({ allLeagueOptions, onClose }) {
   const [league, setLeague] = useState("");
   const [aiStatus, setAiStatus] = useState("idle");
@@ -6337,6 +6593,15 @@ function BadgesModal({ onClose }) {
           <div key={i} className="border border-[#E3A857] p-3 mb-2">
             <div className="text-sm text-[#EDEDE3]">{b.badge}</div>
             <div className="text-xs text-[#9AAA9E] mt-1">{b.full_name} · {b.club} <span className="text-[#E3A857]">→ {b.fixture_implied_league}</span></div>
+            {b.drafted_tweet && (
+              <div className="mt-2 border-t border-[#2C4A3B] pt-2">
+                <div className="text-xs text-[#EDEDE3] italic">{b.drafted_tweet}</div>
+                <button onClick={() => navigator.clipboard?.writeText(b.drafted_tweet)}
+                  className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] mt-1">
+                  📋 Copy Tweet
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -6997,6 +7262,37 @@ function MatchPreviewModal({ matchId, onClose }) {
       .catch(() => setTimeline([]));
   }, [matchId]);
 
+  const [previewThreadDraft, setPreviewThreadDraft] = useState(null);
+  const [draftingPreviewThread, setDraftingPreviewThread] = useState(false);
+  const generatePreviewThread = async () => {
+    if (!data) return;
+    setDraftingPreviewThread(true);
+    setPreviewThreadDraft(null);
+    const { status, session } = await getOnDeviceAISession(
+      "You write a genuinely engaging, factual pre-match preview thread for X/Twitter, using ONLY the real data given — no invented details. Format as 2-3 separate tweets, each under 280 characters, numbered, separated by blank lines."
+    );
+    if (status !== "ready") {
+      setPreviewThreadDraft("Chrome's on-device AI isn't available right now — needs Chrome 148+ and a one-time model download.");
+      setDraftingPreviewThread(false);
+      return;
+    }
+    try {
+      const facts = [
+        `${data.match.home_club} vs ${data.match.away_club}, ${new Date(data.match.match_date).toLocaleDateString()}.`,
+        data.match.referee ? `Referee: ${data.match.referee}.` : "",
+        data.referee_profile ? `Referee averages ${data.referee_profile.avg_cards_per_match} cards and ${data.referee_profile.avg_penalties_per_match} penalties per match, ${data.referee_profile.home_win_pct}% home win rate.` : "",
+        environment?.flags?.length > 0 ? environment.flags.join(" ") : "",
+      ].filter(Boolean).join(" ");
+      const thread = await session.prompt(facts);
+      setPreviewThreadDraft(thread.trim());
+    } catch (e) {
+      setPreviewThreadDraft("Couldn't draft a thread right now — please try again.");
+    } finally {
+      setDraftingPreviewThread(false);
+      if (session.destroy) session.destroy();
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[70]" onClick={onClose}>
       <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-8" onClick={e => e.stopPropagation()}>
@@ -7011,6 +7307,25 @@ function MatchPreviewModal({ matchId, onClose }) {
             <div className="text-center mb-6">
               <div className="text-2xl text-[#EDEDE3] font-display">{data.match.home_club} <span className="text-[#6B8570]">vs</span> {data.match.away_club}</div>
               <div className="text-xs text-[#6B8570] mt-1">{new Date(data.match.match_date).toLocaleDateString()}{data.match.referee && ` · Referee: ${data.match.referee}`}</div>
+            </div>
+
+            <div className="text-center mb-5">
+              {!previewThreadDraft && (
+                <button onClick={generatePreviewThread} disabled={draftingPreviewThread}
+                  title="Free, on-device AI (Chrome 148+ only)"
+                  className="text-xs uppercase tracking-wide px-3 py-1.5 border border-[#2C4A3B] text-[#9AAA9E] hover:border-[#E3A857] hover:text-[#E3A857] disabled:opacity-40">
+                  {draftingPreviewThread ? "Drafting…" : "🧵 Draft Preview Thread"}
+                </button>
+              )}
+              {previewThreadDraft && (
+                <div className="border border-[#2C4A3B] p-3 text-left">
+                  <div className="text-sm text-[#EDEDE3] whitespace-pre-wrap mb-2">{previewThreadDraft}</div>
+                  <button onClick={() => navigator.clipboard?.writeText(previewThreadDraft)}
+                    className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
+                    📋 Copy Thread
+                  </button>
+                </div>
+              )}
             </div>
 
             {data.referee_profile && (
@@ -9096,6 +9411,9 @@ function ScoutDashboard() {
   const [trendComparisonOpen, setTrendComparisonOpen] = useState(false);
   const [publicTrackRecordOpen, setPublicTrackRecordOpen] = useState(false);
   const [strategicIntelOpen, setStrategicIntelOpen] = useState(false);
+  const [headToHeadReportOpen, setHeadToHeadReportOpen] = useState(false);
+  const [mapViewOpen, setMapViewOpen] = useState(false);
+  const [itineraryOpen, setItineraryOpen] = useState(false);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState(null); // null = checking/logged out; { id, email } once confirmed
@@ -9186,6 +9504,9 @@ function ScoutDashboard() {
     { icon: "📈", label: "Multi-Player Trend Comparison", section: "Data & Results", setter: setTrendComparisonOpen },
     { icon: "✅", label: "Public Track Record", section: "Data & Results", setter: setPublicTrackRecordOpen },
     { icon: "🧠", label: "AI Strategic Intelligence Engine", section: "Scouting Intelligence", setter: setStrategicIntelOpen },
+    { icon: "🥊", label: "Head-to-Head Comparison Report", section: "Data & Results", setter: setHeadToHeadReportOpen },
+    { icon: "🗺️", label: "Geographic Map View", section: "Data & Results", setter: setMapViewOpen },
+    { icon: "📅", label: "Scouting Itinerary", section: "Data & Results", setter: setItineraryOpen },
     { icon: "📜", label: "Activity Log", section: "Data & Results", setter: setActivityLogOpen },
     { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
   ];
@@ -10261,6 +10582,9 @@ function ScoutDashboard() {
       {trendComparisonOpen && <TrendComparisonModal onClose={() => setTrendComparisonOpen(false)} />}
       {publicTrackRecordOpen && <PublicTrackRecordModal onClose={() => setPublicTrackRecordOpen(false)} />}
       {strategicIntelOpen && <StrategicIntelModal allLeagueOptions={allLeagueOptions} onClose={() => setStrategicIntelOpen(false)} />}
+      {headToHeadReportOpen && <HeadToHeadReportModal onClose={() => setHeadToHeadReportOpen(false)} />}
+      {mapViewOpen && <MapViewModal allLeagueOptions={allLeagueOptions} onClose={() => setMapViewOpen(false)} />}
+      {itineraryOpen && <ItineraryModal onClose={() => setItineraryOpen(false)} />}
       {activityLogOpen && <ActivityLogModal onClose={() => setActivityLogOpen(false)} />}
       {authModalOpen && <AuthModal onClose={() => setAuthModalOpen(false)} onSuccess={setCurrentUser} />}
       {commandPaletteOpen && (
