@@ -4918,6 +4918,48 @@ def achievement_badges(authorized: bool = Depends(check_api_key)):
             "note": "Real, earned recognition — tied to genuine detected outcomes, not app usage."}
 
 
+@app.get("/fixtures/{match_id}/timeline")
+def match_event_timeline(match_id: int, authorized: bool = Depends(check_api_key)):
+    """The real, minute-by-minute flow of a specific match — goals,
+    cards, substitutions, with exact timing and assists. Confirmed real
+    data from API-Football's own /fixtures/events endpoint. Empty until
+    match_events_ingest.py has been run for this match."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT minute, extra_minute, event_type, detail, player_name, assist_name, club_name
+            FROM match_events WHERE match_id = %s
+            ORDER BY minute ASC NULLS LAST, extra_minute ASC NULLS FIRST
+        """, (match_id,))
+        events = cur.fetchall()
+    conn.close()
+    return events
+
+
+@app.get("/clubs/preferred-formation")
+def club_preferred_formation(club: str, league: str, authorized: bool = Depends(check_api_key)):
+    """A club's most commonly used formation across tracked matches —
+    real data from API-Football's own /fixtures/lineups endpoint, not
+    an estimate. Empty until match_events_ingest.py has been run for
+    this club's matches."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT ml.formation, COUNT(*) AS times_used
+            FROM match_lineups ml
+            JOIN clubs cl ON cl.id = ml.club_id
+            LEFT JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE cl.name = %s AND (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+              AND ml.formation IS NOT NULL
+            GROUP BY ml.formation
+            ORDER BY times_used DESC
+        """, (club, league))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 @app.get("/today")
 def scouts_today_dashboard(authorized: bool = Depends(check_api_key)):
     """The unified homepage — everything that genuinely needs attention
