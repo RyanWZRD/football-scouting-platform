@@ -4788,9 +4788,11 @@ def _geocode_city(city):
         resp.raise_for_status()
         results = resp.json().get("results")
         if not results:
+            print(f"Geocoding returned no results for city: {city!r}")
             return None
         return {"lat": results[0]["latitude"], "lon": results[0]["longitude"], "elevation": results[0].get("elevation")}
-    except Exception:
+    except Exception as e:
+        print(f"Geocoding failed for city {city!r}: {type(e).__name__}: {e}")
         return None
 
 
