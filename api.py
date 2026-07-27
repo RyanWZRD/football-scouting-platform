@@ -5041,6 +5041,65 @@ def autonomous_discovery(limit: int = Query(5, le=15), authorized: bool = Depend
     }
 
 
+@app.get("/players/{player_id}/trophies")
+def player_trophies(player_id: int, authorized: bool = Depends(check_api_key)):
+    """Real career trophy history — league titles, cup wins, runner-up
+    finishes. Confirmed real data from API-Football's own /trophies
+    endpoint. Empty until trophies_ingest.py has been run for this
+    player. Filters out internal null-placeholder rows used to mark
+    genuinely trophy-less players as already processed."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT league_name, country, season, place
+            FROM player_trophies
+            WHERE player_id = %s AND league_name IS NOT NULL
+            ORDER BY season DESC
+        """, (player_id,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/players/{player_id}/transfer-history")
+def player_transfer_history(player_id: int, authorized: bool = Depends(check_api_key)):
+    """Real transfer fee history — actual fees, or Free/Loan/N/A.
+    Confirmed real data from API-Football's own dedicated /transfers
+    endpoint, genuinely different from this project's own match-based
+    transfer detection which has no fee information. Empty until
+    transfer_fees_ingest.py has been run for this player."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT transfer_date, fee_type, club_from, club_to
+            FROM player_transfer_history
+            WHERE player_id = %s AND club_to IS NOT NULL
+            ORDER BY transfer_date DESC
+        """, (player_id,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/players/{player_id}/sidelined")
+def player_sidelined_records(player_id: int, authorized: bool = Depends(check_api_key)):
+    """Sidelined records — genuinely broader than the existing injury
+    tracking, covers suspensions as well as injuries. Confirmed real
+    data from API-Football's own /sidelined endpoint. Empty until
+    sidelined_ingest.py has been run for this player."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT sidelined_type, start_date, end_date
+            FROM player_sidelined
+            WHERE player_id = %s AND sidelined_type IS NOT NULL
+            ORDER BY start_date DESC
+        """, (player_id,))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
 @app.get("/today")
 def scouts_today_dashboard(authorized: bool = Depends(check_api_key)):
     """The unified homepage — everything that genuinely needs attention
