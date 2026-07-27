@@ -1173,6 +1173,10 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
       .then(res => res.ok ? res.json() : null)
       .then(data => setHistoricalReplay(data))
       .catch(() => setHistoricalReplay(null));
+    fetch(`${API_BASE_URL}/players/${realId}/total-cost-estimate`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setCostEstimate(data))
+      .catch(() => setCostEstimate(null));
     fetch(`${API_BASE_URL}/players/${realId}/sidelined`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
       .then(res => res.ok ? res.json() : [])
       .then(data => setSidelinedRecords(data))
@@ -1198,6 +1202,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   const [trophies, setTrophies] = useState(null);
   const [transferHistory, setTransferHistory] = useState(null);
   const [historicalReplay, setHistoricalReplay] = useState(null);
+  const [costEstimate, setCostEstimate] = useState(null);
   const [sidelinedRecords, setSidelinedRecords] = useState(null);
   const [injuryRiskProfile, setInjuryRiskProfile] = useState(null);
   const [loadingNews, setLoadingNews] = useState(false);
@@ -1917,6 +1922,17 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
                     <div className="text-xs text-[#9AAA9E]">{r.verdict}</div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {costEstimate?.available && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">💷 Total Cost Estimate</div>
+                <div className="text-sm text-[#EDEDE3]">Transfer fee: €{costEstimate.transfer_fee_millions}M</div>
+                <div className="text-xs text-[#9AAA9E] mt-1">Est. annual wages: €{costEstimate.est_annual_wage_range_millions[0]}M – €{costEstimate.est_annual_wage_range_millions[1]}M</div>
+                <div className="text-xs text-[#9AAA9E]">Est. agent fees: €{costEstimate.est_agent_fee_range_millions[0]}M – €{costEstimate.est_agent_fee_range_millions[1]}M</div>
+                <div className="text-sm text-[#E3A857] mt-1.5">Est. total year one: €{costEstimate.est_total_year_one_range_millions[0]}M – €{costEstimate.est_total_year_one_range_millions[1]}M</div>
+                <div className="text-[10px] text-[#4A5C52] italic mt-2">{costEstimate.note}</div>
               </div>
             )}
 
@@ -6288,6 +6304,9 @@ function PublicTrackRecordModal({ onClose }) {
                 <div className="text-2xl font-bold font-plexmono text-[#E3A857]">{data.called_it_count}</div>
               </div>
             </div>
+            {data.certification_tier && (
+              <div className="text-center text-lg text-[#E3A857] font-display mb-2">{data.certification_tier}</div>
+            )}
             <div className="text-center text-sm text-[#EDEDE3] mb-3">{data.hit_rate_pct}% hit rate</div>
             <div className="text-[10px] text-[#4A5C52] italic text-center">{data.note}</div>
           </>
