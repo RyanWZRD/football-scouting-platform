@@ -1,4 +1,4 @@
-﻿// Service worker for the Cross-League Scouting Index PWA.
+// Service worker for the Cross-League Scouting Index PWA.
 // Two caches, two different purposes:
 //  - Shell cache: the static app itself (this file, index.html, manifest, icons)
 //  - API cache: GET responses from the backend, used ONLY as a genuine
@@ -32,6 +32,22 @@ self.addEventListener("activate", (event) => {
     )
   );
   self.clients.claim();
+});
+
+// "First to Know" Push Alert Subscriptions — displays a real, incoming
+// Web Push notification. The actual sending happens server-side, via
+// send_discovery_alerts.py using the stored subscription.
+self.addEventListener("push", (event) => {
+  let data = { title: "New Discovery", body: "Check the app for details." };
+  try {
+    if (event.data) data = event.data.json();
+  } catch (e) { /* fall back to the default text above */ }
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: "./icon-192.png",
+    })
+  );
 });
 
 self.addEventListener("fetch", (event) => {
