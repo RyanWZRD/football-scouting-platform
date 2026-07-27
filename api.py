@@ -5327,6 +5327,59 @@ def club_transfer_network(league: Optional[str] = None, min_transfers: int = Que
     }
 
 
+@app.get("/players/{player_id}/injury-risk-profile")
+def injury_risk_profile(player_id: int, authorized: bool = Depends(check_api_key)):
+    """Synthesizes the raw sidelined records (currently shown as just
+    a list) into an actual, actionable signal: genuine injury
+    frequency, real total time lost, and a risk tier — the kind of
+    thing that matters in a real recruitment decision but isn't
+    visible just from scanning a list of dates."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT sidelined_type, start_date, end_date
+            FROM player_sidelined
+            WHERE player_id = %s AND sidelined_type IS NOT NULL
+            ORDER BY start_date DESC
+        """, (player_id,))
+        records = cur.fetchall()
+    conn.close()
+
+    if not records:
+        return {"available": False, "reason": "No sidelined data recorded yet for this player."}
+
+    total_incidents = len(records)
+    total_days_lost = 0
+    recent_incidents = 0
+    two_years_ago = datetime.utcnow().date() - timedelta(days=730)
+
+    for r in records:
+        if r["start_date"] and r["end_date"]:
+            total_days_lost += (r["end_date"] - r["start_date"]).days
+        if r["start_date"] and r["start_date"] >= two_years_ago:
+            recent_incidents += 1
+
+    # Genuinely simple, transparent tiering — not a black-box score.
+    # Recent frequency weighted more heavily than total career history,
+    # since a bad run in the last two years is more relevant to a
+    # current recruitment decision than an old injury from years ago.
+    if recent_incidents >= 4 or total_days_lost >= 300:
+        risk_tier = "High"
+    elif recent_incidents >= 2 or total_days_lost >= 120:
+        risk_tier = "Moderate"
+    else:
+        risk_tier = "Low"
+
+    return {
+        "available": True,
+        "total_incidents": total_incidents,
+        "total_days_lost": total_days_lost,
+        "recent_incidents_last_2_years": recent_incidents,
+        "risk_tier": risk_tier,
+        "note": "A transparent, rule-based tier from real recorded incidents — not a medical prediction, and doesn't account for injury type severity or recovery quality.",
+    }
+
+
 @app.get("/leagues/season-simulation")
 def full_season_simulation(league: str, simulations: int = Query(1000, le=5000), authorized: bool = Depends(check_api_key)):
     """The Full Season Simulator — genuine Monte Carlo projection across
