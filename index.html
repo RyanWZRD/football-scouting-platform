@@ -19,6 +19,7 @@
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
   body { background:#0E1A15; margin:0; font-family: 'Inter', sans-serif; }
   .font-display { font-family: 'Archivo Black', sans-serif; }
@@ -854,6 +855,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   const [savingNote, setSavingNote] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [shareCardOpen, setShareCardOpen] = useState(false);
+  const [fullReportOpen, setFullReportOpen] = useState(false);
   const [exportingImage, setExportingImage] = useState(false);
   const shareCardRef = useRef(null);
   const [similarPlayers, setSimilarPlayers] = useState(null);
@@ -1060,6 +1062,97 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
     setTimeout(() => setLinkCopied(false), 1500);
   };
 
+  const generateProfessionalReport = () => {
+    if (typeof window.jspdf === "undefined") { alert("PDF library still loading — try again in a moment."); return; }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 20;
+    let y = margin;
+
+    const ensureSpace = (needed) => {
+      if (y + needed > pageHeight - margin) { doc.addPage(); y = margin; }
+    };
+    const addHeading = (text) => {
+      ensureSpace(14);
+      doc.setFont("helvetica", "bold"); doc.setFontSize(13);
+      doc.text(text, margin, y);
+      y += 8;
+      doc.setDrawColor(200); doc.line(margin, y - 4, pageWidth - margin, y - 4);
+    };
+    const addLine = (text, opts = {}) => {
+      doc.setFont("helvetica", opts.bold ? "bold" : "normal");
+      doc.setFontSize(opts.size || 10);
+      const wrapped = doc.splitTextToSize(text, pageWidth - margin * 2);
+      ensureSpace(wrapped.length * 5.5 + 2);
+      doc.text(wrapped, margin, y);
+      y += wrapped.length * 5.5 + 2;
+    };
+
+    // Header
+    doc.setFont("helvetica", "bold"); doc.setFontSize(20);
+    doc.text(p.name, margin, y); y += 9;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(11); doc.setTextColor(100);
+    doc.text(`${p.club || "Unattached"} · ${p.league || ""} · Age ${p.age ?? "—"} · ${p.posLabel || ""}`, margin, y);
+    doc.setTextColor(0); y += 6;
+    doc.setFontSize(9); doc.setTextColor(140);
+    doc.text(`Generated ${new Date().toLocaleDateString()} — Cross-League Scouting Index`, margin, y);
+    doc.setTextColor(0); y += 10;
+
+    // Key stats
+    addHeading("Key Stats");
+    const statEntries = Object.entries(p.metrics || {}).slice(0, 8);
+    statEntries.forEach(([key, val]) => addLine(`${key}: ${val?.raw ?? val?.scaled ?? "—"}`));
+    if (statEntries.length === 0) addLine("No stats recorded yet.");
+    y += 4;
+
+    // Role suitability
+    const roleFits = computeRoleFitScores(p.metrics, p.position);
+    if (roleFits && roleFits.length > 0) {
+      addHeading("Role Suitability");
+      roleFits.forEach(r => addLine(`${r.role}: ${r.score}`));
+      y += 4;
+    }
+
+    // Workload status
+    if (workloadMonitor?.available) {
+      addHeading("Workload Status");
+      if (workloadMonitor.acwr != null) addLine(`ACWR: ${workloadMonitor.acwr}`);
+      if (workloadMonitor.flags?.length > 0) workloadMonitor.flags.forEach(f => addLine(`⚠ ${f}`));
+      y += 4;
+    }
+
+    // Rotation status
+    if (rotationRisk?.available) {
+      addHeading("Rotation Status");
+      addLine(`${rotationRisk.tier} — ${rotationRisk.start_pct}% starts over last ${rotationRisk.matches_considered} matches`);
+      y += 4;
+    }
+
+    // Similar players
+    if (similarPlayers && similarPlayers.length > 0) {
+      addHeading("Similar Players");
+      similarPlayers.slice(0, 5).forEach(sp => addLine(`${sp.full_name} — ${sp.club || ""}`));
+      y += 4;
+    }
+
+    // Scout notes
+    if (details?.notes && details.notes.length > 0) {
+      addHeading("Scout Notes");
+      details.notes.forEach(n => {
+        addLine(new Date(n.created_at).toLocaleDateString(), { bold: true, size: 9 });
+        addLine(n.note);
+        y += 2;
+      });
+    }
+
+    doc.setFontSize(8); doc.setTextColor(150);
+    doc.text("Generated from real, tracked data — not a guarantee of future performance.", margin, pageHeight - 10);
+
+    doc.save(`${p.name.replace(/\s+/g, "_")}_scouting_report.pdf`);
+  };
+
   const TabButton = ({ id, label }) => (
     <button onClick={() => setTab(id)}
       className={`px-4 py-2 text-xs uppercase tracking-wide border-b-2 ${
@@ -1091,6 +1184,9 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
             </a>
             <button onClick={() => window.print()} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
               🖨 Print
+            </button>
+            <button onClick={generateProfessionalReport} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
+              📄 Professional Report
             </button>
             {String(p.id).startsWith("live-") && (
               <button onClick={copyPlayerLink} className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
@@ -1132,6 +1228,10 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
                 📌 Add to Pipeline
               </button>
             )}
+            <button onClick={() => setFullReportOpen(true)}
+              className="no-print flex items-center gap-1.5 text-xs uppercase tracking-wide px-3 py-1.5 border border-[#2C4A3B] text-[#9AAA9E] hover:border-[#E3A857] hover:text-[#E3A857]">
+              📄 Full Report
+            </button>
           </div>
         </div>
 
@@ -1667,6 +1767,9 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
         )}
       </div>
 
+      {fullReportOpen && (
+        <FullReportModal playerId={realId} playerName={p.name} playerClub={p.club} onClose={() => setFullReportOpen(false)} />
+      )}
       {shareCardOpen && (
         <div className="fixed inset-0 bg-black/85 flex flex-col items-center justify-center p-4 z-[60]" onClick={() => setShareCardOpen(false)}>
           <div onClick={e => e.stopPropagation()} className="flex flex-col items-center">
@@ -5187,6 +5290,150 @@ function RecentlyViewedModal({ recentlyViewed, onClose, onSelectPlayer }) {
   );
 }
 
+function UndiscoveredLeaguesModal({ onClose }) {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/leagues/undiscovered?limit=15`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setData(d))
+      .catch(() => setData(null));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🌍 Undiscovered Leagues</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Countries with no tracked domestic league, but nonetheless exporting a real cluster of high-potential players — a genuine, data-driven signal for where to expand next.
+        </div>
+
+        {data === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {data?.candidates?.length === 0 && <div className="text-sm text-[#6B8570] text-center py-4">No genuine candidates detected yet.</div>}
+        {data?.candidates?.map((r, i) => (
+          <div key={i} className="flex items-center justify-between text-sm py-2 border-b border-[#1C2E26]">
+            <span className="text-[#EDEDE3]">{i + 1}. {r.country}</span>
+            <span className="text-xs font-plexmono text-[#E3A857]">{r.high_potential_count} players <span className="text-[#6B8570]">· avg {r.avg_potential}</span></span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BadgesModal({ onClose }) {
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/achievements/badges`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setData(d))
+      .catch(() => setData(null));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🏅 Your Badges</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Real, earned recognition — tied to genuine detected outcomes for your shortlisted players, not app usage streaks.
+        </div>
+
+        {data === null && <div className="text-sm text-[#6B8570]">Loading…</div>}
+        {data?.badges?.length === 0 && <div className="text-sm text-[#6B8570] text-center py-4">No badges earned yet — they appear when a shortlisted player's club gets a detected division change.</div>}
+        {data?.badges?.map((b, i) => (
+          <div key={i} className="border border-[#E3A857] p-3 mb-2">
+            <div className="text-sm text-[#EDEDE3]">{b.badge}</div>
+            <div className="text-xs text-[#9AAA9E] mt-1">{b.full_name} · {b.club} <span className="text-[#E3A857]">→ {b.fixture_implied_league}</span></div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FullReportModal({ playerId, playerName, playerClub, onClose }) {
+  const [details, setDetails] = useState(null);
+  const [workload, setWorkload] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !playerId) return;
+    fetch(`${API_BASE_URL}/players/${playerId}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setDetails(d))
+      .catch(() => setDetails(null));
+    fetch(`${API_BASE_URL}/players/${playerId}/workload-monitor`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setWorkload(d))
+      .catch(() => setWorkload(null));
+  }, [playerId]);
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[70]" onClick={onClose}>
+      <div className="printable-dossier bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-8" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4 no-print">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📄 Professional Scouting Report</div>
+          <div className="flex items-center gap-4">
+            <button onClick={() => window.print()} className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">🖨️ Print / Save PDF</button>
+            <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+          </div>
+        </div>
+
+        <div className="text-2xl text-[#EDEDE3] font-display mb-1">{playerName}</div>
+        <div className="text-sm text-[#9AAA9E] mb-6">{playerClub} · Report generated {new Date().toLocaleDateString()}</div>
+
+        {details === null && <div className="text-sm text-[#6B8570]">Compiling report…</div>}
+        {details && (
+          <>
+            <div className="mb-5">
+              <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Overview</div>
+              <div className="grid grid-cols-2 gap-3 text-sm text-[#EDEDE3]">
+                <div>Age: {details.age ?? "—"}</div>
+                <div>Position: {details.position ?? "—"}</div>
+                <div>Potential: {details.potential ?? "—"}</div>
+                <div>Nationality: {details.nationality ?? "—"}</div>
+              </div>
+            </div>
+
+            {workload?.available && (
+              <div className="mb-5">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Workload Status</div>
+                <div className="text-sm text-[#EDEDE3]">
+                  ACWR: {workload.acwr ?? "—"} · Upcoming fixtures (14d): {workload.upcoming_matches_14d}
+                  {workload.flags?.length > 0 && <div className="text-[#E3A857] mt-1">{workload.flags.join(" · ")}</div>}
+                </div>
+              </div>
+            )}
+
+            {details.scout_notes?.length > 0 && (
+              <div className="mb-5">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">Scout Notes ({details.scout_notes.length})</div>
+                {details.scout_notes.map((n, i) => (
+                  <div key={i} className="text-sm text-[#EDEDE3] py-1.5 border-b border-[#1C2E26]">
+                    <span className="text-[#6B8570] text-xs">{new Date(n.created_at).toLocaleDateString()}:</span> {n.note}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="text-[10px] text-[#4A5C52] mt-6 italic text-center">
+              Compiled from tracked match data, scouting notes, and platform analytics — a decision-support summary, not a guarantee.
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function HeadToHeadModal({ allLeagueOptions, onClose }) {
   const [league, setLeague] = useState("");
   const [clubA, setClubA] = useState("");
@@ -7666,6 +7913,16 @@ function ScoutDashboard() {
   const [scatterX, setScatterX] = useState("Goals/90");
   const [scatterY, setScatterY] = useState("Key Passes/90");
   const [selected, setSelected] = useState(null);
+  // Smooth, native transition when opening/closing/switching the player
+  // dossier — Chrome/Edge only, falls back to an instant change
+  // everywhere else since the API genuinely isn't universally supported.
+  const selectPlayer = (value) => {
+    if (document.startViewTransition) {
+      document.startViewTransition(() => setSelected(value));
+    } else {
+      setSelected(value);
+    }
+  };
   const RECENTLY_VIEWED_KEY = "scoutindex_recently_viewed_v1";
   const [recentlyViewed, setRecentlyViewed] = useState(() => {
     try { return JSON.parse(localStorage.getItem(RECENTLY_VIEWED_KEY) || "[]"); } catch (e) { return []; }
@@ -7736,6 +7993,8 @@ function ScoutDashboard() {
   const [squadBuilderOpen, setSquadBuilderOpen] = useState(false);
   const [mostCardedOpen, setMostCardedOpen] = useState(false);
   const [headToHeadOpen, setHeadToHeadOpen] = useState(false);
+  const [undiscoveredLeaguesOpen, setUndiscoveredLeaguesOpen] = useState(false);
+  const [badgesOpen, setBadgesOpen] = useState(false);
   const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
   const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
@@ -7802,6 +8061,8 @@ function ScoutDashboard() {
     { icon: "🏟️", label: "Complete Squad Builder", section: "Scouting Intelligence", setter: setSquadBuilderOpen },
     { icon: "🟨", label: "Most-Carded Players", section: "Data & Results", setter: setMostCardedOpen },
     { icon: "🥊", label: "Head-to-Head Club Dossier", section: "Club Analysis", setter: setHeadToHeadOpen },
+    { icon: "🌍", label: "Undiscovered Leagues", section: "Scouting Intelligence", setter: setUndiscoveredLeaguesOpen },
+    { icon: "🏅", label: "Your Badges", section: "Data & Results", setter: setBadgesOpen },
     { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
   ];
 
@@ -7863,7 +8124,7 @@ function ScoutDashboard() {
   useEffect(() => {
     const onKeyDown = (e) => {
       if (e.key !== "Escape") return;
-      setSelected(null);
+      selectPlayer(null);
       setComparing(false);
     };
     window.addEventListener("keydown", onKeyDown);
@@ -8069,7 +8330,7 @@ function ScoutDashboard() {
     if (!deepLinkPlayerId || connectionStatus !== "live") return;
     const match = dataSource.find(p => p.id === `live-${deepLinkPlayerId}`);
     if (match) {
-      setSelected(match);
+      selectPlayer(match);
       setDeepLinkPlayerId(null); // only auto-open once
     }
   }, [dataSource, connectionStatus, deepLinkPlayerId]);
@@ -8610,16 +8871,16 @@ function ScoutDashboard() {
         only appears once real data exists — added recently, populates on the next data refresh.
       </div>
 
-      {selected && <PlayerDossier key={selected.id} p={selected} onClose={() => setSelected(null)}
+      {selected && <PlayerDossier key={selected.id} p={selected} onClose={() => selectPlayer(null)}
         onToggleShortlist={connectionStatus === "live" ? toggleShortlist : null}
-        onNavigateToPlayer={(sp) => setSelected(sp)} />}
+        onNavigateToPlayer={(sp) => selectPlayer(sp)} />}
       {clubProfileOpen && league !== "All leagues" && club !== "All clubs" && (
         <ClubProfile
           players={dataSource.filter(p => p.club === club && p.league === league)}
           clubName={club}
           leagueName={league}
           onClose={() => setClubProfileOpen(false)}
-          onSelectPlayer={(p) => { setClubProfileOpen(false); setSelected(p); }}
+          onSelectPlayer={(p) => { setClubProfileOpen(false); selectPlayer(p); }}
         />
       )}
       {transfersOpen && (
