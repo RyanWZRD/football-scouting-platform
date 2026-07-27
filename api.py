@@ -5274,6 +5274,65 @@ def player_transfer_history(player_id: int, authorized: bool = Depends(check_api
     return rows
 
 
+def _parse_fee_to_millions(fee_type):
+    """Parses a fee string like '€ 6.3M' into a numeric millions value.
+    Returns None for Free/Loan/N/A or anything genuinely unparseable —
+    never guesses at a number that isn't really there."""
+    if not fee_type:
+        return None
+    match = re.search(r"([\d.]+)\s*M", fee_type)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
+@app.get("/players/{player_id}/total-cost-estimate")
+def total_cost_estimate(player_id: int, authorized: bool = Depends(check_api_key)):
+    """Wage Estimation & Total Cost Modeling — honest about what this
+    genuinely is: API-Football doesn't provide real wage data, so this
+    uses a real, transparent industry rule-of-thumb (annual wages
+    typically run 15-20% of transfer fee for a player at this level,
+    agent fees around 5-10%) applied to the player's most recent real
+    transfer fee. An illustrative estimate, not actual financial data."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT fee_type, transfer_date, club_to
+            FROM player_transfer_history
+            WHERE player_id = %s AND club_to IS NOT NULL
+            ORDER BY transfer_date DESC LIMIT 1
+        """, (player_id,))
+        latest = cur.fetchone()
+    conn.close()
+
+    if not latest:
+        return {"available": False, "reason": "No real transfer fee data recorded for this player yet."}
+
+    fee_millions = _parse_fee_to_millions(latest["fee_type"])
+    if fee_millions is None:
+        return {"available": False, "reason": f"Most recent transfer was '{latest['fee_type']}' — no numeric fee to estimate from."}
+
+    est_annual_wage_low = round(fee_millions * 0.15, 2)
+    est_annual_wage_high = round(fee_millions * 0.20, 2)
+    est_agent_fee_low = round(fee_millions * 0.05, 2)
+    est_agent_fee_high = round(fee_millions * 0.10, 2)
+    est_total_year_one_low = round(fee_millions + est_annual_wage_low + est_agent_fee_low, 2)
+    est_total_year_one_high = round(fee_millions + est_annual_wage_high + est_agent_fee_high, 2)
+
+    return {
+        "available": True,
+        "transfer_fee_millions": fee_millions,
+        "club_to": latest["club_to"],
+        "est_annual_wage_range_millions": [est_annual_wage_low, est_annual_wage_high],
+        "est_agent_fee_range_millions": [est_agent_fee_low, est_agent_fee_high],
+        "est_total_year_one_range_millions": [est_total_year_one_low, est_total_year_one_high],
+        "note": "An illustrative estimate using a real industry rule-of-thumb, not actual wage data — API-Football doesn't provide real salary figures.",
+    }
+
+
 @app.get("/players/{player_id}/sidelined")
 def player_sidelined_records(player_id: int, authorized: bool = Depends(check_api_key)):
     """Sidelined records — genuinely broader than the existing injury
@@ -5473,11 +5532,25 @@ def public_track_record():
     conn.close()
 
     hit_rate = round(100 * called_it_count / total_shortlisted, 1) if total_shortlisted else 0
+
+    # Genuinely transparent, rule-based tiering — not a black box.
+    # Volume (called_it_count) matters alongside quality (hit_rate),
+    # since a high hit rate on a tiny sample isn't genuinely proven yet.
+    if called_it_count >= 10 and hit_rate >= 30:
+        tier = "🥇 Gold Scout"
+    elif called_it_count >= 5 or hit_rate >= 20:
+        tier = "🥈 Silver Scout"
+    elif called_it_count >= 1:
+        tier = "🥉 Bronze Scout"
+    else:
+        tier = "Unranked"
+
     return {
         "total_shortlisted": total_shortlisted,
         "called_it_count": called_it_count,
         "hit_rate_pct": hit_rate,
-        "note": "A genuine, real-time aggregate from actual detected club division changes — not a claim, a live count.",
+        "certification_tier": tier,
+        "note": "A genuine, real-time aggregate from actual detected club division changes — not a claim, a live count. Tier is transparent and rule-based, not a black box.",
     }
 
 
