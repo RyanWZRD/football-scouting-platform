@@ -7927,6 +7927,7 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
   const [shortlistAlerts, setShortlistAlerts] = useState(null);
   const [shortlistInjuries, setShortlistInjuries] = useState(null);
   const [todayData, setTodayData] = useState(null);
+  const [autonomousDiscoveries, setAutonomousDiscoveries] = useState(null);
 
   useEffect(() => {
     if (!API_BASE_URL) return;
@@ -7934,6 +7935,10 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
       .then(res => res.ok ? res.json() : null)
       .then(d => setTodayData(d))
       .catch(() => setTodayData(null));
+    fetch(`${API_BASE_URL}/players/autonomous-discovery?limit=3`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setAutonomousDiscoveries(d))
+      .catch(() => setAutonomousDiscoveries(null));
     fetch(`${API_BASE_URL}/transfers?limit=5`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setTransfers(rows))
@@ -7999,6 +8004,26 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
           </div>
         </div>
       )}
+      {autonomousDiscoveries?.discoveries?.length > 0 && (
+        <div className="mb-8 border border-[#E3A857] bg-[#152922] p-4 sm:p-6">
+          <div className="text-[10px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono mb-1">🧠 The Autonomous Scout</div>
+          <div className="text-[10px] text-[#4A5C52] italic mb-4">{autonomousDiscoveries.note}</div>
+          <div className="space-y-2">
+            {autonomousDiscoveries.discoveries.map((d, i) => (
+              <button key={d.id} onClick={() => { setLeague(d.league_display); setClub(d.club); setDeepLinkPlayerId(String(d.id)); }}
+                className="w-full flex items-center justify-between text-sm py-2 border-b border-[#1C2E26] hover:bg-[#0E1A15] text-left">
+                <span className="flex items-center gap-2 text-[#EDEDE3]">
+                  <span className="text-[#6B8570] w-5">{i + 1}.</span>
+                  {d.full_name} <span className="text-[#6B8570] text-xs">· {d.club} · {d.league_display}</span>
+                  {d.momentum > 0 && <span className="text-[#7FD99A] text-xs">📈 +{d.momentum}</span>}
+                </span>
+                <span className="font-plexmono text-[#E3A857] shrink-0">{d.discovery_score}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {sectionSettings.today && todayData && (
         (todayData.stale_pipeline_targets?.length > 0 || todayData.workload_flags?.length > 0 ||
          todayData.upcoming_fixtures_with_referee?.length > 0 || todayData.recent_division_changes?.length > 0) && (
