@@ -35,6 +35,7 @@ import re
 import requests
 import random
 import bcrypt
+from pywebpush import webpush, WebPushException
 import jwt
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -5331,6 +5332,54 @@ def total_cost_estimate(player_id: int, authorized: bool = Depends(check_api_key
         "est_total_year_one_range_millions": [est_total_year_one_low, est_total_year_one_high],
         "note": "An illustrative estimate using a real industry rule-of-thumb, not actual wage data — API-Football doesn't provide real salary figures.",
     }
+
+
+# "First to Know" Push Alert Subscriptions — real Web Push, via VAPID
+# keys read from environment variables (same pattern as JWT_SECRET),
+# never hardcoded since the private key is a genuine secret.
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY")
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY")
+VAPID_CLAIMS_EMAIL = os.environ.get("VAPID_CLAIMS_EMAIL", "mailto:admin@example.com")
+
+
+class PushSubscribeRequest(BaseModel):
+    endpoint: str
+    p256dh_key: str
+    auth_key: str
+
+
+@app.get("/push/public-key")
+def push_public_key():
+    """Genuinely public — the frontend needs this to call
+    PushManager.subscribe(), and a public key is, by definition, safe
+    to expose. No auth required."""
+    if not VAPID_PUBLIC_KEY:
+        raise HTTPException(status_code=500, detail="Push notifications not configured on the server yet")
+    return {"public_key": VAPID_PUBLIC_KEY}
+
+
+@app.post("/push/subscribe")
+def push_subscribe(body: PushSubscribeRequest = Body(...), user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO push_subscriptions (user_id, endpoint, p256dh_key, auth_key)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (user_id, endpoint) DO NOTHING
+        """, (user_id, body.endpoint, body.p256dh_key, body.auth_key))
+    conn.commit()
+    conn.close()
+    return {"subscribed": True}
+
+
+@app.post("/push/unsubscribe")
+def push_unsubscribe(body: PushSubscribeRequest = Body(...), user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM push_subscriptions WHERE user_id = %s AND endpoint = %s", (user_id, body.endpoint))
+    conn.commit()
+    conn.close()
+    return {"unsubscribed": True}
 
 
 @app.get("/players/{player_id}/sidelined")
