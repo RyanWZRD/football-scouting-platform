@@ -22,7 +22,7 @@ import os
 import json
 import time
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Query, Header, Depends, WebSocket, WebSocketDisconnect, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,6 +34,8 @@ import anthropic
 import re
 import requests
 import random
+import bcrypt
+import jwt
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
@@ -86,6 +88,47 @@ def get_conn():
     return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
 
 
+# Multi-User Support — Phase 1 foundation. Real bcrypt password hashing
+# and JWT session tokens. JWT_SECRET must be set as a genuine, random
+# environment variable on Render — never falls back to a hardcoded
+# default, since that would make every token forgeable.
+JWT_SECRET = os.environ.get("JWT_SECRET")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRY_DAYS = 30  # a personal scouting tool, not a high-security banking app — a long-lived session is a reasonable, honest tradeoff
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+
+
+def create_access_token(user_id: int) -> str:
+    payload = {"user_id": user_id, "exp": datetime.utcnow() + timedelta(days=JWT_EXPIRY_DAYS)}
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def get_current_user(authorization: Optional[str] = Header(None)) -> int:
+    """Real per-user authentication — validates the JWT and returns the
+    genuine, authenticated user_id. Distinct from check_api_key (which
+    only gates general API access) — this identifies WHO is making the
+    request, required for any genuinely user-scoped data."""
+    if not JWT_SECRET:
+        raise HTTPException(status_code=500, detail="Server auth misconfigured — JWT_SECRET not set")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return payload["user_id"]
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Session expired — please log in again")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid session token")
+
+
 @app.get("/health")
 def health():
     try:
@@ -94,6 +137,81 @@ def health():
         return {"status": "ok"}
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/auth/register")
+def auth_register(body: RegisterRequest = Body(...), authorized: bool = Depends(check_api_key)):
+    """Creates a real user account. Still gated behind the existing
+    API key (check_api_key) — this is a personal/small-team tool, not
+    a public signup page, so the API key remains the outer gate before
+    anyone can even attempt to register."""
+    email = body.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="A valid email is required")
+    if len(body.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM users WHERE email = %s", (email,))
+        if cur.fetchone():
+            conn.close()
+            raise HTTPException(status_code=409, detail="An account with this email already exists")
+        cur.execute(
+            "INSERT INTO users (email, password_hash) VALUES (%s, %s) RETURNING id",
+            (email, hash_password(body.password)),
+        )
+        user_id = cur.fetchone()["id"]
+    conn.commit()
+    conn.close()
+
+    token = create_access_token(user_id)
+    return {"access_token": token, "user_id": user_id, "email": email}
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/auth/login")
+def auth_login(body: LoginRequest = Body(...), authorized: bool = Depends(check_api_key)):
+    email = body.email.strip().lower()
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, password_hash FROM users WHERE email = %s", (email,))
+        row = cur.fetchone()
+    conn.close()
+
+    # Deliberately identical error for "no such user" and "wrong
+    # password" — a real security practice, not an oversight. Telling
+    # an attacker which one failed genuinely helps them enumerate
+    # valid accounts.
+    if not row or not verify_password(body.password, row["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    token = create_access_token(row["id"])
+    return {"access_token": token, "user_id": row["id"], "email": email}
+
+
+@app.get("/auth/me")
+def auth_me(user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
+    """Confirms whether the current session token is genuinely still
+    valid, and returns basic account info — used by the frontend on
+    load to check for an existing session."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, email, created_at FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return row
 
 
 ALLOWED_IMAGE_HOSTS = {"media.api-sports.io"}
@@ -4448,18 +4566,19 @@ class PipelineStageUpdateRequest(BaseModel):
 
 
 @app.post("/pipeline/add")
-def add_to_pipeline(body: PipelineAddRequest = Body(...), authorized: bool = Depends(check_api_key)):
+def add_to_pipeline(body: PipelineAddRequest = Body(...), user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     """Adds a player to the Recruitment Pipeline at the 'identified'
     stage — the start of a genuine, tracked pursuit, distinct from
-    just shortlisting someone."""
+    just shortlisting someone. Now genuinely per-user — different
+    scouts can independently track the same player."""
     conn = get_conn()
     with conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO recruitment_pipeline (player_id, notes)
-            VALUES (%s, %s)
-            ON CONFLICT (player_id) DO NOTHING
+            INSERT INTO recruitment_pipeline (player_id, notes, user_id)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (player_id, user_id) DO NOTHING
             RETURNING id
-        """, (body.player_id, body.notes))
+        """, (body.player_id, body.notes, user_id))
         row = cur.fetchone()
     conn.commit()
     conn.close()
@@ -4469,9 +4588,11 @@ def add_to_pipeline(body: PipelineAddRequest = Body(...), authorized: bool = Dep
 
 
 @app.post("/pipeline/{pipeline_id}/stage")
-def update_pipeline_stage(pipeline_id: int, body: PipelineStageUpdateRequest = Body(...), authorized: bool = Depends(check_api_key)):
+def update_pipeline_stage(pipeline_id: int, body: PipelineStageUpdateRequest = Body(...), user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     """Moves a target to a new stage — the drag in a Kanban board,
-    the actual update to where this pursuit genuinely stands."""
+    the actual update to where this pursuit genuinely stands. Verifies
+    the entry genuinely belongs to the requesting user before allowing
+    the update — real ownership enforcement, not just a filter."""
     valid_stages = {"identified", "contacted", "negotiating", "agreed", "signed", "rejected", "cold"}
     if body.stage not in valid_stages:
         raise HTTPException(status_code=400, detail=f"Invalid stage. Must be one of: {', '.join(valid_stages)}")
@@ -4480,9 +4601,9 @@ def update_pipeline_stage(pipeline_id: int, body: PipelineStageUpdateRequest = B
         cur.execute("""
             UPDATE recruitment_pipeline
             SET stage = %s, stage_updated_at = now(), notes = COALESCE(%s, notes)
-            WHERE id = %s
+            WHERE id = %s AND user_id = %s
             RETURNING id
-        """, (body.stage, body.notes, pipeline_id))
+        """, (body.stage, body.notes, pipeline_id, user_id))
         row = cur.fetchone()
     conn.commit()
     conn.close()
@@ -4492,23 +4613,24 @@ def update_pipeline_stage(pipeline_id: int, body: PipelineStageUpdateRequest = B
 
 
 @app.delete("/pipeline/{pipeline_id}")
-def remove_from_pipeline(pipeline_id: int, authorized: bool = Depends(check_api_key)):
+def remove_from_pipeline(pipeline_id: int, user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     conn = get_conn()
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM recruitment_pipeline WHERE id = %s", (pipeline_id,))
+        cur.execute("DELETE FROM recruitment_pipeline WHERE id = %s AND user_id = %s", (pipeline_id, user_id))
     conn.commit()
     conn.close()
     return {"deleted": True}
 
 
 @app.get("/pipeline")
-def get_pipeline(stale_days: int = Query(14, le=90), authorized: bool = Depends(check_api_key)):
+def get_pipeline(stale_days: int = Query(14, le=90), user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     """Every active target grouped by stage, with days-in-current-stage
     and a stale flag — the CRM concept that a target sitting untouched
     too long is a real signal someone's about to fall through the
     cracks. Also surfaces stage distribution, so a genuine bottleneck
     (e.g. 12 targets stuck in 'negotiating', 1 in 'contacted') is
-    visible at a glance rather than buried in a list."""
+    visible at a glance rather than buried in a list. Now genuinely
+    scoped to the authenticated user's own pipeline."""
     conn = get_conn()
     with conn.cursor() as cur:
         cur.execute("""
@@ -4518,8 +4640,9 @@ def get_pipeline(stale_days: int = Query(14, le=90), authorized: bool = Depends(
             FROM recruitment_pipeline rp
             JOIN players p ON p.id = rp.player_id
             LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            WHERE rp.user_id = %s
             ORDER BY rp.stage_updated_at ASC
-        """)
+        """, (user_id,))
         rows = cur.fetchall()
     conn.close()
 
@@ -6616,7 +6739,7 @@ class WatchRequest(BaseModel):
 
 
 @app.post("/players/{player_id}/watch")
-def set_watch_level(player_id: int, body: WatchRequest, authorized: bool = Depends(check_api_key)):
+def set_watch_level(player_id: int, body: WatchRequest, user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     if body.watch_level is not None and body.watch_level not in ("monitor", "shortlist", "priority"):
         raise HTTPException(status_code=400, detail="watch_level must be monitor, shortlist, priority, or null")
 
@@ -6633,11 +6756,11 @@ def set_watch_level(player_id: int, body: WatchRequest, authorized: bool = Depen
         )
         cur.execute(
             """
-            INSERT INTO scout_notes (player_id, author, note, watch_level)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO scout_notes (player_id, author, note, watch_level, user_id)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING id, watch_level, created_at
             """,
-            (player_id, body.author, note_text, body.watch_level),
+            (player_id, body.author, note_text, body.watch_level, user_id),
         )
         result = cur.fetchone()
     conn.commit()

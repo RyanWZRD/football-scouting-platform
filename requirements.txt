@@ -8,3 +8,5 @@ fastapi
 uvicorn[standard]
 python-dotenv
 anthropic
+bcrypt
+PyJWT
