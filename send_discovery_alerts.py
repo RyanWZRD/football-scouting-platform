@@ -83,9 +83,11 @@ def run():
                 sent_count += 1
             except WebPushException as e:
                 print(f"  Push failed for subscription {sub_id}: {e}")
-                # A 410/404 genuinely means the subscription is dead —
-                # clean it up rather than retrying it forever.
-                if e.response is not None and e.response.status_code in (404, 410):
+                # A 410/404 genuinely means the subscription is dead,
+                # and a 401 "VAPID public key mismatch" (e.g. after
+                # rotating keys) is equally permanent — clean up both
+                # rather than retrying forever.
+                if e.response is not None and e.response.status_code in (401, 404, 410):
                     with conn.cursor() as cur:
                         cur.execute("DELETE FROM push_subscriptions WHERE id = %s", (sub_id,))
                     conn.commit()
