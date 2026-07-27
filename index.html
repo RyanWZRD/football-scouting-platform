@@ -5894,12 +5894,26 @@ function FullReportModal({ playerId, playerName, playerClub, onClose }) {
       .catch(() => setWorkload(null));
   }, [playerId]);
 
+  const emailReport = () => {
+    const subject = encodeURIComponent(`Scouting Report: ${playerName} (${playerClub})`);
+    const lines = [
+      `${playerName} — ${playerClub}`,
+      details ? `Age: ${details.age ?? "—"} · Position: ${details.position ?? "—"} · Potential: ${details.potential ?? "—"} · Nationality: ${details.nationality ?? "—"}` : "",
+      workload?.available ? `Workload: ACWR ${workload.acwr ?? "—"}, ${workload.upcoming_matches_14d} fixtures in the next 14 days` : "",
+      details?.scout_notes?.length ? `\nLatest scout note: "${details.scout_notes[0].note}"` : "",
+      `\nCompiled from tracked match data and scouting notes — a decision-support summary, not a guarantee.`,
+    ].filter(Boolean).join("\n");
+    const body = encodeURIComponent(lines);
+    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+  };
+
   return (
     <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[70]" onClick={onClose}>
       <div className="printable-dossier bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-8" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4 no-print">
           <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📄 Professional Scouting Report</div>
           <div className="flex items-center gap-4">
+            <button onClick={emailReport} className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">✉️ Email Report</button>
             <button onClick={() => window.print()} className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">🖨️ Print / Save PDF</button>
             <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
           </div>
