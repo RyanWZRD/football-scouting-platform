@@ -1147,6 +1147,10 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
       .then(res => res.ok ? res.json() : [])
       .then(data => setSidelinedRecords(data))
       .catch(() => setSidelinedRecords([]));
+    fetch(`${API_BASE_URL}/players/${realId}/injury-risk-profile`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => setInjuryRiskProfile(data))
+      .catch(() => setInjuryRiskProfile(null));
   }, [realId]);
   const [seasonHistory, setSeasonHistory] = useState(null);
   const [biography, setBiography] = useState(null);
@@ -1164,6 +1168,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   const [trophies, setTrophies] = useState(null);
   const [transferHistory, setTransferHistory] = useState(null);
   const [sidelinedRecords, setSidelinedRecords] = useState(null);
+  const [injuryRiskProfile, setInjuryRiskProfile] = useState(null);
   const [loadingNews, setLoadingNews] = useState(false);
   const loadNews = () => {
     if (!API_BASE_URL) return;
@@ -1852,6 +1857,23 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
                     <span className="text-xs font-plexmono text-[#E3A857]">{t.fee_type}</span>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {injuryRiskProfile?.available && (
+              <div className="mt-4 border border-[#2C4A3B] p-3">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🩺 Injury Risk Profile</div>
+                <div className="flex items-center gap-3 mb-2">
+                  <span className="text-sm font-bold" style={{
+                    color: injuryRiskProfile.risk_tier === "High" ? "#E36B57" : injuryRiskProfile.risk_tier === "Moderate" ? "#E3A857" : "#7FD99A",
+                  }}>
+                    {injuryRiskProfile.risk_tier} Risk
+                  </span>
+                  <span className="text-xs text-[#9AAA9E]">
+                    {injuryRiskProfile.total_incidents} total incidents · {injuryRiskProfile.total_days_lost} days lost · {injuryRiskProfile.recent_incidents_last_2_years} in last 2 years
+                  </span>
+                </div>
+                <div className="text-[10px] text-[#4A5C52] italic">{injuryRiskProfile.note}</div>
               </div>
             )}
 
