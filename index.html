@@ -5848,6 +5848,141 @@ function ActivityLogModal({ onClose }) {
   );
 }
 
+function NewsletterModal({ onClose }) {
+  const [draft, setDraft] = useState(null);
+  const [generating, setGenerating] = useState(false);
+
+  const generateNewsletter = async () => {
+    setGenerating(true);
+    setDraft(null);
+
+    const res = await fetch(`${API_BASE_URL}/newsletter-data`, { headers: getAuthHeaders() });
+    const data = res.ok ? await res.json() : null;
+    if (!data) {
+      setDraft("Couldn't load this week's data — please try again.");
+      setGenerating(false);
+      return;
+    }
+
+    const { status, session } = await getOnDeviceAISession(
+      "You write a genuinely engaging, Substack-style weekly scouting newsletter digest, using ONLY the real data given — no invented details. Warm, readable tone, a few short paragraphs, a real headline."
+    );
+    if (status !== "ready") {
+      setDraft("Chrome's on-device AI isn't available right now — needs Chrome 148+ and a one-time model download.");
+      setGenerating(false);
+      return;
+    }
+
+    try {
+      const facts = [
+        data.top_discoveries?.length > 0
+          ? `This week's top discoveries: ${data.top_discoveries.map(d => `${d.full_name} (${d.club}, discovery score ${d.discovery_score})`).join("; ")}.`
+          : "",
+        data.division_changes?.length > 0
+          ? `Clubs with detected division changes: ${data.division_changes.map(d => `${d.club} moving to ${d.new_league}`).join("; ")}.`
+          : "",
+      ].filter(Boolean).join(" ");
+      const newsletter = await session.prompt(facts || "No major signals this week.");
+      setDraft(newsletter.trim());
+    } catch (e) {
+      setDraft("Couldn't generate the newsletter right now — please try again.");
+    } finally {
+      setGenerating(false);
+      if (session.destroy) session.destroy();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-8" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📰 Weekly Newsletter</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">Free, on-device — combines this week's top discoveries and division changes into a real digest. Chrome 148+ only.</div>
+
+        <button onClick={generateNewsletter} disabled={generating}
+          className="w-full bg-[#E3A857] text-[#0E1A15] font-bold py-2.5 text-sm uppercase tracking-wide mb-4 disabled:opacity-50">
+          {generating ? "Generating…" : "Generate This Week's Newsletter"}
+        </button>
+
+        {draft && (
+          <div className="border border-[#2C4A3B] p-4 text-sm text-[#EDEDE3] whitespace-pre-wrap leading-relaxed">
+            {draft}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function QuizModal({ onClose }) {
+  const [quiz, setQuiz] = useState(null);
+  const [revealedClues, setRevealedClues] = useState(1);
+  const [showAnswer, setShowAnswer] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const generateQuiz = () => {
+    setLoading(true);
+    setShowAnswer(false);
+    setRevealedClues(1);
+    fetch(`${API_BASE_URL}/players/guess-the-player-quiz`, { headers: getAuthHeaders() })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setQuiz(d))
+      .catch(() => setQuiz(null))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { generateQuiz(); }, []);
+
+  const copyForPosting = () => {
+    if (!quiz?.available) return;
+    const text = `🤔 Guess the player!\n\n${quiz.clues.join("\n")}\n\nAnswer: ${quiz.answer}`;
+    navigator.clipboard?.writeText(text);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-lg w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🤔 Guess the Player</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">Real stats, genuinely random selection — shareable quiz content built from your own tracked players.</div>
+
+        {loading && <div className="text-sm text-[#6B8570] text-center py-6">Generating…</div>}
+        {quiz?.available === false && <div className="text-sm text-[#6B8570] text-center py-6">{quiz.reason}</div>}
+        {quiz?.available && (
+          <>
+            {quiz.clues.slice(0, revealedClues).map((c, i) => (
+              <div key={i} className="text-sm text-[#EDEDE3] py-1.5 border-b border-[#1C2E26]">{c}</div>
+            ))}
+            {revealedClues < quiz.clues.length && !showAnswer && (
+              <button onClick={() => setRevealedClues(revealedClues + 1)}
+                className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] mt-3">
+                Reveal Next Clue
+              </button>
+            )}
+            {!showAnswer && (
+              <button onClick={() => setShowAnswer(true)}
+                className="block text-xs uppercase tracking-wide text-[#E3A857] hover:text-[#EDEDE3] mt-2">
+                Reveal Answer
+              </button>
+            )}
+            {showAnswer && (
+              <div className="mt-3 border border-[#E3A857] p-3 text-center text-lg text-[#E3A857] font-display">{quiz.answer}</div>
+            )}
+            <div className="flex gap-3 mt-4">
+              <button onClick={copyForPosting} className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">📋 Copy for Posting</button>
+              <button onClick={generateQuiz} className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">🔄 New Quiz</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ItineraryModal({ onClose }) {
   const [data, setData] = useState(null);
 
@@ -7081,6 +7216,18 @@ function PipelineModal({ onClose, onSelectPlayer }) {
     }).then(() => loadPipeline()).catch(() => {});
   };
 
+  const editAgent = (entry) => {
+    const name = prompt("Agent name:", entry.agent_name || "");
+    if (name === null) return;
+    const contact = prompt("Agent contact (email/phone):", entry.agent_contact || "");
+    if (contact === null) return;
+    fetch(`${API_BASE_URL}/pipeline/${entry.id}/stage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({ stage: entry.stage, agent_name: name, agent_contact: contact }),
+    }).then(() => loadPipeline()).catch(() => {});
+  };
+
   const removeTarget = (id) => {
     if (!window.confirm("Remove this target from the pipeline?")) return;
     fetch(`${API_BASE_URL}/pipeline/${id}`, { method: "DELETE", headers: getAuthHeaders() })
@@ -7121,6 +7268,12 @@ function PipelineModal({ onClose, onSelectPlayer }) {
                         <div className="text-[9px] mt-1" style={{ color: entry.is_stale ? "#E36B57" : "#4A5C52" }}>
                           {entry.is_stale ? "⚠ " : ""}{entry.days_in_stage}d in stage
                         </div>
+                        {entry.agent_name && (
+                          <div className="text-[9px] text-[#E3A857] mt-1 truncate">🤝 {entry.agent_name}</div>
+                        )}
+                        <button onClick={() => editAgent(entry)} className="text-[9px] text-[#6B8570] hover:text-[#E3A857] mt-1">
+                          {entry.agent_name ? "Edit agent" : "+ Add agent"}
+                        </button>
                         <div className="flex items-center justify-between mt-1.5">
                           <select value={entry.stage} onChange={e => moveStage(entry.id, e.target.value)}
                             className="text-[9px] bg-[#152922] border border-[#2C4A3B] text-[#9AAA9E] px-1 py-0.5 flex-1">
@@ -7260,8 +7413,13 @@ function MatchPreviewModal({ matchId, onClose }) {
       .then(res => res.ok ? res.json() : [])
       .then(d => setTimeline(d))
       .catch(() => setTimeline([]));
+    fetch(`${API_BASE_URL}/fixtures/${matchId}/poll-draft`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setPollDraft(d))
+      .catch(() => setPollDraft(null));
   }, [matchId]);
 
+  const [pollDraft, setPollDraft] = useState(null);
   const [previewThreadDraft, setPreviewThreadDraft] = useState(null);
   const [draftingPreviewThread, setDraftingPreviewThread] = useState(false);
   const generatePreviewThread = async () => {
@@ -7327,6 +7485,17 @@ function MatchPreviewModal({ matchId, onClose }) {
                 </div>
               )}
             </div>
+
+            {pollDraft?.available && (
+              <div className="mb-5 border border-[#2C4A3B] p-3 text-left">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🗳️ Prediction Poll</div>
+                <div className="text-sm text-[#EDEDE3] mb-2">{pollDraft.poll_text}</div>
+                <button onClick={() => navigator.clipboard?.writeText(pollDraft.poll_text)}
+                  className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">
+                  📋 Copy Poll
+                </button>
+              </div>
+            )}
 
             {data.referee_profile && (
               <div className="mb-5 border border-[#2C4A3B] p-4">
@@ -9414,6 +9583,8 @@ function ScoutDashboard() {
   const [headToHeadReportOpen, setHeadToHeadReportOpen] = useState(false);
   const [mapViewOpen, setMapViewOpen] = useState(false);
   const [itineraryOpen, setItineraryOpen] = useState(false);
+  const [quizOpen, setQuizOpen] = useState(false);
+  const [newsletterOpen, setNewsletterOpen] = useState(false);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState(null); // null = checking/logged out; { id, email } once confirmed
@@ -9507,6 +9678,8 @@ function ScoutDashboard() {
     { icon: "🥊", label: "Head-to-Head Comparison Report", section: "Data & Results", setter: setHeadToHeadReportOpen },
     { icon: "🗺️", label: "Geographic Map View", section: "Data & Results", setter: setMapViewOpen },
     { icon: "📅", label: "Scouting Itinerary", section: "Data & Results", setter: setItineraryOpen },
+    { icon: "🤔", label: "Guess the Player Quiz", section: "Scouting Intelligence", setter: setQuizOpen },
+    { icon: "📰", label: "Weekly Newsletter", section: "Scouting Intelligence", setter: setNewsletterOpen },
     { icon: "📜", label: "Activity Log", section: "Data & Results", setter: setActivityLogOpen },
     { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
   ];
@@ -10585,6 +10758,8 @@ function ScoutDashboard() {
       {headToHeadReportOpen && <HeadToHeadReportModal onClose={() => setHeadToHeadReportOpen(false)} />}
       {mapViewOpen && <MapViewModal allLeagueOptions={allLeagueOptions} onClose={() => setMapViewOpen(false)} />}
       {itineraryOpen && <ItineraryModal onClose={() => setItineraryOpen(false)} />}
+      {quizOpen && <QuizModal onClose={() => setQuizOpen(false)} />}
+      {newsletterOpen && <NewsletterModal onClose={() => setNewsletterOpen(false)} />}
       {activityLogOpen && <ActivityLogModal onClose={() => setActivityLogOpen(false)} />}
       {authModalOpen && <AuthModal onClose={() => setAuthModalOpen(false)} onSuccess={setCurrentUser} />}
       {commandPaletteOpen && (
