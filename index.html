@@ -1041,6 +1041,18 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
       .then(res => res.ok ? res.json() : null)
       .then(data => setWorkloadMonitor(data))
       .catch(() => setWorkloadMonitor(null));
+    fetch(`${API_BASE_URL}/players/${realId}/trophies`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setTrophies(data))
+      .catch(() => setTrophies([]));
+    fetch(`${API_BASE_URL}/players/${realId}/transfer-history`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setTransferHistory(data))
+      .catch(() => setTransferHistory([]));
+    fetch(`${API_BASE_URL}/players/${realId}/sidelined`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setSidelinedRecords(data))
+      .catch(() => setSidelinedRecords([]));
   }, [realId]);
   const [seasonHistory, setSeasonHistory] = useState(null);
   const [biography, setBiography] = useState(null);
@@ -1055,6 +1067,9 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
       .finally(() => setLoadingBio(false));
   };
   const [news, setNews] = useState(null);
+  const [trophies, setTrophies] = useState(null);
+  const [transferHistory, setTransferHistory] = useState(null);
+  const [sidelinedRecords, setSidelinedRecords] = useState(null);
   const [loadingNews, setLoadingNews] = useState(false);
   const loadNews = () => {
     if (!API_BASE_URL) return;
@@ -1713,6 +1728,42 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+
+            {trophies?.length > 0 && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🏆 Career Trophies</div>
+                {trophies.map((t, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm py-1">
+                    <span className="text-[#EDEDE3]">{t.league_name} <span className="text-[#6B8570] text-xs">({t.country}, {t.season})</span></span>
+                    <span className="text-xs font-plexmono" style={{ color: t.place?.toLowerCase().includes("winner") ? "#E3A857" : "#9AAA9E" }}>{t.place}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {transferHistory?.length > 0 && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">💰 Transfer History</div>
+                {transferHistory.map((t, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm py-1">
+                    <span className="text-[#EDEDE3]">{t.club_from} <span className="text-[#6B8570]">→</span> {t.club_to}</span>
+                    <span className="text-xs font-plexmono text-[#E3A857]">{t.fee_type}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {sidelinedRecords?.length > 0 && (
+              <div className="mt-4 border-b border-[#2C4A3B] pb-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🩹 Sidelined History</div>
+                {sidelinedRecords.map((s, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm py-1">
+                    <span className="text-[#EDEDE3]">{s.sidelined_type}</span>
+                    <span className="text-xs text-[#6B8570]">{s.start_date}{s.end_date ? ` – ${s.end_date}` : ""}</span>
+                  </div>
+                ))}
               </div>
             )}
 
