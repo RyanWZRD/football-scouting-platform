@@ -46,12 +46,37 @@ COUNTRY_NAME_TO_ISO = {
 }
 
 
+# A small, targeted dictionary for known city-name mismatches between
+# API-Football (which returns local-language names like "Wien") and
+# Open-Meteo's geocoding index (which indexes some major cities under
+# their English name instead). Not a comprehensive translation system —
+# just the specific cases genuinely found to cause wrong matches.
+CITY_NAME_OVERRIDES = {
+    "wien": "vienna",
+    "münchen": "munich",
+    "köln": "cologne",
+    "moskva": "moscow",
+    "praha": "prague",
+    "warszawa": "warsaw",
+    "lisboa": "lisbon",
+    "roma": "rome",
+    "milano": "milan",
+    "torino": "turin",
+    "genova": "genoa",
+    "firenze": "florence",
+    "napoli": "naples",
+    "sevilla": "seville",
+    "athina": "athens",
+}
+
+
 def geocode_city(city, expected_country=None):
     city_only = city.split(",")[0].strip() if city else city
+    search_term = CITY_NAME_OVERRIDES.get(city_only.lower(), city_only)
     try:
         resp = requests.get(
             "https://geocoding-api.open-meteo.com/v1/search",
-            params={"name": city_only, "count": 8}, timeout=6,
+            params={"name": search_term, "count": 8}, timeout=6,
         )
         resp.raise_for_status()
         results = resp.json().get("results")
@@ -61,9 +86,14 @@ def geocode_city(city, expected_country=None):
         if expected_country:
             expected_iso = COUNTRY_NAME_TO_ISO.get(expected_country.strip().lower())
             if expected_iso:
-                for r in results:
-                    if r.get("country_code") == expected_iso:
-                        return r["latitude"], r["longitude"]
+                country_matches = [r for r in results if r.get("country_code") == expected_iso]
+                if country_matches:
+                    # Prefer the highest-population match among
+                    # country-matched candidates, not just the first —
+                    # a genuine safeguard against a tiny, obscure
+                    # village outranking the actual major city.
+                    best = max(country_matches, key=lambda r: r.get("population", 0))
+                    return best["latitude"], best["longitude"]
 
         # No genuine country match found among candidates — fall back
         # to the top result rather than failing outright, but this is
