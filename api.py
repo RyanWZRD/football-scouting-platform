@@ -5079,7 +5079,8 @@ def achievement_badges(authorized: bool = Depends(check_api_key)):
                   AND (current_l.id IS NULL OR current_l.id != fixture_l.id)
                 ORDER BY cl.id, m.match_date ASC
             )
-            SELECT p.full_name, dc.club, dc.current_league, dc.fixture_implied_league
+            SELECT p.full_name, dc.club, dc.current_league, dc.fixture_implied_league,
+                   (SELECT MIN(sn2.created_at) FROM scout_notes sn2 WHERE sn2.player_id = p.id AND sn2.watch_level = 'shortlist') AS first_shortlisted_at
             FROM players p
             JOIN LATERAL (
                 SELECT watch_level FROM scout_notes sn
@@ -5090,8 +5091,18 @@ def achievement_badges(authorized: bool = Depends(check_api_key)):
         """)
         badges = cur.fetchall()
     conn.close()
-    return {"badges": [{**b, "badge": "🏅 Called It — division change detected"} for b in badges],
-            "note": "Real, earned recognition — tied to genuine detected outcomes, not app usage."}
+
+    def draft_tweet(b):
+        if not b.get("first_shortlisted_at"):
+            return None
+        shortlisted_date = b["first_shortlisted_at"].strftime("%B %-d, %Y")
+        return (
+            f"🏅 Called it — I shortlisted {b['full_name']} ({b['club']}) on {shortlisted_date}. "
+            f"Now moving to {b['fixture_implied_league']}. #Football #Scouting"
+        )
+
+    return {"badges": [{**b, "badge": "🏅 Called It — division change detected", "drafted_tweet": draft_tweet(b)} for b in badges],
+            "note": "Real, earned recognition — tied to genuine detected outcomes, not app usage. Tweet text includes the real, original shortlist date as timestamped proof."}
 
 
 @app.get("/fixtures/{match_id}/timeline")
@@ -5520,6 +5531,146 @@ def strategic_briefing_data(league: str, authorized: bool = Depends(check_api_ke
         "league": league,
         "top_players": [{"name": p["full_name"], "club": p["club"], "potential": round(float(p["potential_index"]))} for p in top_players],
         "top_clubs": [{"club": c["club"], "avg_potential": round(float(c["avg_potential"]), 1)} for c in top_clubs],
+    }
+
+
+@app.get("/clubs/map-data")
+def clubs_map_data(league: Optional[str] = None, authorized: bool = Depends(check_api_key)):
+    """Geographic Map View — real club venue coordinates, geocoded once
+    and stored permanently (via geocode_venues.py) rather than
+    re-geocoding on every map load. Empty for clubs whose venues
+    haven't been geocoded yet."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        if league:
+            cur.execute("""
+                SELECT cl.name AS club, cv.latitude, cv.longitude, cv.name AS venue_name
+                FROM club_venues cv
+                JOIN clubs cl ON cl.id = cv.club_id
+                JOIN leagues l ON l.id = cl.league_id
+                LEFT JOIN countries co ON co.id = l.country_id
+                WHERE cv.latitude IS NOT NULL
+                  AND (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+            """, (league,))
+        else:
+            cur.execute("""
+                SELECT cl.name AS club, cv.latitude, cv.longitude, cv.name AS venue_name
+                FROM club_venues cv
+                JOIN clubs cl ON cl.id = cv.club_id
+                WHERE cv.latitude IS NOT NULL
+            """)
+        rows = cur.fetchall()
+    conn.close()
+    return [{"club": r["club"], "lat": float(r["latitude"]), "lon": float(r["longitude"]), "venue_name": r["venue_name"]} for r in rows]
+
+
+@app.get("/scouting-itinerary")
+def scouting_itinerary(days_ahead: int = Query(30, le=90), user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
+    """Personalized Scouting Itinerary Planner — real upcoming fixtures
+    for your own shortlisted players' clubs, with genuine venue
+    coordinates, sorted by date. The actual trip-planning data: where
+    and when your shortlisted players are playing next. Now genuinely
+    achievable given real venue coordinates exist."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT DISTINCT p.current_club_id
+            FROM players p
+            JOIN scout_notes sn ON sn.player_id = p.id AND sn.user_id = %s
+            WHERE sn.watch_level = 'shortlist'
+              AND sn.created_at = (SELECT MAX(sn2.created_at) FROM scout_notes sn2 WHERE sn2.player_id = p.id AND sn2.user_id = %s)
+        """, (user_id, user_id))
+        shortlisted_club_ids = [r["current_club_id"] for r in cur.fetchall()]
+
+        if not shortlisted_club_ids:
+            conn.close()
+            return {"available": False, "reason": "No shortlisted players yet — add some first to build an itinerary."}
+
+        cur.execute("""
+            SELECT m.match_date, home_cl.name AS home_club, away_cl.name AS away_club,
+                   cv.name AS venue_name, cv.address, cv.latitude, cv.longitude
+            FROM matches m
+            JOIN clubs home_cl ON home_cl.id = m.home_club_id
+            JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            LEFT JOIN club_venues cv ON cv.club_id = m.home_club_id
+            WHERE m.status = 'scheduled'
+              AND m.match_date BETWEEN now() AND now() + (%s || ' days')::interval
+              AND (m.home_club_id = ANY(%s) OR m.away_club_id = ANY(%s))
+            ORDER BY m.match_date ASC
+        """, (days_ahead, shortlisted_club_ids, shortlisted_club_ids))
+        fixtures = cur.fetchall()
+    conn.close()
+
+    return {
+        "available": True,
+        "fixtures": [{
+            "date": f["match_date"], "home_club": f["home_club"], "away_club": f["away_club"],
+            "venue_name": f["venue_name"], "address": f["address"],
+            "lat": float(f["latitude"]) if f["latitude"] is not None else None,
+            "lon": float(f["longitude"]) if f["longitude"] is not None else None,
+        } for f in fixtures],
+        "note": "Real upcoming fixtures for your shortlisted players' clubs — venue coordinates missing for clubs not yet geocoded.",
+    }
+
+
+@app.get("/players/{player_id}/historical-replay")
+def historical_replay(player_id: int, authorized: bool = Depends(check_api_key)):
+    """'What If' Historical Replay — applies the same Moneyball formula
+    used elsewhere to a player's real, past recorded transfers, showing
+    whether the platform's own logic would have flagged the move as
+    good value. Honest limitation: uses the player's CURRENT potential
+    score, not a reconstruction of what it genuinely was at the time of
+    each transfer — that would need much richer historical matching
+    than currently exists. A real but imperfect retrospective, not a
+    time machine."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT transfer_date, fee_type, club_from, club_to
+            FROM player_transfer_history
+            WHERE player_id = %s AND club_to IS NOT NULL
+            ORDER BY transfer_date DESC
+        """, (player_id,))
+        transfers = cur.fetchall()
+
+        cur.execute("""
+            SELECT pps.potential_index, l.is_top5,
+                   COALESCE(SUM(pms.minutes_played), 0) AS minutes
+            FROM players p
+            LEFT JOIN clubs cl ON cl.id = p.current_club_id
+            LEFT JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            LEFT JOIN player_match_stats pms ON pms.player_id = p.id
+            WHERE p.id = %s
+            GROUP BY pps.potential_index, l.is_top5
+        """, (player_id,))
+        player_row = cur.fetchone()
+    conn.close()
+
+    if not transfers or not player_row or player_row["potential_index"] is None:
+        return {"available": False, "reason": "Not enough real transfer or potential data recorded for this player yet."}
+
+    minutes = player_row["minutes"]
+    confidence_mult = 1.0 if minutes >= 1800 else 0.9 if minutes >= 900 else 0.75 if minutes >= 300 else 0.5
+    obscurity_bonus = 0.15 if not player_row["is_top5"] else 0
+    current_moneyball = round(float(player_row["potential_index"]) * (1 + obscurity_bonus) * confidence_mult, 1)
+
+    replays = []
+    for t in transfers:
+        verdict = "Would have flagged as genuine value" if current_moneyball >= 70 and t["fee_type"] not in (None, "N/A") else "No strong signal either way"
+        replays.append({
+            "transfer_date": t["transfer_date"], "fee_type": t["fee_type"],
+            "club_from": t["club_from"], "club_to": t["club_to"],
+            "current_moneyball_score": current_moneyball, "verdict": verdict,
+        })
+
+    return {
+        "available": True,
+        "replays": replays,
+        "note": "Uses current potential, not a reconstruction of potential at the time of each transfer — a real but imperfect retrospective.",
     }
 
 
