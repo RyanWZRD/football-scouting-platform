@@ -5187,6 +5187,105 @@ function RecentlyViewedModal({ recentlyViewed, onClose, onSelectPlayer }) {
   );
 }
 
+function HeadToHeadModal({ allLeagueOptions, onClose }) {
+  const [league, setLeague] = useState("");
+  const [clubA, setClubA] = useState("");
+  const [clubB, setClubB] = useState("");
+  const [clubOptions, setClubOptions] = useState([]);
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !league) { setClubOptions([]); return; }
+    fetch(`${API_BASE_URL}/players?league=${encodeURIComponent(league)}&limit=500`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : [])
+      .then(rows => setClubOptions(Array.from(new Set(rows.map(r => r.club).filter(Boolean))).sort()))
+      .catch(() => setClubOptions([]));
+  }, [league]);
+
+  useEffect(() => {
+    if (!API_BASE_URL || !clubA || !clubB || clubA === clubB) { setData(null); return; }
+    const params = new URLSearchParams({ club_a: clubA, club_b: clubB, league });
+    fetch(`${API_BASE_URL}/clubs/head-to-head?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setData(d))
+      .catch(() => setData(null));
+  }, [clubA, clubB, league]);
+
+  const renderDossier = (dossier) => (
+    <div className="border border-[#2C4A3B] p-3 flex-1">
+      {dossier.rebuild_signal && <div className="text-xs mb-1"><span className="text-[#E3A857]">🏗️ Rebuild:</span> {dossier.rebuild_signal.rebuild_score}</div>}
+      <div className="text-xs mb-1"><span className="text-[#9AAA9E]">📅 Fixtures (14d):</span> {dossier.fixture_congestion.upcoming_matches_14d}</div>
+      {dossier.squad_workload.avg_squad_acwr != null && <div className="text-xs mb-1"><span className="text-[#9AAA9E]">🔋 ACWR:</span> {dossier.squad_workload.avg_squad_acwr}</div>}
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[70]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-2xl w-full max-h-[92vh] overflow-y-auto p-4 sm:p-8" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🥊 Head-to-Head Club Dossier</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        <select value={league} onChange={e => { setLeague(e.target.value); setClubA(""); setClubB(""); }}
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-3">
+          <option value="">Select a league...</option>
+          {allLeagueOptions.map(l => <option key={l} value={l}>{l}</option>)}
+        </select>
+        {league && (
+          <div className="grid grid-cols-2 gap-3 mb-5">
+            <select value={clubA} onChange={e => setClubA(e.target.value)} className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3]">
+              <option value="">Club A...</option>
+              {clubOptions.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select value={clubB} onChange={e => setClubB(e.target.value)} className="bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3]">
+              <option value="">Club B...</option>
+              {clubOptions.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        )}
+
+        {data && (
+          <>
+            <div className="flex gap-3 mb-4">
+              {renderDossier(data.club_a.dossier)}
+              {renderDossier(data.club_b.dossier)}
+            </div>
+            {data.head_to_head.matches.length > 0 && (
+              <div className="border border-[#2C4A3B] p-3 mb-4 text-center">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-1">Head-to-Head ({data.head_to_head.matches.length} meetings)</div>
+                <div className="text-sm text-[#EDEDE3]">
+                  {clubA} {data.head_to_head.club_a_wins} — {data.head_to_head.draws} — {data.head_to_head.club_b_wins} {clubB}
+                </div>
+              </div>
+            )}
+            {(data.club_a.dossier.style_dna || data.club_b.dossier.style_dna) && (
+              <div className="h-56">
+                <OverlayRadarChart series={[
+                  ...(data.club_a.dossier.style_dna ? [{ label: clubA, color: "#E3A857", metrics: {
+                    "Possession": { scaled: data.club_a.dossier.style_dna.possession_tendency ?? 0 },
+                    "Directness": { scaled: data.club_a.dossier.style_dna.directness ?? 0 },
+                    "Defensive Intensity": { scaled: data.club_a.dossier.style_dna.defensive_intensity ?? 0 },
+                    "Physicality": { scaled: data.club_a.dossier.style_dna.physicality ?? 0 },
+                    "Attacking Threat": { scaled: data.club_a.dossier.style_dna.attacking_threat ?? 0 },
+                  }}] : []),
+                  ...(data.club_b.dossier.style_dna ? [{ label: clubB, color: "#7FB3D5", metrics: {
+                    "Possession": { scaled: data.club_b.dossier.style_dna.possession_tendency ?? 0 },
+                    "Directness": { scaled: data.club_b.dossier.style_dna.directness ?? 0 },
+                    "Defensive Intensity": { scaled: data.club_b.dossier.style_dna.defensive_intensity ?? 0 },
+                    "Physicality": { scaled: data.club_b.dossier.style_dna.physicality ?? 0 },
+                    "Attacking Threat": { scaled: data.club_b.dossier.style_dna.attacking_threat ?? 0 },
+                  }}] : []),
+                ]} />
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function MostCardedModal({ allLeagueOptions, onClose }) {
   const [league, setLeague] = useState("");
   const [rows, setRows] = useState(null);
@@ -5634,6 +5733,7 @@ function StrategyDashboardModal({ club, league, players, balance, onClose }) {
 
 function MatchPreviewModal({ matchId, onClose }) {
   const [data, setData] = useState(null);
+  const [environment, setEnvironment] = useState(null);
 
   useEffect(() => {
     if (!API_BASE_URL || !matchId) return;
@@ -5641,6 +5741,10 @@ function MatchPreviewModal({ matchId, onClose }) {
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
+    fetch(`${API_BASE_URL}/fixtures/${matchId}/environment`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setEnvironment(d))
+      .catch(() => setEnvironment(null));
   }, [matchId]);
 
   return (
@@ -5669,6 +5773,14 @@ function MatchPreviewModal({ matchId, onClose }) {
                   <span className="text-[#6B8570] mx-2">·</span>
                   <span className="text-[#7FD99A]">{data.referee_profile.home_win_pct}% home win rate</span>
                 </div>
+              </div>
+            )}
+
+            {environment?.available && environment.flags?.length > 0 && (
+              <div className="mb-5 border border-[#E3A857] p-4">
+                <div className="text-[10px] uppercase tracking-wide text-[#6B8570] mb-2">🏔️ Environmental Context</div>
+                {environment.flags.map((f, i) => <div key={i} className="text-sm text-[#EDEDE3] mb-1">{f}</div>)}
+                <div className="text-[10px] text-[#4A5C52] mt-2 italic">{environment.note}</div>
               </div>
             )}
 
@@ -7623,6 +7735,7 @@ function ScoutDashboard() {
   const [backupRestoreOpen, setBackupRestoreOpen] = useState(false);
   const [squadBuilderOpen, setSquadBuilderOpen] = useState(false);
   const [mostCardedOpen, setMostCardedOpen] = useState(false);
+  const [headToHeadOpen, setHeadToHeadOpen] = useState(false);
   const [fixtureCongestionOpen, setFixtureCongestionOpen] = useState(false);
   const [superSubsOpen, setSuperSubsOpen] = useState(false);
   const [targetProfileSearchOpen, setTargetProfileSearchOpen] = useState(false);
@@ -7688,6 +7801,7 @@ function ScoutDashboard() {
     { icon: "💾", label: "Backup & Restore", section: "Data & Results", setter: setBackupRestoreOpen },
     { icon: "🏟️", label: "Complete Squad Builder", section: "Scouting Intelligence", setter: setSquadBuilderOpen },
     { icon: "🟨", label: "Most-Carded Players", section: "Data & Results", setter: setMostCardedOpen },
+    { icon: "🥊", label: "Head-to-Head Club Dossier", section: "Club Analysis", setter: setHeadToHeadOpen },
     { icon: "📅", label: "Weekly Digest", section: "Live & Operations", setter: setWeeklyDigestOpen },
   ];
 
@@ -8686,6 +8800,7 @@ function ScoutDashboard() {
       {backupRestoreOpen && <BackupRestoreModal onClose={() => setBackupRestoreOpen(false)} />}
       {squadBuilderOpen && <SquadBuilderModal allLeagueOptions={allLeagueOptions} onClose={() => setSquadBuilderOpen(false)} />}
       {mostCardedOpen && <MostCardedModal allLeagueOptions={allLeagueOptions} onClose={() => setMostCardedOpen(false)} />}
+      {headToHeadOpen && <HeadToHeadModal allLeagueOptions={allLeagueOptions} onClose={() => setHeadToHeadOpen(false)} />}
       {commandPaletteOpen && (
         <CommandPaletteModal
           items={ALL_MENU_ITEMS}
