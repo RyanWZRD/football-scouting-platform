@@ -6729,7 +6729,7 @@ def player_dossier(player_id: int, authorized: bool = Depends(check_api_key)):
             if this_league_avg and league_averages:
                 global_avg = sum(league_averages.values()) / len(league_averages)
                 factor = min(1.0, this_league_avg / global_avg) if global_avg > 0 else 1.0
-                league_adjusted = round(score["potential_index"] * factor, 1)
+                league_adjusted = round(float(score["potential_index"]) * factor, 1)
 
         # Composite Scouting Grade — one letter grade synthesizing the raw
         # rating with how much we actually trust it. A high score built on
