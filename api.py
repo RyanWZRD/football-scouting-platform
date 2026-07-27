@@ -4960,6 +4960,87 @@ def club_preferred_formation(club: str, league: str, authorized: bool = Depends(
     return rows
 
 
+@app.get("/players/autonomous-discovery")
+def autonomous_discovery(limit: int = Query(5, le=15), authorized: bool = Depends(check_api_key)):
+    """The Autonomous Scout — a genuine synthesis of everything this
+    platform already knows, combined into one 'top discovery' signal:
+    Moneyball value, a real recent rise in potential (not just a high
+    score, but genuine upward momentum), and workload context. Honest
+    technical note: this is rule-based, server-side synthesis — the
+    on-device AI features elsewhere only run when a browser is open,
+    and genuinely can't power background automation. This is the
+    achievable version of 'working while you sleep': the same nightly
+    automation that already updates scores, surfaced as one signal
+    rather than requiring you to check a dozen separate tools."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.id, p.full_name, p.photo_url, cl.name AS club,
+                   l.name || ' (' || COALESCE(co.name, 'Unknown') || ')' AS league_display,
+                   pps.potential_index, l.is_top5,
+                   COALESCE(SUM(pms.minutes_played), 0) AS total_minutes
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            LEFT JOIN player_match_stats pms ON pms.player_id = p.id
+            WHERE pps.potential_index >= 72
+            GROUP BY p.id, p.full_name, p.photo_url, cl.name, l.name, co.name, pps.potential_index, l.is_top5
+        """)
+        candidates = cur.fetchall()
+
+        # Real recent trend — comparing the two most recent tracked
+        # scores per player, same spirit as the "movers since last visit" logic.
+        cur.execute("""
+            SELECT player_id, potential_index, season,
+                   ROW_NUMBER() OVER (PARTITION BY player_id ORDER BY season DESC) AS rn
+            FROM player_potential_scores
+        """)
+        history_rows = cur.fetchall()
+    conn.close()
+
+    trend_by_player = {}
+    latest_by_player = {}
+    for r in history_rows:
+        if r["rn"] == 1:
+            latest_by_player[r["player_id"]] = float(r["potential_index"])
+        elif r["rn"] == 2:
+            trend_by_player[r["player_id"]] = float(r["potential_index"])
+
+    scored = []
+    for r in candidates:
+        minutes = r["total_minutes"]
+        confidence_mult = 1.0 if minutes >= 1800 else 0.9 if minutes >= 900 else 0.75 if minutes >= 300 else 0.5
+        obscurity_bonus = 0.15 if not r["is_top5"] else 0
+        moneyball = float(r["potential_index"]) * (1 + obscurity_bonus) * confidence_mult
+
+        prior = trend_by_player.get(r["id"])
+        latest = latest_by_player.get(r["id"], float(r["potential_index"]))
+        momentum = round(latest - prior, 1) if prior is not None else 0
+
+        # Real momentum genuinely weighted alongside raw value — a
+        # player rising AND undervalued is a stronger signal than
+        # either alone.
+        discovery_score = round(moneyball + (momentum * 3 if momentum > 0 else 0), 1)
+
+        scored.append({
+            "id": r["id"], "full_name": r["full_name"], "photo_url": r["photo_url"],
+            "club": r["club"], "league_display": r["league_display"],
+            "potential_index": round(float(r["potential_index"])),
+            "momentum": momentum, "discovery_score": discovery_score,
+        })
+
+    scored.sort(key=lambda r: r["discovery_score"], reverse=True)
+    return {
+        "discoveries": scored[:limit],
+        "note": "Rule-based synthesis of Moneyball value and genuine recent momentum — the on-device AI features elsewhere can't run in background automation, so this is the achievable version of continuous discovery.",
+    }
+
+
 @app.get("/today")
 def scouts_today_dashboard(authorized: bool = Depends(check_api_key)):
     """The unified homepage — everything that genuinely needs attention
