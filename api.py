@@ -489,6 +489,38 @@ class LiveConnectionManager:
 
 live_manager = LiveConnectionManager()
 
+
+class PlayerNotesConnectionManager:
+    """Real-Time Collaborative Notes — keyed per player_id, not global,
+    so a broadcast only reaches people genuinely viewing the SAME
+    player's dossier right now. Reuses the exact same proven pattern
+    as LiveConnectionManager above, just scoped differently."""
+    def __init__(self):
+        self.active: dict[int, list[WebSocket]] = {}
+
+    async def connect(self, player_id: int, ws: WebSocket):
+        await ws.accept()
+        self.active.setdefault(player_id, []).append(ws)
+
+    def disconnect(self, player_id: int, ws: WebSocket):
+        if player_id in self.active and ws in self.active[player_id]:
+            self.active[player_id].remove(ws)
+            if not self.active[player_id]:
+                del self.active[player_id]
+
+    async def broadcast(self, player_id: int, message: dict):
+        dead = []
+        for ws in self.active.get(player_id, []):
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(player_id, ws)
+
+
+notes_manager = PlayerNotesConnectionManager()
+
 # Tracks which events we've already broadcast per live fixture, so the
 # same goal doesn't get pushed again on every subsequent poll — keyed by
 # fixture_id, storing a set of (event_type, player_name, minute) seen so far.
@@ -624,6 +656,26 @@ async def ws_live_scores(websocket: WebSocket, key: str = Query(None)):
             await websocket.receive_text()  # just keeps the connection alive; we don't expect client messages
     except WebSocketDisconnect:
         live_manager.disconnect(websocket)
+
+
+@app.websocket("/ws/player-notes/{player_id}")
+async def ws_player_notes(websocket: WebSocket, player_id: int, key: str = Query(None)):
+    """Real-Time Collaborative Notes — the honest, achievable version:
+    live updates when someone else viewing the SAME player's dossier
+    saves a new note. Not full concurrent co-editing (that needs real
+    CRDT/operational-transform machinery this doesn't attempt), just
+    the core, high-value part — you see a colleague's note the moment
+    they save it, without refreshing."""
+    if API_ACCESS_KEY and key != API_ACCESS_KEY:
+        await websocket.close(code=4001)
+        return
+
+    await notes_manager.connect(player_id, websocket)
+    try:
+        while True:
+            await websocket.receive_text()  # keeps the connection alive; no client messages expected
+    except WebSocketDisconnect:
+        notes_manager.disconnect(player_id, websocket)
 
 
 def fetch_live_matches():
@@ -6739,7 +6791,7 @@ class WatchRequest(BaseModel):
 
 
 @app.post("/players/{player_id}/watch")
-def set_watch_level(player_id: int, body: WatchRequest, user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
+async def set_watch_level(player_id: int, body: WatchRequest, user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     if body.watch_level is not None and body.watch_level not in ("monitor", "shortlist", "priority"):
         raise HTTPException(status_code=400, detail="watch_level must be monitor, shortlist, priority, or null")
 
@@ -6765,6 +6817,16 @@ def set_watch_level(player_id: int, body: WatchRequest, user_id: int = Depends(g
         result = cur.fetchone()
     conn.commit()
     conn.close()
+
+    # Real-Time Collaborative Notes — let anyone else currently viewing
+    # this same player's dossier see the new note immediately.
+    await notes_manager.broadcast(player_id, {
+        "new_note": {
+            "note": note_text, "author": body.author, "watch_level": body.watch_level,
+            "created_at": result["created_at"].isoformat() if result.get("created_at") else None,
+        }
+    })
+
     return result
 
 
