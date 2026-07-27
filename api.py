@@ -4665,6 +4665,79 @@ def squad_builder_analyze(body: SquadBuilderRequest = Body(...), authorized: boo
     }
 
 
+@app.get("/players/most-carded")
+def most_carded_players(league: str, limit: int = Query(20, le=50), authorized: bool = Depends(check_api_key)):
+    """The most-carded players in a league — a genuine discipline record,
+    distinct from referee tendencies (this is player-focused, not
+    referee-focused). Computed entirely from existing match data at
+    zero additional API cost. Requires 5+ matches to avoid a misleading
+    read from a single game."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.full_name, cl.name AS club,
+                   COUNT(*) AS matches_played,
+                   SUM(pms.yellow_cards) AS yellow_cards,
+                   SUM(pms.red_cards) AS red_cards,
+                   SUM(pms.yellow_cards + pms.red_cards) AS total_cards
+            FROM player_match_stats pms
+            JOIN players p ON p.id = pms.player_id
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            JOIN matches m ON m.id = pms.match_id
+            WHERE (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s AND m.status = 'finished'
+            GROUP BY p.id, p.full_name, cl.name
+            HAVING COUNT(*) >= 5
+            ORDER BY total_cards DESC
+            LIMIT %s
+        """, (league, limit))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.get("/clubs/venue")
+def club_venue(club: str, league: str, authorized: bool = Depends(check_api_key)):
+    """Stadium details — address, capacity, surface, image. Confirmed
+    real data from API-Football's own /teams endpoint (embedded venue
+    object). Empty until venues_ingest.py has been run for this club."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT cv.name, cv.address, cv.city, cv.capacity, cv.surface, cv.image_url
+            FROM club_venues cv
+            JOIN clubs cl ON cl.id = cv.club_id
+            LEFT JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE cl.name = %s AND (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+        """, (club, league))
+        row = cur.fetchone()
+    conn.close()
+    return row
+
+
+@app.get("/clubs/season-stats")
+def club_season_stats(club: str, league: str, season: str, authorized: bool = Depends(check_api_key)):
+    """Officially-computed season stats direct from API-Football — form
+    string, clean sheets, matches failed to score in, and the season's
+    biggest win/heaviest defeat. Empty until club_season_stats_ingest.py
+    has been run for this club and season."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT css.form, css.clean_sheets, css.failed_to_score, css.biggest_win, css.biggest_loss
+            FROM club_season_stats css
+            JOIN clubs cl ON cl.id = css.club_id
+            LEFT JOIN leagues l ON l.id = cl.league_id
+            LEFT JOIN countries co ON co.id = l.country_id
+            WHERE cl.name = %s AND (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s AND css.season = %s
+        """, (club, league, season))
+        row = cur.fetchone()
+    conn.close()
+    return row
+
+
 @app.get("/today")
 def scouts_today_dashboard(authorized: bool = Depends(check_api_key)):
     """The unified homepage — everything that genuinely needs attention
