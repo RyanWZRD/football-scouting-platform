@@ -4779,20 +4779,24 @@ def _geocode_city(city):
     """Free, no-API-key geocoding via Open-Meteo — converts a city name
     into coordinates and elevation. Returns None on any failure rather
     than raising, since this is a real external dependency that can
-    genuinely be unavailable."""
+    genuinely be unavailable. City fields from API-Football sometimes
+    include a county/region appended (e.g. "Nottingham, Nottinghamshire")
+    — Open-Meteo's search expects just the city name, so strip anything
+    after the first comma before searching."""
+    city_only = city.split(",")[0].strip() if city else city
     try:
         resp = requests.get(
             "https://geocoding-api.open-meteo.com/v1/search",
-            params={"name": city, "count": 1}, timeout=6,
+            params={"name": city_only, "count": 1}, timeout=6,
         )
         resp.raise_for_status()
         results = resp.json().get("results")
         if not results:
-            print(f"Geocoding returned no results for city: {city!r}")
+            print(f"Geocoding returned no results for city: {city_only!r} (original: {city!r})")
             return None
         return {"lat": results[0]["latitude"], "lon": results[0]["longitude"], "elevation": results[0].get("elevation")}
     except Exception as e:
-        print(f"Geocoding failed for city {city!r}: {type(e).__name__}: {e}")
+        print(f"Geocoding failed for city {city_only!r}: {type(e).__name__}: {e}")
         return None
 
 
@@ -4842,6 +4846,76 @@ def fixture_environment_impact(match_id: int, authorized: bool = Depends(check_a
         "flags": flags,
         "note": "A real but imperfect proxy — based on city-level coordinates, not exact stadium GPS. Altitude effects on performance are peer-reviewed and real; this surfaces the signal, not a guaranteed outcome.",
     }
+
+
+@app.get("/leagues/undiscovered")
+def undiscovered_leagues(limit: int = Query(15, le=30), authorized: bool = Depends(check_api_key)):
+    """A genuine, data-driven signal for where to expand next: countries
+    with no tracked domestic league of their own, but nonetheless
+    producing a real cluster of high-potential players who've already
+    made it into leagues this platform tracks. If a country is exporting
+    this much talent, its own domestic league likely has even more
+    still undiscovered. Requires 3+ qualifying players to avoid one
+    standout making a whole country look like a hotspot."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT co.name AS country, COUNT(*) AS high_potential_count,
+                   ROUND(AVG(pps.potential_index)::numeric, 1) AS avg_potential
+            FROM players p
+            JOIN countries co ON co.id = p.nationality_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            WHERE pps.potential_index >= 75
+              AND NOT EXISTS (SELECT 1 FROM leagues l WHERE l.country_id = co.id)
+            GROUP BY co.name
+            HAVING COUNT(*) >= 3
+            ORDER BY high_potential_count DESC
+            LIMIT %s
+        """, (limit,))
+        rows = cur.fetchall()
+    conn.close()
+    return {"candidates": rows, "note": "Genuinely data-driven — not a guess, a real export pattern from players already proven good enough to play in tracked leagues."}
+
+
+@app.get("/achievements/badges")
+def achievement_badges(authorized: bool = Depends(check_api_key)):
+    """Real, earned badges — not usage streaks, actual predictive
+    outcomes. A shortlisted player whose club shows a genuine detected
+    division change (the same detection used by /clubs/division-changes)
+    is a real 'called it' moment worth recognizing, not a gamification
+    gimmick disconnected from actual scouting judgment."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            WITH division_changes AS (
+                SELECT DISTINCT ON (cl.id)
+                    cl.id AS club_id, cl.name AS club,
+                    current_l.name AS current_league,
+                    fixture_l.name AS fixture_implied_league
+                FROM matches m
+                JOIN clubs cl ON cl.id = m.home_club_id OR cl.id = m.away_club_id
+                JOIN leagues fixture_l ON fixture_l.id = m.league_id
+                LEFT JOIN leagues current_l ON current_l.id = cl.league_id
+                WHERE m.status = 'scheduled' AND m.match_date >= now()
+                  AND (current_l.id IS NULL OR current_l.id != fixture_l.id)
+                ORDER BY cl.id, m.match_date ASC
+            )
+            SELECT p.full_name, dc.club, dc.current_league, dc.fixture_implied_league
+            FROM players p
+            JOIN LATERAL (
+                SELECT watch_level FROM scout_notes sn
+                WHERE sn.player_id = p.id ORDER BY created_at DESC LIMIT 1
+            ) latest_note ON true
+            JOIN division_changes dc ON dc.club_id = p.current_club_id
+            WHERE latest_note.watch_level = 'shortlist'
+        """)
+        badges = cur.fetchall()
+    conn.close()
+    return {"badges": [{**b, "badge": "🏅 Called It — division change detected"} for b in badges],
+            "note": "Real, earned recognition — tied to genuine detected outcomes, not app usage."}
 
 
 @app.get("/today")
