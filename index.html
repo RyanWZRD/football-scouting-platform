@@ -9551,7 +9551,7 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
       .then(res => res.ok ? res.json() : [])
       .then(rows => setShortlistInjuries(rows.filter(r => r.injury_type)))
       .catch(() => setShortlistInjuries([]));
-  }, []);
+  }, [currentUser]);
 
   const Section = ({ title, children }) => (
     <div className="mb-8">
@@ -10127,7 +10127,7 @@ function ScoutDashboard() {
       .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
       .then(rows => setAllLeagueOptions(rows.map(r => r.league_display).sort()))
       .catch(() => {});
-  }, []);
+  }, [currentUser]);
 
   // When did the nightly pipeline last actually finish? No API key needed —
   // /status is a lightweight, unauthenticated endpoint.
@@ -10301,7 +10301,7 @@ function ScoutDashboard() {
       })
       .catch(() => { if (!cancelled) setConnectionStatus("offline"); });
     return () => { cancelled = true; };
-  }, [league, position]);
+  }, [league, position, currentUser]);
 
   const dataSource = livePlayers && connectionStatus === "live" ? livePlayers : PLAYERS;
 
