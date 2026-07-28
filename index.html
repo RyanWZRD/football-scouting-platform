@@ -155,6 +155,7 @@ async function subscribeToPushAlerts() {
         auth_key: subJson.keys.auth,
       }),
     });
+    alert("✅ You're subscribed — you'll get a real notification the next time a new top discovery is found.");
     return true;
   } catch (e) {
     alert("Couldn't set up push alerts right now — please try again.");
