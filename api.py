@@ -92,6 +92,7 @@ app.add_middleware(
 # genuinely became unprotected by accident.
 PUBLIC_PATHS = {
     "/health",
+    "/status",
     "/auth/register",
     "/auth/login",
     "/push/public-key",
