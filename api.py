@@ -347,7 +347,44 @@ def auth_delete_account(body: DeleteAccountRequest = Body(...), user_id: int = D
     return {"deleted": True}
 
 
-    return {"reset": True}
+class ActivityLogRequest(BaseModel):
+    action: str
+
+
+@app.post("/activity-log")
+def add_activity_log(body: ActivityLogRequest = Body(...), user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO activity_log (user_id, action) VALUES (%s, %s)", (user_id, body.action))
+    conn.commit()
+    conn.close()
+    return {"logged": True}
+
+
+@app.get("/activity-log")
+def get_activity_log(limit: int = Query(50, le=200), user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
+    """Genuinely per-user — WHERE user_id = %s ensures each account
+    only ever sees its own activity, regardless of which browser or
+    device they're using, unlike the old localStorage version."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT action, created_at FROM activity_log
+            WHERE user_id = %s ORDER BY created_at DESC LIMIT %s
+        """, (user_id, limit))
+        rows = cur.fetchall()
+    conn.close()
+    return rows
+
+
+@app.delete("/activity-log")
+def clear_activity_log(user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM activity_log WHERE user_id = %s", (user_id,))
+    conn.commit()
+    conn.close()
+    return {"cleared": True}
 
 
 ALLOWED_IMAGE_HOSTS = {"media.api-sports.io"}
