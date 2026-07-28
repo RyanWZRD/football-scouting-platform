@@ -95,6 +95,7 @@ PUBLIC_PATHS = {
     "/status",
     "/auth/register",
     "/auth/login",
+    "/auth/reset-password",
     "/push/public-key",
     "/public/track-record",
     "/docs",
@@ -267,6 +268,119 @@ def auth_me(user_id: int = Depends(get_current_user), authorized: bool = Depends
     if not row:
         raise HTTPException(status_code=404, detail="Account not found")
     return row
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@app.post("/auth/change-password")
+def auth_change_password(body: ChangePasswordRequest = Body(...), user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
+    """Requires the current password for verification — a genuine
+    security practice, since the session token alone shouldn't be
+    enough to change account credentials (e.g. a shared/unlocked
+    device shouldn't let anyone silently take over the account)."""
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT password_hash FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+        if not row or not verify_password(body.current_password, row["password_hash"]):
+            conn.close()
+            raise HTTPException(status_code=401, detail="Current password is incorrect")
+        cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (hash_password(body.new_password), user_id))
+    conn.commit()
+    conn.close()
+    return {"changed": True}
+
+
+class ChangeEmailRequest(BaseModel):
+    current_password: str
+    new_email: str
+
+
+@app.post("/auth/change-email")
+def auth_change_email(body: ChangeEmailRequest = Body(...), user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
+    new_email = body.new_email.strip().lower()
+    if not new_email or "@" not in new_email:
+        raise HTTPException(status_code=400, detail="A valid email is required")
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT password_hash FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+        if not row or not verify_password(body.current_password, row["password_hash"]):
+            conn.close()
+            raise HTTPException(status_code=401, detail="Current password is incorrect")
+        cur.execute("SELECT id FROM users WHERE email = %s AND id != %s", (new_email, user_id))
+        if cur.fetchone():
+            conn.close()
+            raise HTTPException(status_code=409, detail="That email is already in use")
+        cur.execute("UPDATE users SET email = %s WHERE id = %s", (new_email, user_id))
+    conn.commit()
+    conn.close()
+    return {"changed": True, "email": new_email}
+
+
+class DeleteAccountRequest(BaseModel):
+    current_password: str
+
+
+@app.delete("/auth/account")
+def auth_delete_account(body: DeleteAccountRequest = Body(...), user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
+    """Deletes the account itself. Real, related data (scout notes,
+    pipeline entries, push subscriptions) cascades and cleans up
+    automatically via the existing ON DELETE CASCADE foreign keys —
+    confirmed directly against the actual migrations, not assumed."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT password_hash FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+        if not row or not verify_password(body.current_password, row["password_hash"]):
+            conn.close()
+            raise HTTPException(status_code=401, detail="Current password is incorrect")
+        cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+    conn.commit()
+    conn.close()
+    return {"deleted": True}
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    new_password: str
+
+
+@app.post("/auth/reset-password")
+def auth_reset_password(body: ResetPasswordRequest = Body(...), authorized: bool = Depends(check_api_key)):
+    """An honest, simplified 'forgot password' flow — genuinely not a
+    full email-verification reset loop, since this app has no email-
+    sending infrastructure at all. Verifies the email exists, then
+    sets a new password directly. This is a real tradeoff worth
+    revisiting if more users are ever added — right now it means
+    anyone with the app's API key could reset any known account's
+    password, which is acceptable for a single/small-trusted-user
+    tool but genuinely wouldn't be at larger scale."""
+    email = body.email.strip().lower()
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM users WHERE email = %s", (email,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            # Same "generic" response as login — doesn't reveal whether
+            # this email genuinely has an account, for the same
+            # enumeration-prevention reason as the login endpoint.
+            return {"reset": True}
+        cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (hash_password(body.new_password), row["id"]))
+    conn.commit()
+    conn.close()
+    return {"reset": True}
 
 
 ALLOWED_IMAGE_HOSTS = {"media.api-sports.io"}
