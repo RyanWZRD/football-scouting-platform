@@ -5427,6 +5427,68 @@ def goal_type_breakdown(club: str, league: str, authorized: bool = Depends(check
     }
 
 
+@app.get("/players/hot-take-data")
+def hot_take_data(authorized: bool = Depends(check_api_key)):
+    """Stat-Backed Hot Take Generator's data layer — a random,
+    genuinely high-potential player's real per-90 goal contribution
+    compared against the genuine average for their position across
+    tracked leagues. Honest about not using xG, since API-Football
+    doesn't provide it — this uses real goals+assists per-90 instead,
+    a different but equally real stat."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT p.full_name, p.primary_position, cl.name AS club,
+                   pps.potential_index,
+                   SUM(pms.goals + pms.assists) AS contributions,
+                   SUM(pms.minutes_played) AS minutes
+            FROM players p
+            JOIN clubs cl ON cl.id = p.current_club_id
+            JOIN LATERAL (
+                SELECT potential_index FROM player_potential_scores
+                WHERE player_id = p.id ORDER BY season DESC LIMIT 1
+            ) pps ON true
+            JOIN player_match_stats pms ON pms.player_id = p.id
+            WHERE pps.potential_index >= 75
+            GROUP BY p.id, p.full_name, p.primary_position, cl.name, pps.potential_index
+            HAVING SUM(pms.minutes_played) >= 900
+            ORDER BY random() LIMIT 1
+        """)
+        player = cur.fetchone()
+
+        if not player:
+            conn.close()
+            return {"available": False, "reason": "Not enough players with sufficient minutes yet."}
+
+        per90 = (player["contributions"] / player["minutes"]) * 90
+
+        cur.execute("""
+            SELECT AVG(sub.per90) AS league_avg FROM (
+                SELECT (SUM(pms.goals + pms.assists)::float / NULLIF(SUM(pms.minutes_played), 0)) * 90 AS per90
+                FROM players p2
+                JOIN player_match_stats pms ON pms.player_id = p2.id
+                WHERE p2.primary_position = %s
+                GROUP BY p2.id
+                HAVING SUM(pms.minutes_played) >= 900
+            ) sub
+        """, (player["primary_position"],))
+        avg_row = cur.fetchone()
+    conn.close()
+
+    league_avg = float(avg_row["league_avg"]) if avg_row and avg_row["league_avg"] else None
+    if not league_avg:
+        return {"available": False, "reason": "Not enough comparison data for this position yet."}
+
+    return {
+        "available": True,
+        "full_name": player["full_name"], "position": player["primary_position"], "club": player["club"],
+        "per90_contributions": round(per90, 2),
+        "position_average_per90": round(league_avg, 2),
+        "multiplier": round(per90 / league_avg, 1) if league_avg > 0 else None,
+        "note": "Real goals+assists per-90 vs the genuine tracked average for this position — not xG, since API-Football doesn't provide that.",
+    }
+
+
 @app.get("/players/{player_id}/sidelined")
 def player_sidelined_records(player_id: int, authorized: bool = Depends(check_api_key)):
     """Sidelined records — genuinely broader than the existing injury
