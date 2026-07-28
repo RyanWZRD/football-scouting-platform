@@ -9551,7 +9551,7 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
       .then(res => res.ok ? res.json() : [])
       .then(rows => setShortlistInjuries(rows.filter(r => r.injury_type)))
       .catch(() => setShortlistInjuries([]));
-  }, [currentUser]);
+  }, []);
 
   const Section = ({ title, children }) => (
     <div className="mb-8">
