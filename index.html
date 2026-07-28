@@ -5825,14 +5825,151 @@ function RecentlyViewedModal({ recentlyViewed, onClose, onSelectPlayer }) {
   );
 }
 
-function FullPageLoginGate({ onSuccess }) {
-  const [mode, setMode] = useState("login"); // "login" | "register"
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+function AccountSettingsModal({ currentUser, onClose, onAccountDeleted }) {
+  const [section, setSection] = useState(null); // null | "password" | "email" | "delete"
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const reset = () => { setCurrentPassword(""); setNewPassword(""); setNewEmail(""); setMessage(null); setError(null); };
+
+  const changePassword = async () => {
+    if (!currentPassword || newPassword.length < 8) return;
+    setSubmitting(true); setError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/change-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || "Something went wrong."); return; }
+      setMessage("✅ Password changed successfully."); setCurrentPassword(""); setNewPassword("");
+    } catch (e) { setError("Couldn't reach the server."); }
+    finally { setSubmitting(false); }
+  };
+
+  const changeEmail = async () => {
+    if (!currentPassword || !newEmail.trim()) return;
+    setSubmitting(true); setError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/change-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ current_password: currentPassword, new_email: newEmail.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || "Something went wrong."); return; }
+      setMessage(`✅ Email changed to ${data.email}.`); setCurrentPassword(""); setNewEmail("");
+    } catch (e) { setError("Couldn't reach the server."); }
+    finally { setSubmitting(false); }
+  };
+
+  const deleteAccount = async () => {
+    if (!currentPassword) return;
+    if (!confirm("This permanently deletes your account and all your data (shortlist, pipeline, notes, push subscriptions). This cannot be undone. Continue?")) return;
+    setSubmitting(true); setError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/account`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ current_password: currentPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.detail || "Something went wrong."); return; }
+      onAccountDeleted();
+    } catch (e) { setError("Couldn't reach the server."); }
+    finally { setSubmitting(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[70]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-sm w-full max-h-[92vh] overflow-y-auto p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">⚙️ Account Settings</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-5">{currentUser?.email}</div>
+
+        {!section && (
+          <div className="space-y-2">
+            <button onClick={() => { setSection("password"); reset(); }} className="w-full text-left text-sm border border-[#2C4A3B] px-3 py-2.5 text-[#EDEDE3] hover:border-[#E3A857]">🔑 Change Password</button>
+            <button onClick={() => { setSection("email"); reset(); }} className="w-full text-left text-sm border border-[#2C4A3B] px-3 py-2.5 text-[#EDEDE3] hover:border-[#E3A857]">✉️ Change Email</button>
+            <button onClick={() => { setSection("delete"); reset(); }} className="w-full text-left text-sm border border-[#E36B57] px-3 py-2.5 text-[#E36B57] hover:bg-[#E36B57]/10">🗑️ Delete Account</button>
+          </div>
+        )}
+
+        {section && (
+          <>
+            <button onClick={() => { setSection(null); reset(); }} className="text-xs text-[#6B8570] hover:text-[#E3A857] mb-4">← Back</button>
+
+            <input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} placeholder="Current password"
+              className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-3" />
+
+            {section === "password" && (
+              <>
+                <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="New password"
+                  className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-1" />
+                <div className="text-[10px] text-[#6B8570] mb-3">At least 8 characters.</div>
+              </>
+            )}
+            {section === "email" && (
+              <input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="New email"
+                className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-3" />
+            )}
+            {section === "delete" && (
+              <div className="text-xs text-[#E36B57] mb-3">This permanently deletes your account and all associated data. This cannot be undone.</div>
+            )}
+
+            {error && <div className="text-xs text-[#E36B57] mb-3">{error}</div>}
+            {message && <div className="text-xs text-[#7FD99A] mb-3">{message}</div>}
+
+            <button
+              onClick={section === "password" ? changePassword : section === "email" ? changeEmail : deleteAccount}
+              disabled={submitting}
+              className={`w-full font-bold py-2.5 text-sm uppercase tracking-wide disabled:opacity-50 ${section === "delete" ? "bg-[#E36B57] text-[#0E1A15]" : "bg-[#E3A857] text-[#0E1A15]"}`}>
+              {submitting ? "…" : section === "password" ? "Change Password" : section === "email" ? "Change Email" : "Delete Account"}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FullPageLoginGate({ onSuccess, sessionExpiredMessage }) {
+  const [mode, setMode] = useState("login"); // "login" | "register" | "forgot"
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [error, setError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [resetDone, setResetDone] = useState(false);
+
   const submit = async () => {
+    if (mode === "forgot") {
+      if (!email.trim() || newPassword.length < 8) return;
+      setSubmitting(true);
+      setError(null);
+      try {
+        const res = await fetch(`${API_BASE_URL}/auth/reset-password`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+          body: JSON.stringify({ email: email.trim(), new_password: newPassword }),
+        });
+        if (res.ok) setResetDone(true);
+        else setError("Something went wrong — please try again.");
+      } catch (e) {
+        setError("Couldn't reach the server — please try again.");
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
     if (!email.trim() || !password) return;
     setSubmitting(true);
     setError(null);
@@ -5856,31 +5993,79 @@ function FullPageLoginGate({ onSuccess }) {
     }
   };
 
+  const switchMode = (newMode) => {
+    setMode(newMode);
+    setError(null);
+    setResetDone(false);
+    setPassword("");
+    setNewPassword("");
+  };
+
   return (
     <div className="min-h-screen bg-[#0E1A15] text-[#EDEDE3] flex items-center justify-center p-6">
       <div className="max-w-sm w-full">
         <div className="text-[11px] tracking-[0.25em] uppercase text-[#E3A857] font-plexmono text-center mb-1">Cross-League Scouting Index</div>
-        <div className="text-2xl font-display text-center mb-8">{mode === "login" ? "Log In" : "Create Account"}</div>
+        <div className="text-2xl font-display text-center mb-6">
+          {mode === "login" ? "Log In" : mode === "register" ? "Create Account" : "Reset Password"}
+        </div>
 
-        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email"
-          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2.5 text-sm text-[#EDEDE3] mb-3"
-          onKeyDown={e => e.key === "Enter" && submit()} autoFocus />
-        <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password"
-          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2.5 text-sm text-[#EDEDE3] mb-1"
-          onKeyDown={e => e.key === "Enter" && submit()} />
-        {mode === "register" && <div className="text-[10px] text-[#6B8570] mb-3">At least 8 characters.</div>}
+        {sessionExpiredMessage && (
+          <div className="text-xs text-[#E3A857] text-center border border-[#E3A857] p-2 mb-4">{sessionExpiredMessage}</div>
+        )}
 
-        {error && <div className="text-xs text-[#E36B57] mt-3 mb-1">{error}</div>}
+        {mode === "forgot" && resetDone ? (
+          <>
+            <div className="text-sm text-[#7FD99A] text-center border border-[#2C4A3B] p-3 mb-4">
+              If an account with that email exists, its password has been reset. You can log in with your new password now.
+            </div>
+            <button onClick={() => switchMode("login")}
+              className="w-full bg-[#E3A857] text-[#0E1A15] font-bold py-3 text-sm uppercase tracking-wide">
+              Back to Log In
+            </button>
+          </>
+        ) : (
+          <>
+            {mode === "forgot" && (
+              <div className="text-xs text-[#6B8570] mb-4 italic">
+                Enter your account email and a new password. Since this app doesn't send reset emails, this sets your new password directly.
+              </div>
+            )}
 
-        <button onClick={submit} disabled={submitting || !email.trim() || !password}
-          className="w-full bg-[#E3A857] text-[#0E1A15] font-bold py-3 text-sm uppercase tracking-wide mt-4 disabled:opacity-50">
-          {submitting ? "…" : mode === "login" ? "Log In" : "Create Account"}
-        </button>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email"
+              className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2.5 text-sm text-[#EDEDE3] mb-3"
+              onKeyDown={e => e.key === "Enter" && submit()} autoFocus />
 
-        <button onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(null); }}
-          className="w-full text-center text-xs text-[#6B8570] hover:text-[#E3A857] mt-5">
-          {mode === "login" ? "Need an account? Register" : "Already have an account? Log in"}
-        </button>
+            {mode !== "forgot" && (
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password"
+                className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2.5 text-sm text-[#EDEDE3] mb-1"
+                onKeyDown={e => e.key === "Enter" && submit()} />
+            )}
+            {mode === "forgot" && (
+              <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="New password"
+                className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2.5 text-sm text-[#EDEDE3] mb-1"
+                onKeyDown={e => e.key === "Enter" && submit()} />
+            )}
+            {(mode === "register" || mode === "forgot") && <div className="text-[10px] text-[#6B8570] mb-3">At least 8 characters.</div>}
+
+            {error && <div className="text-xs text-[#E36B57] mt-3 mb-1">{error}</div>}
+
+            <button onClick={submit} disabled={submitting || !email.trim() || (mode === "forgot" ? newPassword.length < 8 : !password)}
+              className="w-full bg-[#E3A857] text-[#0E1A15] font-bold py-3 text-sm uppercase tracking-wide mt-4 disabled:opacity-50">
+              {submitting ? "…" : mode === "login" ? "Log In" : mode === "register" ? "Create Account" : "Reset Password"}
+            </button>
+
+            {mode === "login" && (
+              <button onClick={() => switchMode("forgot")} className="w-full text-center text-xs text-[#6B8570] hover:text-[#E3A857] mt-4">
+                Forgot password?
+              </button>
+            )}
+
+            <button onClick={() => switchMode(mode === "login" ? "register" : "login")}
+              className="w-full text-center text-xs text-[#6B8570] hover:text-[#E3A857] mt-2">
+              {mode === "login" ? "Need an account? Register" : mode === "register" ? "Already have an account? Log in" : "Back to Log In"}
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
@@ -9941,12 +10126,14 @@ function ScoutDashboard() {
   const [commentaryBotOpen, setCommentaryBotOpen] = useState(false);
   const [mapViewOpen, setMapViewOpen] = useState(false);
   const [itineraryOpen, setItineraryOpen] = useState(false);
+  const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
   const [quizOpen, setQuizOpen] = useState(false);
   const [newsletterOpen, setNewsletterOpen] = useState(false);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState(null); // null = checking/logged out; { id, email } once confirmed
   const [authChecked, setAuthChecked] = useState(false); // true once the initial /auth/me check genuinely completes (or is skipped because no token exists)
+  const [sessionExpiredMessage, setSessionExpiredMessage] = useState(null);
 
   useEffect(() => {
     if (!API_BASE_URL || !getAuthToken()) { setAuthChecked(true); return; }
@@ -9956,6 +10143,30 @@ function ScoutDashboard() {
       .catch(() => setAuthToken(null))
       .finally(() => setAuthChecked(true));
   }, []);
+
+  // Session expiry safety net — rather than letting the app's many
+  // existing fetch calls silently fail into empty/broken data once a
+  // 30-day token expires, this periodically re-validates the session
+  // (every 5 minutes, and whenever the tab regains focus, since a tab
+  // left open for a long time is exactly when this matters most) and
+  // cleanly logs out with a clear message if it's genuinely expired.
+  useEffect(() => {
+    if (!currentUser) return;
+    const checkSession = () => {
+      fetch(`${API_BASE_URL}/auth/me`, { headers: getAuthHeaders() })
+        .then(res => {
+          if (!res.ok) {
+            setAuthToken(null);
+            setCurrentUser(null);
+            setSessionExpiredMessage("Your session expired — please log in again.");
+          }
+        })
+        .catch(() => {}); // a network hiccup isn't genuinely a session expiry — don't log out on that alone
+    };
+    const interval = setInterval(checkSession, 5 * 60 * 1000);
+    window.addEventListener("focus", checkSession);
+    return () => { clearInterval(interval); window.removeEventListener("focus", checkSession); };
+  }, [currentUser]);
 
   const logOut = () => {
     setAuthToken(null);
@@ -10451,7 +10662,7 @@ function ScoutDashboard() {
     return <div className="min-h-screen bg-[#0E1A15]" />; // brief, blank frame while checking — avoids a login-screen flash for already-logged-in users
   }
   if (!currentUser) {
-    return <FullPageLoginGate onSuccess={setCurrentUser} />;
+    return <FullPageLoginGate onSuccess={(u) => { setCurrentUser(u); setSessionExpiredMessage(null); }} sessionExpiredMessage={sessionExpiredMessage} />;
   }
 
   return (
@@ -10547,6 +10758,9 @@ function ScoutDashboard() {
               <>
                 <button onClick={subscribeToPushAlerts} title="Get a real push notification whenever a new top discovery is found" className="hover:text-[#E3A857]">
                   🔔 Alert Me
+                </button>
+                <button onClick={() => setAccountSettingsOpen(true)} title={currentUser.email} className="hover:text-[#E3A857]">
+                  ⚙️ Settings
                 </button>
                 <button onClick={logOut} title={currentUser.email} className="hover:text-[#E36B57]">
                   🔓 Log Out
@@ -11138,6 +11352,13 @@ function ScoutDashboard() {
       {commentaryBotOpen && <CommentaryBotModal onClose={() => setCommentaryBotOpen(false)} />}
       {mapViewOpen && <MapViewModal allLeagueOptions={allLeagueOptions} onClose={() => setMapViewOpen(false)} />}
       {itineraryOpen && <ItineraryModal onClose={() => setItineraryOpen(false)} />}
+      {accountSettingsOpen && (
+        <AccountSettingsModal
+          currentUser={currentUser}
+          onClose={() => setAccountSettingsOpen(false)}
+          onAccountDeleted={() => { setAccountSettingsOpen(false); logOut(); }}
+        />
+      )}
       {quizOpen && <QuizModal onClose={() => setQuizOpen(false)} />}
       {newsletterOpen && <NewsletterModal onClose={() => setNewsletterOpen(false)} />}
       {activityLogOpen && <ActivityLogModal onClose={() => setActivityLogOpen(false)} />}
