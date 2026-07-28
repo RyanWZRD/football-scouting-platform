@@ -95,7 +95,6 @@ PUBLIC_PATHS = {
     "/status",
     "/auth/register",
     "/auth/login",
-    "/auth/reset-password",
     "/push/public-key",
     "/public/track-record",
     "/docs",
@@ -348,38 +347,6 @@ def auth_delete_account(body: DeleteAccountRequest = Body(...), user_id: int = D
     return {"deleted": True}
 
 
-class ResetPasswordRequest(BaseModel):
-    email: str
-    new_password: str
-
-
-@app.post("/auth/reset-password")
-def auth_reset_password(body: ResetPasswordRequest = Body(...), authorized: bool = Depends(check_api_key)):
-    """An honest, simplified 'forgot password' flow — genuinely not a
-    full email-verification reset loop, since this app has no email-
-    sending infrastructure at all. Verifies the email exists, then
-    sets a new password directly. This is a real tradeoff worth
-    revisiting if more users are ever added — right now it means
-    anyone with the app's API key could reset any known account's
-    password, which is acceptable for a single/small-trusted-user
-    tool but genuinely wouldn't be at larger scale."""
-    email = body.email.strip().lower()
-    if len(body.new_password) < 8:
-        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
-
-    conn = get_conn()
-    with conn.cursor() as cur:
-        cur.execute("SELECT id FROM users WHERE email = %s", (email,))
-        row = cur.fetchone()
-        if not row:
-            conn.close()
-            # Same "generic" response as login — doesn't reveal whether
-            # this email genuinely has an account, for the same
-            # enumeration-prevention reason as the login endpoint.
-            return {"reset": True}
-        cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (hash_password(body.new_password), row["id"]))
-    conn.commit()
-    conn.close()
     return {"reset": True}
 
 
