@@ -57,6 +57,7 @@ def run():
         return
 
     sent_count = 0
+    dead_subscription_ids = set()
     for d in discoveries:
         with conn.cursor() as cur:
             cur.execute("SELECT 1 FROM sent_discovery_alerts WHERE player_id = %s", (d["id"],))
@@ -70,6 +71,8 @@ def run():
         })
 
         for sub_id, endpoint, p256dh, auth in subscribers:
+            if sub_id in dead_subscription_ids:
+                continue  # already found dead earlier in this same run — don't retry it
             try:
                 webpush(
                     subscription_info={
@@ -88,6 +91,7 @@ def run():
                 # rotating keys) is equally permanent — clean up both
                 # rather than retrying forever.
                 if e.response is not None and e.response.status_code in (401, 404, 410):
+                    dead_subscription_ids.add(sub_id)
                     with conn.cursor() as cur:
                         cur.execute("DELETE FROM push_subscriptions WHERE id = %s", (sub_id,))
                     conn.commit()
