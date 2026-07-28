@@ -5941,35 +5941,13 @@ function AccountSettingsModal({ currentUser, onClose, onAccountDeleted }) {
 }
 
 function FullPageLoginGate({ onSuccess, sessionExpiredMessage }) {
-  const [mode, setMode] = useState("login"); // "login" | "register" | "forgot"
+  const [mode, setMode] = useState("login"); // "login" | "register"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [resetDone, setResetDone] = useState(false);
 
   const submit = async () => {
-    if (mode === "forgot") {
-      if (!email.trim() || newPassword.length < 8) return;
-      setSubmitting(true);
-      setError(null);
-      try {
-        const res = await fetch(`${API_BASE_URL}/auth/reset-password`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
-          body: JSON.stringify({ email: email.trim(), new_password: newPassword }),
-        });
-        if (res.ok) setResetDone(true);
-        else setError("Something went wrong — please try again.");
-      } catch (e) {
-        setError("Couldn't reach the server — please try again.");
-      } finally {
-        setSubmitting(false);
-      }
-      return;
-    }
-
     if (!email.trim() || !password) return;
     setSubmitting(true);
     setError(null);
@@ -5993,79 +5971,39 @@ function FullPageLoginGate({ onSuccess, sessionExpiredMessage }) {
     }
   };
 
-  const switchMode = (newMode) => {
-    setMode(newMode);
-    setError(null);
-    setResetDone(false);
-    setPassword("");
-    setNewPassword("");
-  };
-
   return (
     <div className="min-h-screen bg-[#0E1A15] text-[#EDEDE3] flex items-center justify-center p-6">
       <div className="max-w-sm w-full">
         <div className="text-[11px] tracking-[0.25em] uppercase text-[#E3A857] font-plexmono text-center mb-1">Cross-League Scouting Index</div>
-        <div className="text-2xl font-display text-center mb-6">
-          {mode === "login" ? "Log In" : mode === "register" ? "Create Account" : "Reset Password"}
-        </div>
+        <div className="text-2xl font-display text-center mb-6">{mode === "login" ? "Log In" : "Create Account"}</div>
 
         {sessionExpiredMessage && (
           <div className="text-xs text-[#E3A857] text-center border border-[#E3A857] p-2 mb-4">{sessionExpiredMessage}</div>
         )}
 
-        {mode === "forgot" && resetDone ? (
-          <>
-            <div className="text-sm text-[#7FD99A] text-center border border-[#2C4A3B] p-3 mb-4">
-              If an account with that email exists, its password has been reset. You can log in with your new password now.
-            </div>
-            <button onClick={() => switchMode("login")}
-              className="w-full bg-[#E3A857] text-[#0E1A15] font-bold py-3 text-sm uppercase tracking-wide">
-              Back to Log In
-            </button>
-          </>
-        ) : (
-          <>
-            {mode === "forgot" && (
-              <div className="text-xs text-[#6B8570] mb-4 italic">
-                Enter your account email and a new password. Since this app doesn't send reset emails, this sets your new password directly.
-              </div>
-            )}
+        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email"
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2.5 text-sm text-[#EDEDE3] mb-3"
+          onKeyDown={e => e.key === "Enter" && submit()} autoFocus />
+        <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password"
+          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2.5 text-sm text-[#EDEDE3] mb-1"
+          onKeyDown={e => e.key === "Enter" && submit()} />
+        {mode === "register" && <div className="text-[10px] text-[#6B8570] mb-3">At least 8 characters.</div>}
 
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email"
-              className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2.5 text-sm text-[#EDEDE3] mb-3"
-              onKeyDown={e => e.key === "Enter" && submit()} autoFocus />
+        {error && <div className="text-xs text-[#E36B57] mt-3 mb-1">{error}</div>}
 
-            {mode !== "forgot" && (
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password"
-                className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2.5 text-sm text-[#EDEDE3] mb-1"
-                onKeyDown={e => e.key === "Enter" && submit()} />
-            )}
-            {mode === "forgot" && (
-              <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="New password"
-                className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2.5 text-sm text-[#EDEDE3] mb-1"
-                onKeyDown={e => e.key === "Enter" && submit()} />
-            )}
-            {(mode === "register" || mode === "forgot") && <div className="text-[10px] text-[#6B8570] mb-3">At least 8 characters.</div>}
+        <button onClick={submit} disabled={submitting || !email.trim() || !password}
+          className="w-full bg-[#E3A857] text-[#0E1A15] font-bold py-3 text-sm uppercase tracking-wide mt-4 disabled:opacity-50">
+          {submitting ? "…" : mode === "login" ? "Log In" : "Create Account"}
+        </button>
 
-            {error && <div className="text-xs text-[#E36B57] mt-3 mb-1">{error}</div>}
+        <div className="text-[10px] text-[#4A5C52] italic text-center mt-4">
+          Forgotten your password? Ask an admin to reset it directly.
+        </div>
 
-            <button onClick={submit} disabled={submitting || !email.trim() || (mode === "forgot" ? newPassword.length < 8 : !password)}
-              className="w-full bg-[#E3A857] text-[#0E1A15] font-bold py-3 text-sm uppercase tracking-wide mt-4 disabled:opacity-50">
-              {submitting ? "…" : mode === "login" ? "Log In" : mode === "register" ? "Create Account" : "Reset Password"}
-            </button>
-
-            {mode === "login" && (
-              <button onClick={() => switchMode("forgot")} className="w-full text-center text-xs text-[#6B8570] hover:text-[#E3A857] mt-4">
-                Forgot password?
-              </button>
-            )}
-
-            <button onClick={() => switchMode(mode === "login" ? "register" : "login")}
-              className="w-full text-center text-xs text-[#6B8570] hover:text-[#E3A857] mt-2">
-              {mode === "login" ? "Need an account? Register" : mode === "register" ? "Already have an account? Log in" : "Back to Log In"}
-            </button>
-          </>
-        )}
+        <button onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(null); }}
+          className="w-full text-center text-xs text-[#6B8570] hover:text-[#E3A857] mt-3">
+          {mode === "login" ? "Need an account? Register" : "Already have an account? Log in"}
+        </button>
       </div>
     </div>
   );
