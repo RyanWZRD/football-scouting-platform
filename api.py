@@ -24,7 +24,8 @@ import time
 import asyncio
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Query, Header, Depends, WebSocket, WebSocketDisconnect, Body
+from fastapi import FastAPI, HTTPException, Query, Header, Depends, WebSocket, WebSocketDisconnect, Body, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -77,6 +78,58 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+# Level 2 — genuine backend authentication lockdown. Confirmed via
+# Starlette's own scope["type"] mechanism that @app.middleware("http")
+# only ever applies to HTTP requests, never WebSocket connections — so
+# /ws/live and /ws/player-notes/{id} are genuinely, structurally
+# unaffected by this, not just accidentally working.
+#
+# Explicitly whitelisted public paths — the only things reachable
+# without a real, logged-in user. Kept short and deliberate rather
+# than an "opt-out" list, since a missed path here means something
+# genuinely became unprotected by accident.
+PUBLIC_PATHS = {
+    "/health",
+    "/auth/register",
+    "/auth/login",
+    "/push/public-key",
+    "/public/track-record",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+}
+
+
+@app.middleware("http")
+async def require_real_login(request: Request, call_next):
+    # CORS preflight requests are sent automatically by browsers before
+    # any real cross-origin request, and genuinely cannot include an
+    # Authorization header — this check is deliberately independent of
+    # middleware ordering, so it stays correct even if that ever changes.
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    if request.url.path in PUBLIC_PATHS:
+        return await call_next(request)
+
+    if not JWT_SECRET:
+        return JSONResponse(status_code=500, content={"detail": "Server auth misconfigured — JWT_SECRET not set"})
+
+    auth_header = request.headers.get("authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return JSONResponse(status_code=401, content={"detail": "Login required"})
+
+    token = auth_header.removeprefix("Bearer ").strip()
+    try:
+        jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        return JSONResponse(status_code=401, content={"detail": "Session expired — please log in again"})
+    except jwt.InvalidTokenError:
+        return JSONResponse(status_code=401, content={"detail": "Invalid session token"})
+
+    return await call_next(request)
 
 
 def check_api_key(x_api_key: Optional[str] = Header(None)):
