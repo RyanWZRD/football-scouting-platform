@@ -5382,6 +5382,51 @@ def push_unsubscribe(body: PushSubscribeRequest = Body(...), user_id: int = Depe
     return {"unsubscribed": True}
 
 
+@app.get("/clubs/goal-type-breakdown")
+def goal_type_breakdown(club: str, league: str, authorized: bool = Depends(check_api_key)):
+    """Genuine goal-type analysis from real match event data — honest
+    about what this actually is: API-Football's detail field only
+    distinguishes Normal Goal / Penalty / Own Goal / Missed Penalty,
+    confirmed directly against real ingested data. No genuine
+    free-kick or corner distinction exists, so this is NOT a true
+    set-piece analyzer — it's the honest, achievable signal the data
+    actually supports: penalty reliance and own-goal patterns."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT me.detail, COUNT(*) AS total
+            FROM match_events me
+            WHERE me.event_type = 'Goal' AND me.club_name = %s
+              AND EXISTS (
+                  SELECT 1 FROM matches m
+                  JOIN clubs cl ON cl.id = m.home_club_id OR cl.id = m.away_club_id
+                  JOIN leagues l ON l.id = cl.league_id
+                  LEFT JOIN countries co ON co.id = l.country_id
+                  WHERE m.id = me.match_id AND cl.name = %s
+                    AND (l.name || ' (' || COALESCE(co.name, 'Unknown') || ')') = %s
+              )
+            GROUP BY me.detail
+        """, (club, club, league))
+        rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        return {"available": False, "reason": "No goal event data recorded for this club yet."}
+
+    breakdown = {r["detail"]: r["total"] for r in rows}
+    total_goals = sum(breakdown.values())
+    penalty_goals = breakdown.get("Penalty", 0)
+    own_goals_for = breakdown.get("Own Goal", 0)
+
+    return {
+        "available": True,
+        "breakdown": breakdown,
+        "total_goals": total_goals,
+        "penalty_reliance_pct": round(100 * penalty_goals / total_goals, 1) if total_goals else 0,
+        "note": "Honest limitation: API-Football's data doesn't distinguish free-kicks or corners specifically — this is penalty reliance and own-goal patterns, not a true set-piece breakdown.",
+    }
+
+
 @app.get("/players/{player_id}/sidelined")
 def player_sidelined_records(player_id: int, authorized: bool = Depends(check_api_key)):
     """Sidelined records — genuinely broader than the existing injury
