@@ -6259,6 +6259,217 @@ function HeadToHeadReportModal({ onClose }) {
   );
 }
 
+function CommentaryBotModal({ onClose }) {
+  const [feed, setFeed] = useState([]);
+  const [connectionStatus, setConnectionStatus] = useState("connecting");
+  const previousScoresRef = useRef({});
+
+  useEffect(() => {
+    const wsUrl = API_BASE_URL.replace(/^http/, "ws") + "/ws/live" + (API_KEY ? `?key=${encodeURIComponent(API_KEY)}` : "");
+    let ws;
+    try {
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => setConnectionStatus("live");
+      ws.onclose = () => setConnectionStatus("disconnected");
+      ws.onerror = () => setConnectionStatus("disconnected");
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (!data.matches) return;
+          const newLines = [];
+          data.matches.forEach(m => {
+            const key = m.fixture_id;
+            const prev = previousScoresRef.current[key];
+            if (prev && (prev.home_score !== m.home_score || prev.away_score !== m.away_score)) {
+              const scorer = m.home_score > prev.home_score ? m.home_club : m.away_club;
+              newLines.push({
+                text: `⚽ GOAL! ${scorer} score — ${m.home_club} ${m.home_score}-${m.away_score} ${m.away_club} (${m.elapsed}')`,
+                time: Date.now(),
+              });
+            }
+            previousScoresRef.current[key] = m;
+          });
+          if (newLines.length > 0) {
+            setFeed(prev => [...newLines, ...prev].slice(0, 30));
+          }
+        } catch (e) { /* ignore a malformed frame */ }
+      };
+    } catch (e) { setConnectionStatus("disconnected"); }
+    return () => { if (ws) ws.close(); };
+  }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-lg w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📡 Live Commentary Bot</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">
+          Real-time goal alerts across all tracked live matches, using the existing live scores WebSocket. Connection: <span style={{ color: connectionStatus === "live" ? "#7FD99A" : "#E36B57" }}>{connectionStatus}</span>
+        </div>
+
+        {feed.length === 0 && <div className="text-sm text-[#6B8570] text-center py-8">No goals yet — this fills in as live matches happen.</div>}
+        {feed.map((line, i) => (
+          <div key={i} className="flex items-center justify-between text-sm py-2 border-b border-[#1C2E26]">
+            <span className="text-[#EDEDE3]">{line.text}</span>
+            <button onClick={() => navigator.clipboard?.writeText(line.text)} className="text-[10px] text-[#6B8570] hover:text-[#E3A857] shrink-0 ml-2">📋</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function HotTakeModal({ onClose }) {
+  const [hotTake, setHotTake] = useState(null);
+  const [generating, setGenerating] = useState(false);
+
+  const generateHotTake = async () => {
+    setGenerating(true);
+    setHotTake(null);
+
+    const res = await fetch(`${API_BASE_URL}/players/hot-take-data`, { headers: getAuthHeaders() });
+    const data = res.ok ? await res.json() : null;
+    if (!data?.available) {
+      setHotTake({ text: data?.reason || "Not enough data right now.", stats: null });
+      setGenerating(false);
+      return;
+    }
+
+    const { status, session } = await getOnDeviceAISession(
+      "You write a genuinely surprising, stat-backed 'hot take' tweet about a football player, using ONLY the real numbers given — no invented stats. Confident, punchy tone, under 280 characters."
+    );
+    if (status !== "ready") {
+      setHotTake({ text: "Chrome's on-device AI isn't available right now — needs Chrome 148+ and a one-time model download.", stats: data });
+      setGenerating(false);
+      return;
+    }
+
+    try {
+      const facts = `${data.full_name} (${data.position}, ${data.club}): ${data.per90_contributions} goal contributions per 90 minutes, vs a position average of ${data.position_average_per90} — ${data.multiplier}x the average.`;
+      const take = await session.prompt(facts);
+      setHotTake({ text: take.trim(), stats: data });
+    } catch (e) {
+      setHotTake({ text: "Couldn't generate a hot take right now — please try again.", stats: data });
+    } finally {
+      setGenerating(false);
+      if (session.destroy) session.destroy();
+    }
+  };
+
+  useEffect(() => { generateHotTake(); }, []);
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-lg w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">🔥 Stat-Backed Hot Take</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+        <div className="text-xs text-[#6B8570] mb-4 italic">Free, on-device — real per-90 goal contributions vs genuine position averages. Not xG (API-Football doesn't provide that), but equally real. Chrome 148+ only.</div>
+
+        {generating && <div className="text-sm text-[#6B8570] text-center py-6">Generating…</div>}
+        {hotTake && (
+          <>
+            <div className="border border-[#E3A857] p-4 text-sm text-[#EDEDE3] mb-3">{hotTake.text}</div>
+            {hotTake.stats && (
+              <div className="text-[10px] text-[#4A5C52] italic mb-3">{hotTake.stats.note}</div>
+            )}
+            <div className="flex gap-3">
+              {hotTake.text && (
+                <button onClick={() => navigator.clipboard?.writeText(hotTake.text)} className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">📋 Copy</button>
+              )}
+              <button onClick={generateHotTake} className="text-xs uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857]">🔄 New Take</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WeeklyDiscoveryGraphicModal({ onClose }) {
+  const [discovery, setDiscovery] = useState(null);
+  const [exporting, setExporting] = useState(false);
+  const cardRef = useRef(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/players/autonomous-discovery?limit=1`, { headers: getAuthHeaders() })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => setDiscovery(d?.discoveries?.[0] || null))
+      .catch(() => setDiscovery(null));
+  }, []);
+
+  const tweetText = discovery
+    ? `🧠 This week's top discovery: ${discovery.full_name} (${discovery.club}, ${discovery.league_display}) — discovery score ${discovery.discovery_score}${discovery.momentum > 0 ? `, trending up +${discovery.momentum}` : ""}. #Football #Scouting`
+    : "";
+
+  const downloadImage = () => {
+    if (!cardRef.current || typeof html2canvas === "undefined") {
+      alert("Image export isn't available right now — check your connection and try again.");
+      return;
+    }
+    setExporting(true);
+    html2canvas(cardRef.current, { backgroundColor: "#0E1A15", scale: 2, useCORS: true })
+      .then(canvas => {
+        const link = document.createElement("a");
+        link.download = `weekly_discovery_${discovery.full_name.replace(/\s+/g, "_")}.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      })
+      .catch(() => alert("Image export failed — please try again."))
+      .finally(() => setExporting(false));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[60]" onClick={onClose}>
+      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-lg w-full max-h-[92vh] overflow-y-auto p-4 sm:p-6" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">📈 Weekly Discovery Graphic</div>
+          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
+        </div>
+
+        {discovery === null && <div className="text-sm text-[#6B8570] text-center py-6">Loading this week's top discovery…</div>}
+        {discovery && (
+          <>
+            <div ref={cardRef} className="border-2 border-[#E3A857] p-6 mb-4" style={{ background: "#0E1A15" }}>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-[#E3A857] mb-3">🧠 This Week's Top Discovery</div>
+              <div className="text-2xl text-[#EDEDE3] font-display mb-1">{discovery.full_name}</div>
+              <div className="text-sm text-[#9AAA9E] mb-4">{discovery.club} · {discovery.league_display}</div>
+              <div className="flex items-center gap-6">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">Discovery Score</div>
+                  <div className="text-xl font-bold font-plexmono text-[#E3A857]">{discovery.discovery_score}</div>
+                </div>
+                {discovery.momentum > 0 && (
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-[#6B8570]">Momentum</div>
+                    <div className="text-xl font-bold font-plexmono text-[#7FD99A]">📈 +{discovery.momentum}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <button onClick={downloadImage} disabled={exporting}
+              className="w-full bg-[#E3A857] text-[#0E1A15] font-bold py-2.5 text-sm uppercase tracking-wide mb-3 disabled:opacity-50">
+              {exporting ? "Exporting…" : "⬇ Download Graphic"}
+            </button>
+
+            <div className="border border-[#2C4A3B] p-3">
+              <div className="text-sm text-[#EDEDE3]">{tweetText}</div>
+              <button onClick={() => navigator.clipboard?.writeText(tweetText)}
+                className="text-[10px] uppercase tracking-wide text-[#6B8570] hover:text-[#E3A857] mt-2">
+                📋 Copy Tweet
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function StrategicIntelModal({ allLeagueOptions, onClose }) {
   const [league, setLeague] = useState("");
   const [aiStatus, setAiStatus] = useState("idle");
@@ -9664,6 +9875,9 @@ function ScoutDashboard() {
   const [publicTrackRecordOpen, setPublicTrackRecordOpen] = useState(false);
   const [strategicIntelOpen, setStrategicIntelOpen] = useState(false);
   const [headToHeadReportOpen, setHeadToHeadReportOpen] = useState(false);
+  const [weeklyDiscoveryGraphicOpen, setWeeklyDiscoveryGraphicOpen] = useState(false);
+  const [hotTakeOpen, setHotTakeOpen] = useState(false);
+  const [commentaryBotOpen, setCommentaryBotOpen] = useState(false);
   const [mapViewOpen, setMapViewOpen] = useState(false);
   const [itineraryOpen, setItineraryOpen] = useState(false);
   const [quizOpen, setQuizOpen] = useState(false);
@@ -9759,6 +9973,9 @@ function ScoutDashboard() {
     { icon: "✅", label: "Public Track Record", section: "Data & Results", setter: setPublicTrackRecordOpen },
     { icon: "🧠", label: "AI Strategic Intelligence Engine", section: "Scouting Intelligence", setter: setStrategicIntelOpen },
     { icon: "🥊", label: "Head-to-Head Comparison Report", section: "Data & Results", setter: setHeadToHeadReportOpen },
+    { icon: "📈", label: "Weekly Discovery Graphic", section: "Scouting Intelligence", setter: setWeeklyDiscoveryGraphicOpen },
+    { icon: "🔥", label: "Stat-Backed Hot Take", section: "Scouting Intelligence", setter: setHotTakeOpen },
+    { icon: "📡", label: "Live Commentary Bot", section: "Data & Results", setter: setCommentaryBotOpen },
     { icon: "🗺️", label: "Geographic Map View", section: "Data & Results", setter: setMapViewOpen },
     { icon: "📅", label: "Scouting Itinerary", section: "Data & Results", setter: setItineraryOpen },
     { icon: "🤔", label: "Guess the Player Quiz", section: "Scouting Intelligence", setter: setQuizOpen },
@@ -10844,6 +11061,9 @@ function ScoutDashboard() {
       {publicTrackRecordOpen && <PublicTrackRecordModal onClose={() => setPublicTrackRecordOpen(false)} />}
       {strategicIntelOpen && <StrategicIntelModal allLeagueOptions={allLeagueOptions} onClose={() => setStrategicIntelOpen(false)} />}
       {headToHeadReportOpen && <HeadToHeadReportModal onClose={() => setHeadToHeadReportOpen(false)} />}
+      {weeklyDiscoveryGraphicOpen && <WeeklyDiscoveryGraphicModal onClose={() => setWeeklyDiscoveryGraphicOpen(false)} />}
+      {hotTakeOpen && <HotTakeModal onClose={() => setHotTakeOpen(false)} />}
+      {commentaryBotOpen && <CommentaryBotModal onClose={() => setCommentaryBotOpen(false)} />}
       {mapViewOpen && <MapViewModal allLeagueOptions={allLeagueOptions} onClose={() => setMapViewOpen(false)} />}
       {itineraryOpen && <ItineraryModal onClose={() => setItineraryOpen(false)} />}
       {quizOpen && <QuizModal onClose={() => setQuizOpen(false)} />}
