@@ -387,6 +387,41 @@ def clear_activity_log(user_id: int = Depends(get_current_user), authorized: boo
     return {"cleared": True}
 
 
+@app.get("/thresholds")
+def get_thresholds(user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
+    """Returns thresholds as {player_id: value}, matching the shape the
+    frontend already used for its localStorage version — a clean
+    migration rather than a structural change."""
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute("SELECT player_id, threshold_value FROM player_thresholds WHERE user_id = %s", (user_id,))
+        rows = cur.fetchall()
+    conn.close()
+    return {str(r["player_id"]): float(r["threshold_value"]) for r in rows}
+
+
+class SetThresholdRequest(BaseModel):
+    player_id: int
+    threshold_value: Optional[float] = None  # None deletes the threshold
+
+
+@app.post("/thresholds")
+def set_threshold(body: SetThresholdRequest = Body(...), user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
+    conn = get_conn()
+    with conn.cursor() as cur:
+        if body.threshold_value is None:
+            cur.execute("DELETE FROM player_thresholds WHERE user_id = %s AND player_id = %s", (user_id, body.player_id))
+        else:
+            cur.execute("""
+                INSERT INTO player_thresholds (user_id, player_id, threshold_value)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id, player_id) DO UPDATE SET threshold_value = EXCLUDED.threshold_value
+            """, (user_id, body.player_id, body.threshold_value))
+    conn.commit()
+    conn.close()
+    return {"set": True}
+
+
 ALLOWED_IMAGE_HOSTS = {"media.api-sports.io"}
 
 
@@ -5236,12 +5271,14 @@ def undiscovered_leagues(limit: int = Query(15, le=30), authorized: bool = Depen
 
 
 @app.get("/achievements/badges")
-def achievement_badges(authorized: bool = Depends(check_api_key)):
+def achievement_badges(user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     """Real, earned badges — not usage streaks, actual predictive
     outcomes. A shortlisted player whose club shows a genuine detected
     division change (the same detection used by /clubs/division-changes)
     is a real 'called it' moment worth recognizing, not a gamification
-    gimmick disconnected from actual scouting judgment."""
+    gimmick disconnected from actual scouting judgment. Genuinely
+    per-user — WHERE user_id = %s ensures each account only ever sees
+    badges earned from its own shortlist decisions."""
     conn = get_conn()
     with conn.cursor() as cur:
         cur.execute("""
@@ -5259,15 +5296,15 @@ def achievement_badges(authorized: bool = Depends(check_api_key)):
                 ORDER BY cl.id, m.match_date ASC
             )
             SELECT p.full_name, dc.club, dc.current_league, dc.fixture_implied_league,
-                   (SELECT MIN(sn2.created_at) FROM scout_notes sn2 WHERE sn2.player_id = p.id AND sn2.watch_level = 'shortlist') AS first_shortlisted_at
+                   (SELECT MIN(sn2.created_at) FROM scout_notes sn2 WHERE sn2.player_id = p.id AND sn2.watch_level = 'shortlist' AND sn2.user_id = %s) AS first_shortlisted_at
             FROM players p
             JOIN LATERAL (
                 SELECT watch_level FROM scout_notes sn
-                WHERE sn.player_id = p.id ORDER BY created_at DESC LIMIT 1
+                WHERE sn.player_id = p.id AND sn.user_id = %s ORDER BY created_at DESC LIMIT 1
             ) latest_note ON true
             JOIN division_changes dc ON dc.club_id = p.current_club_id
             WHERE latest_note.watch_level = 'shortlist'
-        """)
+        """, (user_id, user_id))
         badges = cur.fetchall()
     conn.close()
 
