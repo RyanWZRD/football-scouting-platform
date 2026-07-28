@@ -9641,15 +9641,23 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
   const [shortlistInjuries, setShortlistInjuries] = useState(null);
   const [todayData, setTodayData] = useState(null);
   const [autonomousDiscoveries, setAutonomousDiscoveries] = useState(null);
-  const THRESHOLDS_KEY = "scoutindex_potential_thresholds_v1";
-  const [potentialThresholds, setPotentialThresholds] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(THRESHOLDS_KEY) || "{}"); } catch (e) { return {}; }
-  });
+  const [potentialThresholds, setPotentialThresholds] = useState({});
+  useEffect(() => {
+    if (!API_BASE_URL) return;
+    fetch(`${API_BASE_URL}/thresholds`, { headers: getAuthHeaders() })
+      .then(res => res.ok ? res.json() : {})
+      .then(data => setPotentialThresholds(data))
+      .catch(() => setPotentialThresholds({}));
+  }, []);
   const setThresholdForPlayer = (playerId, value) => {
     const next = { ...potentialThresholds };
     if (value === null) { delete next[playerId]; } else { next[playerId] = value; }
     setPotentialThresholds(next);
-    try { localStorage.setItem(THRESHOLDS_KEY, JSON.stringify(next)); } catch (e) { /* skip if unavailable */ }
+    fetch(`${API_BASE_URL}/thresholds`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+      body: JSON.stringify({ player_id: Number(playerId), threshold_value: value }),
+    }).catch(() => {});
   };
   const triggeredAlerts = (shortlistHighlights || []).filter(p =>
     potentialThresholds[p.id] != null && p.potential_index != null && p.potential_index >= potentialThresholds[p.id]
