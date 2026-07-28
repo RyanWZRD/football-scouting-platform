@@ -1185,7 +1185,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   const loadMlTrajectory = () => {
     if (!API_BASE_URL) return;
     setLoadingMlTrajectory(true);
-    fetch(`${API_BASE_URL}/players/${realId}/ml-trajectory`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${realId}/ml-trajectory`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setMlTrajectory(data))
       .catch(() => setMlTrajectory({ available: false, reason: "Failed to load." }))
@@ -1194,7 +1194,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   const [rotationRisk, setRotationRisk] = useState(null);
   useEffect(() => {
     if (!API_BASE_URL || !realId) return;
-    fetch(`${API_BASE_URL}/players/${realId}/rotation-risk`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${realId}/rotation-risk`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setRotationRisk(data))
       .catch(() => setRotationRisk(null));
@@ -1202,31 +1202,31 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   const [workloadMonitor, setWorkloadMonitor] = useState(null);
   useEffect(() => {
     if (!API_BASE_URL || !realId) return;
-    fetch(`${API_BASE_URL}/players/${realId}/workload-monitor`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${realId}/workload-monitor`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setWorkloadMonitor(data))
       .catch(() => setWorkloadMonitor(null));
-    fetch(`${API_BASE_URL}/players/${realId}/trophies`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${realId}/trophies`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setTrophies(data))
       .catch(() => setTrophies([]));
-    fetch(`${API_BASE_URL}/players/${realId}/transfer-history`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${realId}/transfer-history`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setTransferHistory(data))
       .catch(() => setTransferHistory([]));
-    fetch(`${API_BASE_URL}/players/${realId}/historical-replay`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${realId}/historical-replay`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setHistoricalReplay(data))
       .catch(() => setHistoricalReplay(null));
-    fetch(`${API_BASE_URL}/players/${realId}/total-cost-estimate`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${realId}/total-cost-estimate`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setCostEstimate(data))
       .catch(() => setCostEstimate(null));
-    fetch(`${API_BASE_URL}/players/${realId}/sidelined`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${realId}/sidelined`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setSidelinedRecords(data))
       .catch(() => setSidelinedRecords([]));
-    fetch(`${API_BASE_URL}/players/${realId}/injury-risk-profile`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${realId}/injury-risk-profile`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setInjuryRiskProfile(data))
       .catch(() => setInjuryRiskProfile(null));
@@ -1237,7 +1237,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   const loadBiography = () => {
     if (!API_BASE_URL) return;
     setLoadingBio(true);
-    fetch(`${API_BASE_URL}/players/${realId}/biography`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${realId}/biography`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setBiography(data))
       .catch(() => setBiography({ found: false }))
@@ -1254,7 +1254,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   const loadNews = () => {
     if (!API_BASE_URL) return;
     setLoadingNews(true);
-    fetch(`${API_BASE_URL}/players/${realId}/news?limit=5`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${realId}/news?limit=5`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setNews(data))
       .catch(() => setNews([]))
@@ -1265,7 +1265,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
   const loadHighlights = () => {
     if (!API_BASE_URL) return;
     setLoadingHighlights(true);
-    fetch(`${API_BASE_URL}/players/${realId}/highlights`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${realId}/highlights`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setHighlights(data))
       .catch(() => setHighlights({ found: false }))
@@ -1279,13 +1279,13 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
     setSavingRating(true);
     fetch(`${API_BASE_URL}/players/${realId}/scout-rating`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify(ratingForm),
     })
       .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
       .then(() => {
         setRatingForm({ technical: 5, physical: 5, mental: 5, tactical: 5, notes: "" });
-        return fetch(`${API_BASE_URL}/players/${realId}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} });
+        return fetch(`${API_BASE_URL}/players/${realId}`, { headers: getAuthHeaders() });
       })
       .then(res => res.ok ? res.json() : null)
       .then(data => { if (data) setDetails(data); })
@@ -1295,15 +1295,15 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
 
   useEffect(() => {
     if (!API_BASE_URL || !String(p.id).startsWith("live-")) return;
-    fetch(`${API_BASE_URL}/players/${realId}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${realId}`, { headers: getAuthHeaders() })
       .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
       .then(data => setDetails(data))
       .catch(() => setDetails(null));
-    fetch(`${API_BASE_URL}/players/${realId}/projection`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${realId}/projection`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setProjection(data))
       .catch(() => setProjection(null));
-    fetch(`${API_BASE_URL}/players/${realId}/season-history`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${realId}/season-history`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setSeasonHistory(data))
       .catch(() => setSeasonHistory([]));
@@ -1315,7 +1315,7 @@ function PlayerDossier({ p, onClose, onToggleShortlist, onNavigateToPlayer }) {
     if (tab !== "similar" || similarPlayers !== null || !API_BASE_URL || !p.position) return;
     setSimilarLoading(true);
     const params = new URLSearchParams({ position: p.position, limit: "3000" });
-    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
       .then(rows => {
         const pool = buildPercentilePlayers(rows);
@@ -2324,63 +2324,63 @@ function ClubProfile({ players, clubName, leagueName, onClose, onSelectPlayer })
   useEffect(() => {
     if (!API_BASE_URL) return;
     const params = new URLSearchParams({ club: clubName, league: leagueName });
-    fetch(`${API_BASE_URL}/clubs/record?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/record?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setRecord(data))
       .catch(() => setRecord(null));
-    fetch(`${API_BASE_URL}/clubs/home-away?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/home-away?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setHomeAway(data))
       .catch(() => setHomeAway(null));
-    fetch(`${API_BASE_URL}/clubs/recruitment-priorities?${params.toString()}&limit=6`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/recruitment-priorities?${params.toString()}&limit=6`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setTacticalFit(data))
       .catch(() => setTacticalFit(null));
-    fetch(`${API_BASE_URL}/clubs/balance?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/balance?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setBalance(data))
       .catch(() => setBalance(null));
-    fetch(`${API_BASE_URL}/clubs/manager?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/manager?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setManager(data))
       .catch(() => setManager(null));
-    fetch(`${API_BASE_URL}/clubs/value-concentration?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/value-concentration?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setValueConcentration(data))
       .catch(() => setValueConcentration(null));
-    fetch(`${API_BASE_URL}/clubs/partnerships?${params.toString()}&limit=8`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/partnerships?${params.toString()}&limit=8`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setPartnerships(data))
       .catch(() => setPartnerships([]));
-    fetch(`${API_BASE_URL}/clubs/position-continuity?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/position-continuity?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setPositionContinuity(data))
       .catch(() => setPositionContinuity([]));
-    fetch(`${API_BASE_URL}/clubs/rotation-advisor?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/rotation-advisor?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setRotationAdvisor(data))
       .catch(() => setRotationAdvisor(null));
-    fetch(`${API_BASE_URL}/clubs/style-dna?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/style-dna?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setStyleDna(data))
       .catch(() => setStyleDna(null));
-    fetch(`${API_BASE_URL}/clubs/managerial-impact?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/managerial-impact?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setManagerialImpact(data))
       .catch(() => setManagerialImpact(null));
-    fetch(`${API_BASE_URL}/clubs/venue?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/venue?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setVenue(data))
       .catch(() => setVenue(null));
-    fetch(`${API_BASE_URL}/clubs/season-stats?${params.toString()}&season=2025`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/season-stats?${params.toString()}&season=2025`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setSeasonStats(data))
       .catch(() => setSeasonStats(null));
-    fetch(`${API_BASE_URL}/clubs/preferred-formation?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/preferred-formation?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setPreferredFormation(data))
       .catch(() => setPreferredFormation([]));
-    fetch(`${API_BASE_URL}/clubs/goal-type-breakdown?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/goal-type-breakdown?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setGoalTypeBreakdown(data))
       .catch(() => setGoalTypeBreakdown(null));
@@ -2758,7 +2758,7 @@ function TransferSimulatorModal({ squad, clubName, leagueName, onClose }) {
       club: clubName, league: leagueName,
       player_in_id: String(playerIn.id), player_out_id: String(playerOutId),
     });
-    fetch(`${API_BASE_URL}/clubs/transfer-intelligence?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/transfer-intelligence?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setIntelligence(data))
       .catch(() => setIntelligence(null))
@@ -2769,7 +2769,7 @@ function TransferSimulatorModal({ squad, clubName, leagueName, onClose }) {
     if (!API_BASE_URL || searchText.trim().length < 2) { setSearchResults([]); return; }
     const timer = setTimeout(() => {
       const params = new URLSearchParams({ search: searchText.trim(), limit: "10" });
-      fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: getAuthHeaders() })
         .then(res => res.ok ? res.json() : [])
         .then(rows => setSearchResults(rows))
         .catch(() => setSearchResults([]));
@@ -2950,7 +2950,7 @@ function RecruitmentPackModal({ players, onClose }) {
   useEffect(() => {
     if (!API_BASE_URL) return;
     Promise.all(players.map(p =>
-      fetch(`${API_BASE_URL}/players/${p.id}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      fetch(`${API_BASE_URL}/players/${p.id}`, { headers: getAuthHeaders() })
         .then(res => res.ok ? res.json() : null)
         .catch(() => null)
     )).then(results => setDossiers(results.filter(Boolean)));
@@ -3238,7 +3238,7 @@ function TransfersModal({ onClose, onSelectPlayer }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/transfers?limit=30`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/transfers?limit=30`, { headers: getAuthHeaders() })
       .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
       .then(rows => setTransfers(rows))
       .catch(() => setTransfers([]));
@@ -3281,7 +3281,7 @@ function ShortlistView({ onSelectPlayer }) {
   useEffect(() => {
     if (!API_BASE_URL) return;
     const params = new URLSearchParams({ shortlist_only: "true", limit: "200", sort: "potential" });
-    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -3352,7 +3352,7 @@ function ExploreView({ onSelectPlayer }) {
       if (spec.position) params.set("position", spec.position);
       if (spec.maxAge) params.set("max_age", String(spec.maxAge));
       if (spec.excludeTop5) params.set("exclude_top5", "true");
-      fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: getAuthHeaders() })
         .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
         .then(rows => setBoards(prev => ({ ...prev, [spec.key]: { ...spec, rows } })))
         .catch(() => setBoards(prev => ({ ...prev, [spec.key]: { ...spec, rows: [] } })));
@@ -3360,27 +3360,27 @@ function ExploreView({ onSelectPlayer }) {
 
     // Most Improved has a different shape (delta, not a simple sorted
     // column) so it's fetched from its own dedicated endpoint.
-    fetch(`${API_BASE_URL}/players/most-improved?limit=8`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/most-improved?limit=8`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setBoards(prev => ({ ...prev, improved: { title: "📈 Most Improved", statField: "delta", rows: rows.map(r => ({ ...r, id: r.id, full_name: r.full_name, photo_url: r.photo_url, club: r.club })) } })))
       .catch(() => setBoards(prev => ({ ...prev, improved: { title: "📈 Most Improved", statField: "delta", rows: [] } })));
 
-    fetch(`${API_BASE_URL}/players/clean-sheets?limit=8`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/clean-sheets?limit=8`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setBoards(prev => ({ ...prev, cleansheets: { title: "🧤 Clean Sheets", statField: "clean_sheets", rows } })))
       .catch(() => setBoards(prev => ({ ...prev, cleansheets: { title: "🧤 Clean Sheets", statField: "clean_sheets", rows: [] } })));
 
-    fetch(`${API_BASE_URL}/players/debuts?limit=8`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/debuts?limit=8`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setBoards(prev => ({ ...prev, debuts: { title: "🌟 Recent Debuts", statField: "debut", rows: rows.map(r => ({ ...r, full_name: r.full_name, club: r.club })) } })))
       .catch(() => setBoards(prev => ({ ...prev, debuts: { title: "🌟 Recent Debuts", statField: "debut", rows: [] } })));
 
-    fetch(`${API_BASE_URL}/players/breakout-candidates?limit=8`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/breakout-candidates?limit=8`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setBoards(prev => ({ ...prev, breakout: { title: "🚀 Breakout Candidates", statField: "breakout_score", rows } })))
       .catch(() => setBoards(prev => ({ ...prev, breakout: { title: "🚀 Breakout Candidates", statField: "breakout_score", rows: [] } })));
 
-    fetch(`${API_BASE_URL}/players/most-capped?limit=8`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/most-capped?limit=8`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setBoards(prev => ({ ...prev, mostcapped: { title: "🌍 Most Capped Internationally", statField: "total_caps", rows: rows.map(r => ({ ...r, club: `${r.team_name} · ${r.club}` })) } })))
       .catch(() => setBoards(prev => ({ ...prev, mostcapped: { title: "🌍 Most Capped Internationally", statField: "total_caps", rows: [] } })));
@@ -3559,7 +3559,7 @@ function TeamOfSeasonModal({ allLeagueOptions, onClose }) {
     if (!API_BASE_URL || !league) { setPool(null); return; }
     setPool(null);
     const params = new URLSearchParams({ league });
-    fetch(`${API_BASE_URL}/team-of-season?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/team-of-season?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setPool(data))
       .catch(() => setPool(null));
@@ -3666,7 +3666,7 @@ function DreamXIBuilder({ onClose }) {
     if (!API_BASE_URL || searchText.trim().length < 2) { setSearchResults([]); return; }
     const timer = setTimeout(() => {
       const params = new URLSearchParams({ search: searchText.trim(), limit: "20" });
-      fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: getAuthHeaders() })
         .then(res => res.ok ? res.json() : [])
         .then(rows => setSearchResults(rows))
         .catch(() => setSearchResults([]));
@@ -3809,7 +3809,7 @@ function MatchDetailModal({ matchId, homeClub, awayClub, homeScore, awayScore, o
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/fixtures/${matchId}/boxscore`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/fixtures/${matchId}/boxscore`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setBoxscore(data))
       .catch(() => setBoxscore(null));
@@ -3818,7 +3818,7 @@ function MatchDetailModal({ matchId, homeClub, awayClub, homeScore, awayScore, o
   const loadEvents = () => {
     if (!API_BASE_URL) return;
     setEventsLoading(true);
-    fetch(`${API_BASE_URL}/fixtures/${matchId}/events`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/fixtures/${matchId}/events`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : { events: [] })
       .then(data => setEvents(data.events))
       .catch(() => setEvents([]))
@@ -3937,7 +3937,7 @@ function TransferCentreModal({ onClose }) {
 
   const fetchGeneral = () => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/transfer-news?limit=30`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/transfer-news?limit=30`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setGeneralNews(rows))
       .catch(() => setGeneralNews([]));
@@ -3961,7 +3961,7 @@ function TransferCentreModal({ onClose }) {
     if (favs.length > 0 && API_BASE_URL) {
       favs.forEach(f => {
         const params = new URLSearchParams({ club: f.club, limit: "5" });
-        fetch(`${API_BASE_URL}/clubs/transfer-news?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+        fetch(`${API_BASE_URL}/clubs/transfer-news?${params.toString()}`, { headers: getAuthHeaders() })
           .then(res => res.ok ? res.json() : [])
           .then(rows => setClubFeeds(prev => ({ ...prev, [f.club]: rows })))
           .catch(() => setClubFeeds(prev => ({ ...prev, [f.club]: [] })));
@@ -4029,7 +4029,7 @@ function LiveScoresModal({ onClose }) {
 
   const fetchLiveOnce = () => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/live`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/live`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : { matches: [] })
       .then(data => setMatches(data.matches))
       .catch(() => setMatches([]));
@@ -4037,7 +4037,7 @@ function LiveScoresModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/shortlist/clubs`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/shortlist/clubs`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(clubs => setShortlistClubs(clubs))
       .catch(() => setShortlistClubs([]));
@@ -4207,7 +4207,7 @@ function DiscoveryEngineModal({ onClose, onSelectPlayer }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/scout/discovery?limit=12`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/scout/discovery?limit=12`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
@@ -4259,7 +4259,7 @@ function ScoutReportCardModal({ onClose, onSelectPlayer }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/scout/track-record`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/scout/track-record`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
@@ -4339,7 +4339,7 @@ function IntelligenceFeedModal({ onClose, onSelectPlayer }) {
 
     fetch(`${API_BASE_URL}/intelligence-feed`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify({ favorites }),
     })
       .then(res => res.ok ? res.json() : [])
@@ -4402,7 +4402,7 @@ function TablePredictorModal({ allLeagueOptions, onClose }) {
     if (!API_BASE_URL || !league) { setRows(null); return; }
     setRows(null);
     const params = new URLSearchParams({ league });
-    fetch(`${API_BASE_URL}/leagues/table-predictor?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/leagues/table-predictor?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -4451,7 +4451,7 @@ function LeagueStrengthModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/leagues/strength`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/leagues/strength`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -4538,7 +4538,7 @@ function DataQualityModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/admin/data-quality`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/admin/data-quality`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
@@ -4600,7 +4600,7 @@ function HomeAdvantageModal({ onClose, onSelectClub }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/clubs/home-advantage-index?limit=25`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/home-advantage-index?limit=25`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -4641,7 +4641,7 @@ function FixtureCongestionModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/clubs/fixture-congestion?days_ahead=14&limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/fixture-congestion?days_ahead=14&limit=20`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -4681,7 +4681,7 @@ function SuperSubsModal({ onClose, onSelectPlayer }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/players/super-subs?limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/super-subs?limit=20`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -4723,7 +4723,7 @@ function SuspensionRiskModal({ onClose, onSelectPlayer }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/players/suspension-risk?limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/suspension-risk?limit=20`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -4763,7 +4763,7 @@ function InjuryRecoveryModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/players/injury-recovery-patterns?limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/injury-recovery-patterns?limit=20`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -4800,7 +4800,7 @@ function PositionScarcityModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/positions/scarcity`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/positions/scarcity`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -4841,7 +4841,7 @@ function RebuildRadarModal({ onClose, onSelectClub }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/clubs/rebuild-radar?limit=15`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/rebuild-radar?limit=15`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -4933,7 +4933,7 @@ function RecruitmentBoardModal({ onClose, onSelectPlayer }) {
     setRows(null);
     const params = new URLSearchParams({ sort: "potential", limit: "200" });
     if (!showAll) params.set("shortlist_only", "true");
-    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -4944,7 +4944,7 @@ function RecruitmentBoardModal({ onClose, onSelectPlayer }) {
     setExporting(true);
     const params = new URLSearchParams({ sort: "potential", limit: "200", format: "csv" });
     if (!showAll) params.set("shortlist_only", "true");
-    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.blob() : null)
       .then(blob => {
         if (!blob) return;
@@ -5051,7 +5051,7 @@ function FixtureRow({ m }) {
   const loadApiPrediction = () => {
     if (!API_BASE_URL) return;
     setLoadingApi(true);
-    fetch(`${API_BASE_URL}/fixtures/${m.id}/api-prediction`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/fixtures/${m.id}/api-prediction`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setApiPrediction(data))
       .catch(() => setApiPrediction({ prediction: null }))
@@ -5061,7 +5061,7 @@ function FixtureRow({ m }) {
   const loadMarketOdds = () => {
     if (!API_BASE_URL) return;
     setLoadingOdds(true);
-    fetch(`${API_BASE_URL}/fixtures/${m.id}/market-odds`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/fixtures/${m.id}/market-odds`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : { available: false })
       .then(data => setMarketOdds(data))
       .catch(() => setMarketOdds({ available: false }))
@@ -5078,7 +5078,7 @@ function FixtureRow({ m }) {
     if (!API_BASE_URL) return;
     fetch(`${API_BASE_URL}/predictions/track`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify({
         match_id: m.id, predicted_home_pct: m.home_win_pct,
         predicted_draw_pct: m.draw_pct, predicted_away_pct: m.away_win_pct,
@@ -5172,7 +5172,7 @@ function MatchEstimatorModal({ allLeagueOptions, onClose }) {
     if (!API_BASE_URL || !league) { setEstimates(null); return; }
     setEstimates(null);
     const params = new URLSearchParams({ league, limit: "10" });
-    fetch(`${API_BASE_URL}/fixtures/estimate?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/fixtures/estimate?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setEstimates(data))
       .catch(() => setEstimates([]));
@@ -5208,7 +5208,7 @@ function BigMatchRadarModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/fixtures/big-matches?limit=15`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/fixtures/big-matches?limit=15`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -5247,7 +5247,7 @@ function DecliningMinutesModal({ onClose, onSelectPlayer }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/players/declining-minutes?limit=15`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/declining-minutes?limit=15`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -5299,7 +5299,7 @@ function TargetProfileSearchModal({ onClose, onSelectPlayer }) {
 
   const loadTemplates = () => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/templates`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/templates`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setTemplates(data))
       .catch(() => setTemplates([]));
@@ -5331,7 +5331,7 @@ function TargetProfileSearchModal({ onClose, onSelectPlayer }) {
     };
     fetch(`${API_BASE_URL}/templates`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify(body),
     })
       .then(res => res.ok ? loadTemplates() : null)
@@ -5342,7 +5342,7 @@ function TargetProfileSearchModal({ onClose, onSelectPlayer }) {
   const deleteTemplate = (id, e) => {
     e.stopPropagation();
     if (!window.confirm("Delete this saved template?")) return;
-    fetch(`${API_BASE_URL}/templates/${id}`, { method: "DELETE", headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/templates/${id}`, { method: "DELETE", headers: getAuthHeaders() })
       .then(() => loadTemplates())
       .catch(() => {});
   };
@@ -5361,7 +5361,7 @@ function TargetProfileSearchModal({ onClose, onSelectPlayer }) {
     if (profile.passAcc) params.set("pass_acc", profile.passAcc);
     if (profile.ageMax) params.set("age_max", profile.ageMax);
 
-    fetch(`${API_BASE_URL}/players/target-search?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/target-search?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setResults(data))
       .catch(() => setResults([]))
@@ -5456,7 +5456,7 @@ function AdvancedSearchModal({ allLeagueOptions, onClose, onSelectPlayer }) {
     if (filters.maxPotential) params.set("max_potential", filters.maxPotential);
     if (filters.excludeTop5) params.set("exclude_top5", "true");
 
-    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setResults(data))
       .catch(() => setResults([]))
@@ -5539,7 +5539,7 @@ function LeagueReportModal({ allLeagueOptions, onClose }) {
     if (!API_BASE_URL || !league) { setReport(null); return; }
     setReport(null);
     const params = new URLSearchParams({ league });
-    fetch(`${API_BASE_URL}/leagues/full-report?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/leagues/full-report?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setReport(data))
       .catch(() => setReport(null));
@@ -5614,7 +5614,7 @@ function UnderdogIndexModal({ onClose, onSelectClub }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/clubs/underdogs?limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/underdogs?limit=20`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -5666,7 +5666,7 @@ function SeasonPreviewModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/content/season-preview`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/content/season-preview`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
@@ -5694,7 +5694,7 @@ function DailyInsightModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/content/daily-insight`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/content/daily-insight`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
@@ -5726,7 +5726,7 @@ function FixtureDifficultyModal({ allLeagueOptions, onClose }) {
   useEffect(() => {
     if (!API_BASE_URL || !league) { setClubOptions([]); return; }
     // Reuse the existing players endpoint to derive a distinct club list for this league
-    fetch(`${API_BASE_URL}/players?league=${encodeURIComponent(league)}&limit=500`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players?league=${encodeURIComponent(league)}&limit=500`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => {
         const clubs = Array.from(new Set(rows.map(r => r.club).filter(Boolean))).sort();
@@ -5739,7 +5739,7 @@ function FixtureDifficultyModal({ allLeagueOptions, onClose }) {
     if (!API_BASE_URL || !league || !club) { setData(null); return; }
     setData(null);
     const params = new URLSearchParams({ club, league, num_fixtures: "6" });
-    fetch(`${API_BASE_URL}/clubs/fixture-difficulty?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/fixture-difficulty?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
@@ -6865,7 +6865,7 @@ function SeasonSimulatorModal({ allLeagueOptions, onClose }) {
     if (!league || !API_BASE_URL) return;
     setLoading(true);
     setData(null);
-    fetch(`${API_BASE_URL}/leagues/season-simulation?league=${encodeURIComponent(league)}&simulations=1000`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/leagues/season-simulation?league=${encodeURIComponent(league)}&simulations=1000`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null))
@@ -7025,7 +7025,7 @@ function UndiscoveredLeaguesModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/leagues/undiscovered?limit=15`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/leagues/undiscovered?limit=15`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
@@ -7060,7 +7060,7 @@ function BadgesModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/achievements/badges`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/achievements/badges`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
@@ -7105,11 +7105,11 @@ function FullReportModal({ playerId, playerName, playerClub, onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL || !playerId) return;
-    fetch(`${API_BASE_URL}/players/${playerId}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${playerId}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setDetails(d))
       .catch(() => setDetails(null));
-    fetch(`${API_BASE_URL}/players/${playerId}/workload-monitor`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/${playerId}/workload-monitor`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setWorkload(d))
       .catch(() => setWorkload(null));
@@ -7196,7 +7196,7 @@ function HeadToHeadModal({ allLeagueOptions, onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL || !league) { setClubOptions([]); return; }
-    fetch(`${API_BASE_URL}/players?league=${encodeURIComponent(league)}&limit=500`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players?league=${encodeURIComponent(league)}&limit=500`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setClubOptions(Array.from(new Set(rows.map(r => r.club).filter(Boolean))).sort()))
       .catch(() => setClubOptions([]));
@@ -7205,7 +7205,7 @@ function HeadToHeadModal({ allLeagueOptions, onClose }) {
   useEffect(() => {
     if (!API_BASE_URL || !clubA || !clubB || clubA === clubB) { setData(null); return; }
     const params = new URLSearchParams({ club_a: clubA, club_b: clubB, league });
-    fetch(`${API_BASE_URL}/clubs/head-to-head?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/head-to-head?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
@@ -7293,7 +7293,7 @@ function MostCardedModal({ allLeagueOptions, onClose }) {
   useEffect(() => {
     if (!API_BASE_URL || !league) { setRows(null); return; }
     setRows(null);
-    fetch(`${API_BASE_URL}/players/most-carded?league=${encodeURIComponent(league)}&limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/most-carded?league=${encodeURIComponent(league)}&limit=20`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -7343,7 +7343,7 @@ function SquadBuilderModal({ allLeagueOptions, onClose }) {
     if (!API_BASE_URL || searchText.trim().length < 2) { setSearchResults([]); return; }
     const timer = setTimeout(() => {
       const params = new URLSearchParams({ search: searchText.trim(), limit: "10" });
-      fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: getAuthHeaders() })
         .then(res => res.ok ? res.json() : [])
         .then(rows => setSearchResults(rows))
         .catch(() => setSearchResults([]));
@@ -7355,7 +7355,7 @@ function SquadBuilderModal({ allLeagueOptions, onClose }) {
     if (!API_BASE_URL || roster.length === 0 || !comparisonLeague) { setAnalysis(null); return; }
     fetch(`${API_BASE_URL}/squad-builder/analyze`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
+      headers: { "Content-Type": "application/json", ...getAuthHeaders() },
       body: JSON.stringify({ player_ids: roster.map(r => r.id), comparison_league: comparisonLeague }),
     })
       .then(res => res.ok ? res.json() : null)
@@ -7655,7 +7655,7 @@ function StrategyDashboardModal({ club, league, players, balance, onClose }) {
   useEffect(() => {
     if (!API_BASE_URL) return;
     const params = new URLSearchParams({ club, league });
-    fetch(`${API_BASE_URL}/clubs/strategy-dashboard?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/strategy-dashboard?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
@@ -7756,19 +7756,19 @@ function MatchPreviewModal({ matchId, onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL || !matchId) return;
-    fetch(`${API_BASE_URL}/fixtures/${matchId}/preview`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/fixtures/${matchId}/preview`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
-    fetch(`${API_BASE_URL}/fixtures/${matchId}/environment`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/fixtures/${matchId}/environment`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setEnvironment(d))
       .catch(() => setEnvironment(null));
-    fetch(`${API_BASE_URL}/fixtures/${matchId}/timeline`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/fixtures/${matchId}/timeline`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(d => setTimeline(d))
       .catch(() => setTimeline([]));
-    fetch(`${API_BASE_URL}/fixtures/${matchId}/poll-draft`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/fixtures/${matchId}/poll-draft`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setPollDraft(d))
       .catch(() => setPollDraft(null));
@@ -7949,7 +7949,7 @@ function PeakAgeCurveModal({ onClose }) {
   useEffect(() => {
     if (!API_BASE_URL) return;
     setData(null);
-    fetch(`${API_BASE_URL}/players/peak-age-curve?position=${encodeURIComponent(position)}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/peak-age-curve?position=${encodeURIComponent(position)}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
@@ -8008,7 +8008,7 @@ function MoneyballModal({ onClose, onSelectPlayer }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/players/moneyball?limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/moneyball?limit=20`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -8050,7 +8050,7 @@ function RivalryIntensityModal({ allLeagueOptions, onClose }) {
   useEffect(() => {
     if (!API_BASE_URL || !league) { setRows(null); return; }
     setRows(null);
-    fetch(`${API_BASE_URL}/clubs/rivalry-intensity?league=${encodeURIComponent(league)}&limit=15`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/rivalry-intensity?league=${encodeURIComponent(league)}&limit=15`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -8091,7 +8091,7 @@ function TalentHotspotsModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/players/talent-hotspots?limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/talent-hotspots?limit=20`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -8134,7 +8134,7 @@ function RefereeTendenciesModal({ allLeagueOptions, onClose }) {
   useEffect(() => {
     if (!API_BASE_URL || !league) { setRows(null); return; }
     setRows(null);
-    fetch(`${API_BASE_URL}/referees/tendencies?league=${encodeURIComponent(league)}&limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/referees/tendencies?league=${encodeURIComponent(league)}&limit=20`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -8183,7 +8183,7 @@ function AcwrModal({ allLeagueOptions, onClose, onSelectPlayer }) {
   useEffect(() => {
     if (!API_BASE_URL || !league) { setRows(null); return; }
     setRows(null);
-    fetch(`${API_BASE_URL}/players/acwr?league=${encodeURIComponent(league)}&limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/acwr?league=${encodeURIComponent(league)}&limit=20`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -8228,7 +8228,7 @@ function BurnoutRiskModal({ allLeagueOptions, onClose, onSelectPlayer }) {
   useEffect(() => {
     if (!API_BASE_URL || !league) { setRows(null); return; }
     setRows(null);
-    fetch(`${API_BASE_URL}/players/burnout-risk?league=${encodeURIComponent(league)}&limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/burnout-risk?league=${encodeURIComponent(league)}&limit=20`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -8269,7 +8269,7 @@ function DivisionChangesModal({ onClose, onSelectClub }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/clubs/division-changes`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/division-changes`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -8309,7 +8309,7 @@ function NewSeasonArrivalsModal({ allLeagueOptions, onClose, onSelectPlayer }) {
 
   useEffect(() => {
     if (!API_BASE_URL || !league) { setClubOptions([]); return; }
-    fetch(`${API_BASE_URL}/players?league=${encodeURIComponent(league)}&limit=500`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players?league=${encodeURIComponent(league)}&limit=500`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setClubOptions(Array.from(new Set(rows.map(r => r.club).filter(Boolean))).sort()))
       .catch(() => setClubOptions([]));
@@ -8318,7 +8318,7 @@ function NewSeasonArrivalsModal({ allLeagueOptions, onClose, onSelectPlayer }) {
   useEffect(() => {
     if (!API_BASE_URL || !club) { setRows(null); return; }
     setRows(null);
-    fetch(`${API_BASE_URL}/clubs/new-season-arrivals?club=${encodeURIComponent(club)}&days=90`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/new-season-arrivals?club=${encodeURIComponent(club)}&days=90`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -8370,11 +8370,11 @@ function SeasonKickoffHubModal({ onClose, onSelectClub }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/content/season-preview`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/content/season-preview`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setPreview(d))
       .catch(() => setPreview(null));
-    fetch(`${API_BASE_URL}/clubs/division-changes`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/division-changes`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(d => setDivisionChanges(d))
       .catch(() => setDivisionChanges([]));
@@ -8424,7 +8424,7 @@ function NetTransferBalanceModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/clubs/net-transfer-balance?days=180&limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/net-transfer-balance?days=180&limit=20`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -8466,7 +8466,7 @@ function TransferPathwaysModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/transfers/pathways?days=180&limit=15`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/transfers/pathways?days=180&limit=15`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -8501,7 +8501,7 @@ function SeasonCallbackModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/content/season-callback`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/content/season-callback`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
@@ -8529,7 +8529,7 @@ function DigestThreadModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/content/digest-thread`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/content/digest-thread`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
@@ -8561,7 +8561,7 @@ function PredictionTrackRecordModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/predictions/track-record`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/predictions/track-record`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setData(d))
       .catch(() => setData(null));
@@ -8625,7 +8625,7 @@ function PAdjDefenseModal({ onClose, onSelectPlayer }) {
   useEffect(() => {
     if (!API_BASE_URL) return;
     setRows(null);
-    fetch(`${API_BASE_URL}/players/padj-defense?position=${encodeURIComponent(position)}&limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/padj-defense?position=${encodeURIComponent(position)}&limit=20`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -8672,7 +8672,7 @@ function XgProxyModal({ onClose, onSelectPlayer }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/players/xg-proxy?limit=20`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/xg-proxy?limit=20`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -8716,7 +8716,7 @@ function PersonalizedDigestModal({ favoriteClubs, onClose, onSelectPlayer }) {
   useEffect(() => {
     if (!API_BASE_URL || clubNames.length === 0) return;
     const params = new URLSearchParams({ clubs: clubNames.join(",") });
-    fetch(`${API_BASE_URL}/digests/personalized?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/digests/personalized?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setDigest(data))
       .catch(() => setDigest(null));
@@ -8788,7 +8788,7 @@ function ScoutNotesSearchModal({ onClose, onSelectPlayer }) {
     if (!API_BASE_URL || !query.trim()) return;
     setLoading(true);
     const params = new URLSearchParams({ q: query, limit: "20" });
-    fetch(`${API_BASE_URL}/notes/search?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/notes/search?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setResults(data))
       .catch(() => setResults([]))
@@ -8836,7 +8836,7 @@ function WeeklyDigestModal({ onClose, onSelectPlayer }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/digests/latest`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/digests/latest`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setDigest(data))
       .catch(() => setDigest(null));
@@ -8907,7 +8907,7 @@ function PipelineHealthModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/pipeline-health`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/pipeline-health`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(data => setHealth(data))
       .catch(() => setHealth(null));
@@ -8954,7 +8954,7 @@ function SquadContinuityModal({ onClose }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/clubs/continuity?limit=15`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/continuity?limit=15`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(data => setRows(data))
       .catch(() => setRows([]));
@@ -8998,7 +8998,7 @@ function StandingsModal({ allLeagueOptions, onClose }) {
     if (!API_BASE_URL || !league) { setTable(null); return; }
     setTable(null);
     const params = new URLSearchParams({ league });
-    fetch(`${API_BASE_URL}/standings?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/standings?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setTable(rows))
       .catch(() => setTable([]));
@@ -9008,7 +9008,7 @@ function StandingsModal({ allLeagueOptions, onClose }) {
     if (!API_BASE_URL || !league || mode !== "form") { setFormTable(null); return; }
     setFormTable(null);
     const params = new URLSearchParams({ league, window: "5" });
-    fetch(`${API_BASE_URL}/standings/form?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/standings/form?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setFormTable(rows))
       .catch(() => setFormTable([]));
@@ -9200,7 +9200,7 @@ function FixturesModal({ allLeagueOptions, onClose }) {
     setClub("");
     if (!API_BASE_URL || !league) { setClubs([]); return; }
     const params = new URLSearchParams({ league, limit: "3000" });
-    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setClubs(Array.from(new Set(rows.map(r => r.club).filter(Boolean))).sort()))
       .catch(() => setClubs([]));
@@ -9211,7 +9211,7 @@ function FixturesModal({ allLeagueOptions, onClose }) {
     setFixturesList(null);
     const params = new URLSearchParams({ league, upcoming: String(mode === "upcoming"), limit: "50" });
     if (club) params.set("club", club);
-    fetch(`${API_BASE_URL}/fixtures?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/fixtures?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setFixturesList(rows))
       .catch(() => setFixturesList([]));
@@ -9313,7 +9313,7 @@ function ClubCompareModal({ allLeagueOptions, onClose }) {
   const fetchClubsForLeague = (leagueName, setClubsFn) => {
     if (!API_BASE_URL || !leagueName) { setClubsFn([]); return; }
     const params = new URLSearchParams({ league: leagueName, limit: "3000" });
-    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setClubsFn(Array.from(new Set(rows.map(r => r.club).filter(Boolean))).sort()))
       .catch(() => setClubsFn([]));
@@ -9325,7 +9325,7 @@ function ClubCompareModal({ allLeagueOptions, onClose }) {
   const fetchSquad = (leagueName, clubName, setSquadFn) => {
     if (!API_BASE_URL || !leagueName || !clubName) return;
     const params = new URLSearchParams({ league: leagueName, limit: "3000" });
-    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setSquadFn(rows.filter(r => r.club === clubName)))
       .catch(() => setSquadFn([]));
@@ -9359,7 +9359,7 @@ function ClubCompareModal({ allLeagueOptions, onClose }) {
   useEffect(() => {
     if (!API_BASE_URL || !club1 || !club2) { setH2h(null); return; }
     const params = new URLSearchParams({ club1, club2, limit: "10" });
-    fetch(`${API_BASE_URL}/h2h?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/h2h?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setH2h(rows))
       .catch(() => setH2h([]));
@@ -9368,7 +9368,7 @@ function ClubCompareModal({ allLeagueOptions, onClose }) {
   useEffect(() => {
     if (!API_BASE_URL || !club1 || !league1) { setForm1(null); return; }
     const params = new URLSearchParams({ club: club1, league: league1 });
-    fetch(`${API_BASE_URL}/clubs/form?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/form?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : { form: [] })
       .then(data => setForm1(data.form))
       .catch(() => setForm1([]));
@@ -9377,7 +9377,7 @@ function ClubCompareModal({ allLeagueOptions, onClose }) {
   useEffect(() => {
     if (!API_BASE_URL || !club2 || !league2) { setForm2(null); return; }
     const params = new URLSearchParams({ club: club2, league: league2 });
-    fetch(`${API_BASE_URL}/clubs/form?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/clubs/form?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : { form: [] })
       .then(data => setForm2(data.form))
       .catch(() => setForm2([]));
@@ -9522,24 +9522,24 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
 
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/today`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/today`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setTodayData(d))
       .catch(() => setTodayData(null));
-    fetch(`${API_BASE_URL}/players/autonomous-discovery?limit=3`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players/autonomous-discovery?limit=3`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : null)
       .then(d => setAutonomousDiscoveries(d))
       .catch(() => setAutonomousDiscoveries(null));
-    fetch(`${API_BASE_URL}/transfers?limit=5`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/transfers?limit=5`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setTransfers(rows))
       .catch(() => setTransfers([]));
     const params = new URLSearchParams({ shortlist_only: "true", limit: "5", sort: "potential" });
-    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setShortlistHighlights(rows))
       .catch(() => setShortlistHighlights([]));
-    fetch(`${API_BASE_URL}/shortlist/alerts?limit=5`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/shortlist/alerts?limit=5`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setShortlistAlerts(rows))
       .catch(() => setShortlistAlerts([]));
@@ -9547,7 +9547,7 @@ function BriefingView({ movers, topProspects, onSelectPlayer }) {
     // missed just because they rank outside the potential-sorted Highlights.
     // Uses data /players already returns — no new backend endpoint needed.
     const injuryParams = new URLSearchParams({ shortlist_only: "true", limit: "50", sort: "potential" });
-    fetch(`${API_BASE_URL}/players?${injuryParams.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/players?${injuryParams.toString()}`, { headers: getAuthHeaders() })
       .then(res => res.ok ? res.json() : [])
       .then(rows => setShortlistInjuries(rows.filter(r => r.injury_type)))
       .catch(() => setShortlistInjuries([]));
@@ -9831,7 +9831,7 @@ function ScoutDashboard() {
     }
     const timer = setTimeout(() => {
       const params = new URLSearchParams({ search: query.trim(), limit: "50" });
-      fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+      fetch(`${API_BASE_URL}/players?${params.toString()}`, { headers: getAuthHeaders() })
         .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
         .then(rows => setSearchResults(rows))
         .catch(() => setSearchResults([]));
@@ -10123,7 +10123,7 @@ function ScoutDashboard() {
   // whichever league you're already viewing.
   useEffect(() => {
     if (!API_BASE_URL) return;
-    fetch(`${API_BASE_URL}/leagues`, { headers: API_KEY ? { "X-API-Key": API_KEY } : {} })
+    fetch(`${API_BASE_URL}/leagues`, { headers: getAuthHeaders() })
       .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
       .then(rows => setAllLeagueOptions(rows.map(r => r.league_display).sort()))
       .catch(() => {});
@@ -10286,7 +10286,7 @@ function ScoutDashboard() {
     if (position !== "All positions") params.set("position", position);
 
     fetch(`${API_BASE_URL}/players?${params.toString()}`, {
-      headers: API_KEY ? { "X-API-Key": API_KEY } : {}
+      headers: getAuthHeaders()
     })
       .then(res => { if (!res.ok) throw new Error(res.status); return res.json(); })
       .then(rows => {
