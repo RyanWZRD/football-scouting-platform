@@ -133,7 +133,25 @@ async def require_real_login(request: Request, call_next):
     return await call_next(request)
 
 
-def check_api_key(x_api_key: Optional[str] = Header(None)):
+def check_api_key(x_api_key: Optional[str] = Header(None), authorization: Optional[str] = Header(None)):
+    """A logged-in request (real, genuinely-validated Authorization:
+    Bearer token) is stronger proof than the shared API key — it
+    uniquely identifies a specific account, not just 'not a random
+    stranger'. Deliberately does its OWN, real JWT validation here
+    rather than trusting the require_real_login middleware already
+    did it — /auth/register and /auth/login both use this same
+    function AND are on the middleware's public whitelist (it never
+    runs for them at all), so a naive 'just check for the Bearer
+    prefix' version would let someone bypass the API key gate there
+    with a fake, unverified header. This version can't be fooled that
+    way, since it independently decodes and verifies the token itself."""
+    if authorization and authorization.startswith("Bearer ") and JWT_SECRET:
+        token = authorization.removeprefix("Bearer ").strip()
+        try:
+            jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            return True
+        except jwt.InvalidTokenError:
+            pass  # fall through to the API key check below
     if API_ACCESS_KEY and x_api_key != API_ACCESS_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
     return True
