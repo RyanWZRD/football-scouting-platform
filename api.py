@@ -202,6 +202,41 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> int:
         raise HTTPException(status_code=401, detail="Invalid session token")
 
 
+# Rate limiting for /auth/login and /auth/register — an in-memory,
+# sliding-window limiter. Genuinely safe as in-memory state here since
+# Render runs this app as a single process (WEB_CONCURRENCY=1,
+# confirmed from actual deploy logs) — a multi-worker deployment would
+# need a shared store like Redis instead, since each worker would
+# otherwise track its own separate, incomplete count.
+_rate_limit_attempts = {}  # {(bucket, key): [timestamp, timestamp, ...]}
+
+
+def get_client_ip(request: Request) -> str:
+    """Render sits behind its own proxy, so request.client.host alone
+    would show Render's internal address for every visitor, not the
+    real one. X-Forwarded-For's leftmost entry is the genuine,
+    original client IP; request.client.host is only the fallback for
+    direct connections without a proxy in front."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def check_rate_limit(bucket: str, key: str, max_attempts: int, window_seconds: int):
+    """Raises 429 if this key has genuinely exceeded max_attempts
+    within the sliding window. Prunes old timestamps on every call so
+    the in-memory dict doesn't grow unbounded over time."""
+    now = time.time()
+    cache_key = (bucket, key)
+    attempts = [t for t in _rate_limit_attempts.get(cache_key, []) if now - t < window_seconds]
+    if len(attempts) >= max_attempts:
+        retry_after = int(window_seconds - (now - attempts[0]))
+        raise HTTPException(status_code=429, detail=f"Too many attempts — please try again in {max(retry_after, 1)} seconds")
+    attempts.append(now)
+    _rate_limit_attempts[cache_key] = attempts
+
+
 @app.get("/health")
 def health():
     try:
@@ -218,11 +253,13 @@ class RegisterRequest(BaseModel):
 
 
 @app.post("/auth/register")
-def auth_register(body: RegisterRequest = Body(...), authorized: bool = Depends(check_api_key)):
+def auth_register(request: Request, body: RegisterRequest = Body(...), authorized: bool = Depends(check_api_key)):
     """Creates a real user account. Still gated behind the existing
     API key (check_api_key) — this is a personal/small-team tool, not
     a public signup page, so the API key remains the outer gate before
     anyone can even attempt to register."""
+    check_rate_limit("register", get_client_ip(request), max_attempts=3, window_seconds=3600)
+
     email = body.email.strip().lower()
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="A valid email is required")
@@ -253,7 +290,9 @@ class LoginRequest(BaseModel):
 
 
 @app.post("/auth/login")
-def auth_login(body: LoginRequest = Body(...), authorized: bool = Depends(check_api_key)):
+def auth_login(request: Request, body: LoginRequest = Body(...), authorized: bool = Depends(check_api_key)):
+    check_rate_limit("login", get_client_ip(request), max_attempts=5, window_seconds=900)
+
     email = body.email.strip().lower()
     conn = get_conn()
     with conn.cursor() as cur:
