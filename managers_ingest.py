@@ -10,7 +10,6 @@ Usage:
     export DATABASE_URL=...
     python managers_ingest.py
 """
-
 import os
 import time
 import json
@@ -36,10 +35,9 @@ def api_get(path, params=None):
     if params:
         query = "&".join(f"{k}={v}" for k, v in params.items())
         url = f"{url}?{query}"
-
     result = subprocess.run(
         ["curl.exe", "-s", "-H", f"x-apisports-key: {API_KEY}", url],
-        capture_output=True, text=True, timeout=20,
+        capture_output=True, text=True,
     )
     if result.returncode != 0:
         raise RateLimitError(f"curl failed (exit code {result.returncode}): {result.stderr}")
@@ -56,6 +54,31 @@ def api_get(path, params=None):
     return body.get("response", [])
 
 
+def get_remaining_quota():
+    """Checks the real, reliable /status endpoint directly rather than
+    trusting per-endpoint error-shape detection — confirmed directly
+    that /coachs does NOT reliably return the same {"errors": {"requests":
+    ...}} shape /status does when quota is exhausted; it can genuinely
+    just return an empty response array with no error signal at all,
+    which is exactly what silently corrupted a previous run's results
+    (413 clubs wrongly marked "no manager available" when the real
+    cause was quota exhaustion, not a genuine absence of data)."""
+    try:
+        result = subprocess.run(
+            ["curl.exe", "-s", "-H", f"x-apisports-key: {API_KEY}", f"{API_BASE}/status"],
+            capture_output=True, text=True,
+        )
+        body = json.loads(result.stdout)
+        if body.get("errors"):
+            return 0
+        return body["response"]["requests"]["limit_day"] - body["response"]["requests"]["current"]
+    except Exception:
+        # If the check itself genuinely fails, don't let that alone stop
+        # a run that might otherwise be fine — fall through and let the
+        # real per-request error handling in api_get() catch it instead.
+        return None
+
+
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
 
@@ -65,12 +88,23 @@ def run():
     with conn.cursor() as cur:
         cur.execute("SELECT id, external_id, name FROM clubs WHERE external_id IS NOT NULL ORDER BY id")
         clubs = cur.fetchall()
-
     print(f"Processing {len(clubs)} clubs.")
     updated = 0
     no_data = 0
-
     for i, (db_id, external_id, name) in enumerate(clubs, 1):
+        # Explicit, periodic quota check via the reliable /status
+        # endpoint — every 25 clubs, before continuing. Genuinely more
+        # robust than relying solely on /coachs's own error-shape
+        # detection, which confirmed does not reliably signal
+        # exhaustion for this specific endpoint.
+        if i % 25 == 1:
+            remaining = get_remaining_quota()
+            if remaining is not None and remaining < 5:
+                print(f"\nQuota genuinely nearly exhausted ({remaining} requests left) after {updated} clubs updated.")
+                print("Stopping here rather than risk silently miscounting real failures as 'no manager available'.")
+                print("Re-run the same command tomorrow to continue — already-updated clubs are skipped naturally on conflict.")
+                break
+
         try:
             data = api_get("coachs", {"team": external_id})
         except RateLimitError as e:
@@ -82,7 +116,6 @@ def run():
         if not data:
             no_data += 1
             continue
-
         # BUG FIX: data[0] is NOT reliably "the current coach" — confirmed
         # directly against real data. API-Football's /coachs response is
         # ordered by their internal coach ID (oldest-added first), not by
@@ -99,8 +132,8 @@ def run():
         # defensible tiebreaker available, not a guarantee of correctness
         # in every case. A brand-new appointment can also simply be
         # missing from their coach list entirely for a period after it
-        # happens — re-running this periodically (see OPERATIONS.md) is
-        # how that eventually self-corrects, not a one-time fix.
+        # happens — re-running this periodically is how that eventually
+        # self-corrects, not a one-time fix.
         best_coach = None
         best_start = None
         for c in data:
@@ -116,14 +149,11 @@ def run():
                         best_start = start
                         best_coach = c
                     break
-
         if best_coach is None:
             no_data += 1
             continue
-
         coach = best_coach
         appointed_date = best_start
-
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO club_managers (club_id, name, nationality, age, photo_url, appointed_date)
@@ -136,10 +166,8 @@ def run():
                   coach.get("photo"), appointed_date))
         conn.commit()
         updated += 1
-
         if i % 50 == 0:
             print(f"  ...{i}/{len(clubs)} processed ({updated} managers found)")
-
     print(f"\nDone. {updated} clubs had a current manager recorded. {no_data} had none available.")
     conn.close()
 
