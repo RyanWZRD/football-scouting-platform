@@ -136,6 +136,7 @@ def run():
         # self-corrects, not a one-time fix.
         best_coach = None
         best_start = None
+        candidate_count = 0
         for c in data:
             for stint in c.get("career", []):
                 # str() on both sides: external_id from our DB is TEXT
@@ -144,6 +145,7 @@ def run():
                 # always False in Python, which is exactly why the
                 # previous run found 0 managers instead of the expected ~365.
                 if stint.get("end") is None and str(stint.get("team", {}).get("id")) == str(external_id):
+                    candidate_count += 1
                     start = stint.get("start")
                     if start and (best_start is None or start > best_start):
                         best_start = start
@@ -156,14 +158,15 @@ def run():
         appointed_date = best_start
         with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO club_managers (club_id, name, nationality, age, photo_url, appointed_date)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO club_managers (club_id, name, nationality, age, photo_url, appointed_date, candidate_count)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (club_id) DO UPDATE SET
                     name = EXCLUDED.name, nationality = EXCLUDED.nationality,
                     age = EXCLUDED.age, photo_url = EXCLUDED.photo_url,
-                    appointed_date = EXCLUDED.appointed_date, ingested_at = now()
+                    appointed_date = EXCLUDED.appointed_date, candidate_count = EXCLUDED.candidate_count,
+                    ingested_at = now()
             """, (db_id, coach.get("name"), coach.get("nationality"), coach.get("age"),
-                  coach.get("photo"), appointed_date))
+                  coach.get("photo"), appointed_date, candidate_count))
         conn.commit()
         updated += 1
         if i % 50 == 0:

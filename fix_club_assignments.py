@@ -91,6 +91,16 @@ def run(season):
     print(f"Checked {len(rows)} players with real match data this season.")
     print(f"Found {len(mismatches)} whose stored club doesn't match GENUINELY MORE RECENT match evidence.")
 
+    # Log this run so the dashboard can honestly show how many
+    # mismatches were found and silently auto-corrected, rather than
+    # that information only ever appearing in this console output once.
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO club_assignment_correction_log (players_checked, corrections_made) VALUES (%s, %s)",
+            (len(rows), len(mismatches)),
+        )
+    conn.commit()
+
     if not mismatches:
         conn.close()
         return
@@ -103,7 +113,7 @@ def run(season):
                 print(f"  ...{i}/{len(mismatches)} corrected")
     conn.commit()
     conn.close()
-    print(f"Done. Corrected {len(mismatches)} players' club assignments based on real match evidence.")
+    print(f"Done. Corrected {len(mismatches)} players' club assignments based on genuinely current match evidence.")
 
 
 if __name__ == "__main__":
