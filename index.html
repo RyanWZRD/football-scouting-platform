@@ -112,10 +112,13 @@ function setAuthToken(token) {
   } catch (e) { /* skip if unavailable */ }
 }
 function getAuthHeaders() {
-  const headers = API_KEY ? { "X-API-Key": API_KEY } : {};
   const token = getAuthToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  return headers;
+  // Once genuinely logged in, the real login token alone is stronger
+  // proof than the shared API key ever was — no reason to also send
+  // a key that's visible to anyone who opens DevTools. The shared key
+  // remains only for the handful of calls made before logging in.
+  if (token) return { "Authorization": `Bearer ${token}` };
+  return API_KEY ? { "X-API-Key": API_KEY } : {};
 }
 
 // "First to Know" Push Alert Subscriptions — standard conversion the
