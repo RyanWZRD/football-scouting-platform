@@ -253,8 +253,12 @@ def health():
         conn = get_conn()
         conn.close()
         return {"status": "ok"}
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=str(e))
+    except Exception:
+        # /health is deliberately public (no login required) — must
+        # never leak raw exception details (which could genuinely
+        # include connection info) to an anonymous caller. The status
+        # code alone is sufficient for monitoring purposes.
+        raise HTTPException(status_code=503, detail="Service unavailable")
 
 
 class RegisterRequest(BaseModel):
@@ -524,7 +528,8 @@ def image_proxy(url: str):
         resp = requests.get(url, timeout=8)
         resp.raise_for_status()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch image: {e}")
+        print(f"Image proxy fetch failed: {e}")
+        raise HTTPException(status_code=502, detail="Failed to fetch image")
     return Response(
         content=resp.content,
         media_type=resp.headers.get("content-type", "image/png"),
@@ -1018,7 +1023,8 @@ def live_scores(authorized: bool = Depends(check_api_key)):
     try:
         matches = fetch_live_matches()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch live scores: {e}")
+        print(f"Live scores fetch failed: {e}")
+        raise HTTPException(status_code=502, detail="Failed to fetch live scores")
 
     _live_cache["data"] = matches
     _live_cache["fetched_at"] = now
@@ -3540,7 +3546,8 @@ def fixture_api_prediction(match_id: int, user_id: int = Depends(get_current_use
         data = resp.json().get("response", [])
     except Exception as e:
         conn.close()
-        raise HTTPException(status_code=502, detail=f"Failed to fetch prediction: {e}")
+        print(f"Prediction fetch failed: {e}")
+        raise HTTPException(status_code=502, detail="Failed to fetch prediction")
 
     if not data:
         conn.close()
@@ -3618,7 +3625,8 @@ def fixture_market_odds(match_id: int, authorized: bool = Depends(check_api_key)
         resp.raise_for_status()
         events = resp.json()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch odds: {e}")
+        print(f"Odds fetch failed: {e}")
+        raise HTTPException(status_code=502, detail="Failed to fetch odds")
 
     match_event = None
     for ev in events:
@@ -6919,7 +6927,8 @@ def match_events(match_id: int, user_id: int = Depends(get_current_user), author
         events = resp.json().get("response", [])
     except Exception as e:
         conn.close()
-        raise HTTPException(status_code=502, detail=f"Failed to fetch match events: {e}")
+        print(f"Match events fetch failed: {e}")
+        raise HTTPException(status_code=502, detail="Failed to fetch match events")
 
     with conn.cursor() as cur:
         cur.execute(
@@ -7038,7 +7047,8 @@ def player_news(player_id: int, limit: int = Query(5, le=15), authorized: bool =
             })
         return items
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch news: {e}")
+        print(f"News fetch failed: {e}")
+        raise HTTPException(status_code=502, detail="Failed to fetch news")
 
 
 @app.get("/players/{player_id}/highlights")
@@ -7145,7 +7155,8 @@ def club_transfer_news(club: str, limit: int = Query(10, le=30), authorized: boo
             })
         return items
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch club transfer news: {e}")
+        print(f"Club transfer news fetch failed: {e}")
+        raise HTTPException(status_code=502, detail="Failed to fetch club transfer news")
 
 
 @app.get("/standings")
@@ -8128,7 +8139,8 @@ def ask_the_index(body: AskRequest, authorized: bool = Depends(check_api_key)):
     except Exception as e:
         conn.rollback()
         conn.close()
-        raise HTTPException(status_code=400, detail=f"Query failed: {e}")
+        print(f"Ask the Index query failed: {e}")
+        raise HTTPException(status_code=400, detail="Couldn't answer that question — please try rephrasing it")
     conn.close()
 
     # Step 2: results -> plain-English answer
