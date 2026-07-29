@@ -49,7 +49,7 @@ YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")  # for real embedded highlig
 # Leave API_ACCESS_KEY unset to disable the check (useful for local testing).
 API_ACCESS_KEY = os.environ.get("API_ACCESS_KEY")
 
-app = FastAPI(title="Cross-League Scouting API")
+app = FastAPI(title="Cross-League Scouting API", docs_url=None, redoc_url=None, openapi_url=None)
 
 # Loaded once at startup, not per-request — a genuine trained ML model,
 # the platform's first step beyond transparent rule-based percentiles.
@@ -97,9 +97,6 @@ PUBLIC_PATHS = {
     "/auth/login",
     "/push/public-key",
     "/public/track-record",
-    "/docs",
-    "/openapi.json",
-    "/redoc",
 }
 
 
@@ -124,11 +121,24 @@ async def require_real_login(request: Request, call_next):
 
     token = auth_header.removeprefix("Bearer ").strip()
     try:
-        jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
         return JSONResponse(status_code=401, content={"detail": "Session expired — please log in again"})
     except jwt.InvalidTokenError:
         return JSONResponse(status_code=401, content={"detail": "Invalid session token"})
+
+    # A general, per-user safety net covering every endpoint at once —
+    # deliberately centralized here rather than added individually to
+    # 150+ endpoints, which would be a much larger, riskier change for
+    # the same protection. Genuinely generous (300/minute): a single
+    # page load can trigger several parallel fetches already, so this
+    # is sized to never bother real, even heavy, normal use — it's
+    # aimed at runaway scripts or automated abuse, not people clicking
+    # around quickly.
+    try:
+        check_rate_limit("general", str(payload["user_id"]), max_attempts=300, window_seconds=60)
+    except HTTPException as e:
+        return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
 
     return await call_next(request)
 
