@@ -4594,6 +4594,44 @@ function DataQualityModal({ onClose }) {
                 </div>
               </div>
             ))}
+
+            {data.pipeline_quality && (
+              <div className="mt-6 pt-4 border-t border-[#2C4A3B]">
+                <div className="text-[10px] uppercase tracking-wide text-[#E3A857] mb-1">🔍 Pipeline Quality</div>
+                <div className="text-[10px] text-[#4A5C52] italic mb-4">{data.pipeline_quality.note}</div>
+
+                <div className="mb-2.5">
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="text-[#EDEDE3]">Stale Managers (30d+)</span>
+                    <span className="font-plexmono" style={{ color: data.pipeline_quality.stale_managers.pct >= 10 ? "#E36B57" : data.pipeline_quality.stale_managers.pct >= 3 ? "#E3A857" : "#7FD99A" }}>
+                      {data.pipeline_quality.stale_managers.count} ({data.pipeline_quality.stale_managers.pct}%)
+                    </span>
+                  </div>
+                  <div className="h-1.5 bg-[#152922]">
+                    <div className="h-full" style={{ width: `${Math.min(100, data.pipeline_quality.stale_managers.pct)}%`, background: "#E3A857" }} />
+                  </div>
+                </div>
+
+                <div className="mb-2.5">
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="text-[#EDEDE3]" title={data.pipeline_quality.ambiguous_managers.note}>Ambiguous Managers ⓘ</span>
+                    <span className="font-plexmono" style={{ color: data.pipeline_quality.ambiguous_managers.pct >= 10 ? "#E36B57" : data.pipeline_quality.ambiguous_managers.pct >= 3 ? "#E3A857" : "#7FD99A" }}>
+                      {data.pipeline_quality.ambiguous_managers.count} ({data.pipeline_quality.ambiguous_managers.pct}%)
+                    </span>
+                  </div>
+                  <div className="h-1.5 bg-[#152922]">
+                    <div className="h-full" style={{ width: `${Math.min(100, data.pipeline_quality.ambiguous_managers.pct)}%`, background: "#E3A857" }} />
+                  </div>
+                </div>
+
+                {data.pipeline_quality.last_club_assignment_correction_run && (
+                  <div className="text-xs text-[#9AAA9E] mt-3">
+                    Last club assignment check: {new Date(data.pipeline_quality.last_club_assignment_correction_run.run_at).toLocaleDateString()} —
+                    checked {data.pipeline_quality.last_club_assignment_correction_run.players_checked}, corrected {data.pipeline_quality.last_club_assignment_correction_run.corrections_made}
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
