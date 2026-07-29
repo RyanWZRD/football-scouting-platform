@@ -3482,7 +3482,7 @@ def match_boxscore(match_id: int, authorized: bool = Depends(check_api_key)):
 
 
 @app.get("/fixtures/{match_id}/api-prediction")
-def fixture_api_prediction(match_id: int, authorized: bool = Depends(check_api_key)):
+def fixture_api_prediction(match_id: int, user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     """API-Football's OWN prediction model — a genuine second opinion to
     check our own transparent, rule-based Match Estimator against. This
     is data you're already paying for and confirmed exists
@@ -3504,6 +3504,13 @@ def fixture_api_prediction(match_id: int, authorized: bool = Depends(check_api_k
         if cached and cached["still_fresh"]:
             conn.close()
             return {"prediction": cached["prediction"], "cached": True}
+
+        # Only reached on a genuine cache miss — the actual moment real
+        # API-Football quota is about to be spent. Shares one combined
+        # budget with match_events, keyed by "match_lookup" — generous
+        # enough (20/hour) that real, even heavy, normal use never
+        # notices, but catches rapid-fire or automated abuse.
+        check_rate_limit("match_lookup", str(user_id), max_attempts=20, window_seconds=3600)
 
         cur.execute("SELECT external_id FROM matches WHERE id = %s", (match_id,))
         row = cur.fetchone()
@@ -6865,7 +6872,7 @@ def prediction_track_record(authorized: bool = Depends(check_api_key)):
 
 
 @app.get("/fixtures/{match_id}/events")
-def match_events(match_id: int, authorized: bool = Depends(check_api_key)):
+def match_events(match_id: int, user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     """Full minute-by-minute event timeline (goals, cards, subs). On-demand
     and permanently cached — a finished match's history never changes, so
     the 1 API-Football request this costs is paid at most ONCE per match,
@@ -6879,6 +6886,10 @@ def match_events(match_id: int, authorized: bool = Depends(check_api_key)):
         if cached:
             conn.close()
             return {"events": cached["events"], "cached": True}
+
+        # Same combined "match_lookup" budget as fixture_api_prediction —
+        # only reached on a genuine cache miss.
+        check_rate_limit("match_lookup", str(user_id), max_attempts=20, window_seconds=3600)
 
         cur.execute("SELECT external_id FROM matches WHERE id = %s", (match_id,))
         match = cur.fetchone()
