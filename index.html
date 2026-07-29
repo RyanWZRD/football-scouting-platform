@@ -5950,18 +5950,22 @@ function FullPageLoginGate({ onSuccess, sessionExpiredMessage }) {
   const [mode, setMode] = useState("login"); // "login" | "register"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   const submit = async () => {
     if (!email.trim() || !password) return;
+    if (mode === "register" && !inviteCode.trim()) return;
     setSubmitting(true);
     setError(null);
     try {
+      const body = { email: email.trim(), password };
+      if (mode === "register") body.invite_code = inviteCode.trim();
       const res = await fetch(`${API_BASE_URL}/auth/${mode}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
-        body: JSON.stringify({ email: email.trim(), password }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -5994,10 +5998,16 @@ function FullPageLoginGate({ onSuccess, sessionExpiredMessage }) {
           className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2.5 text-sm text-[#EDEDE3] mb-1"
           onKeyDown={e => e.key === "Enter" && submit()} />
         {mode === "register" && <div className="text-[10px] text-[#6B8570] mb-3">At least 8 characters.</div>}
+        {mode === "register" && (
+          <input type="text" value={inviteCode} onChange={e => setInviteCode(e.target.value)} placeholder="Invite code"
+            className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2.5 text-sm text-[#EDEDE3] mb-1"
+            onKeyDown={e => e.key === "Enter" && submit()} />
+        )}
+        {mode === "register" && <div className="text-[10px] text-[#6B8570] mb-3">Registration is invite-only — ask the admin for a code.</div>}
 
         {error && <div className="text-xs text-[#E36B57] mt-3 mb-1">{error}</div>}
 
-        <button onClick={submit} disabled={submitting || !email.trim() || !password}
+        <button onClick={submit} disabled={submitting || !email.trim() || !password || (mode === "register" && !inviteCode.trim())}
           className="w-full bg-[#E3A857] text-[#0E1A15] font-bold py-3 text-sm uppercase tracking-wide mt-4 disabled:opacity-50">
           {submitting ? "…" : mode === "login" ? "Log In" : "Create Account"}
         </button>
@@ -6008,72 +6018,6 @@ function FullPageLoginGate({ onSuccess, sessionExpiredMessage }) {
 
         <button onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(null); }}
           className="w-full text-center text-xs text-[#6B8570] hover:text-[#E3A857] mt-3">
-          {mode === "login" ? "Need an account? Register" : "Already have an account? Log in"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function AuthModal({ onClose, onSuccess }) {
-  const [mode, setMode] = useState("login"); // "login" | "register"
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
-
-  const submit = async () => {
-    if (!email.trim() || !password) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const res = await fetch(`${API_BASE_URL}/auth/${mode}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(API_KEY ? { "X-API-Key": API_KEY } : {}) },
-        body: JSON.stringify({ email: email.trim(), password }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.detail || "Something went wrong — please try again.");
-        return;
-      }
-      setAuthToken(data.access_token);
-      onSuccess({ id: data.user_id, email: data.email });
-      onClose();
-    } catch (e) {
-      setError("Couldn't reach the server — please try again.");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[80]" onClick={onClose}>
-      <div className="bg-[#0E1A15] border border-[#E3A857] max-w-sm w-full p-6" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-5">
-          <div className="text-[11px] tracking-[0.2em] uppercase text-[#E3A857] font-plexmono">
-            {mode === "login" ? "🔐 Log In" : "🔐 Create Account"}
-          </div>
-          <button aria-label="Close" onClick={onClose} className="text-[#9AAA9E] hover:text-[#EDEDE3] text-xl">×</button>
-        </div>
-
-        <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email"
-          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-3"
-          onKeyDown={e => e.key === "Enter" && submit()} />
-        <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password"
-          className="w-full bg-[#152922] border border-[#2C4A3B] px-3 py-2 text-sm text-[#EDEDE3] mb-1"
-          onKeyDown={e => e.key === "Enter" && submit()} />
-        {mode === "register" && <div className="text-[10px] text-[#6B8570] mb-3">At least 8 characters.</div>}
-
-        {error && <div className="text-xs text-[#E36B57] mt-2 mb-1">{error}</div>}
-
-        <button onClick={submit} disabled={submitting || !email.trim() || !password}
-          className="w-full bg-[#E3A857] text-[#0E1A15] font-bold py-2.5 text-sm uppercase tracking-wide mt-3 disabled:opacity-50">
-          {submitting ? "…" : mode === "login" ? "Log In" : "Create Account"}
-        </button>
-
-        <button onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(null); }}
-          className="w-full text-center text-xs text-[#6B8570] hover:text-[#E3A857] mt-4">
           {mode === "login" ? "Need an account? Register" : "Already have an account? Log in"}
         </button>
       </div>
@@ -10091,7 +10035,6 @@ function ScoutDashboard() {
   const [quizOpen, setQuizOpen] = useState(false);
   const [newsletterOpen, setNewsletterOpen] = useState(false);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
-  const [authModalOpen, setAuthModalOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState(null); // null = checking/logged out; { id, email } once confirmed
   const [authChecked, setAuthChecked] = useState(false); // true once the initial /auth/me check genuinely completes (or is skipped because no token exists)
   const [sessionExpiredMessage, setSessionExpiredMessage] = useState(null);
@@ -10727,11 +10670,7 @@ function ScoutDashboard() {
                   🔓 Log Out
                 </button>
               </>
-            ) : (
-              <button onClick={() => setAuthModalOpen(true)} className="hover:text-[#E3A857]">
-                🔐 Log In
-              </button>
-            )}
+            ) : null}
           </div>
         </div>
         <h1 className="text-3xl md:text-5xl leading-[1.05] max-w-3xl font-display">
@@ -11323,7 +11262,6 @@ function ScoutDashboard() {
       {quizOpen && <QuizModal onClose={() => setQuizOpen(false)} />}
       {newsletterOpen && <NewsletterModal onClose={() => setNewsletterOpen(false)} />}
       {activityLogOpen && <ActivityLogModal onClose={() => setActivityLogOpen(false)} />}
-      {authModalOpen && <AuthModal onClose={() => setAuthModalOpen(false)} onSuccess={setCurrentUser} />}
       {commandPaletteOpen && (
         <CommandPaletteModal
           items={ALL_MENU_ITEMS}
