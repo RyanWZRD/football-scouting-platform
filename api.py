@@ -3348,19 +3348,21 @@ class TemplateRequest(BaseModel):
 
 
 @app.post("/templates")
-def save_template(body: TemplateRequest, authorized: bool = Depends(check_api_key)):
+def save_template(body: TemplateRequest, user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     """Save a Target Profile Search as a reusable named template — the
     equivalent of StatsBomb's saved custom radar templates. Define what
-    you're looking for once, reuse it without re-entering every field."""
+    you're looking for once, reuse it without re-entering every field.
+    Genuinely per-user — your own saved templates, not shared/mixed
+    with anyone else's."""
     conn = get_conn()
     with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO scouting_templates
-                (name, position, goals_p90, assists_p90, key_passes_p90, defensive_p90, take_ons_p90, pass_acc, age_max)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (name, position, goals_p90, assists_p90, key_passes_p90, defensive_p90, take_ons_p90, pass_acc, age_max, user_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         """, (body.name, body.position, body.goals_p90, body.assists_p90, body.key_passes_p90,
-              body.defensive_p90, body.take_ons_p90, body.pass_acc, body.age_max))
+              body.defensive_p90, body.take_ons_p90, body.pass_acc, body.age_max, user_id))
         new_id = cur.fetchone()["id"]
     conn.commit()
     conn.close()
@@ -3368,20 +3370,23 @@ def save_template(body: TemplateRequest, authorized: bool = Depends(check_api_ke
 
 
 @app.get("/templates")
-def list_templates(authorized: bool = Depends(check_api_key)):
+def list_templates(user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     conn = get_conn()
     with conn.cursor() as cur:
-        cur.execute("SELECT * FROM scouting_templates ORDER BY created_at DESC")
+        cur.execute("SELECT * FROM scouting_templates WHERE user_id = %s ORDER BY created_at DESC", (user_id,))
         rows = cur.fetchall()
     conn.close()
     return rows
 
 
 @app.delete("/templates/{template_id}")
-def delete_template(template_id: int, authorized: bool = Depends(check_api_key)):
+def delete_template(template_id: int, user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
+    """WHERE user_id = %s is the critical piece here — without it, any
+    logged-in account could genuinely delete anyone else's saved
+    template just by guessing/incrementing the ID."""
     conn = get_conn()
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM scouting_templates WHERE id = %s", (template_id,))
+        cur.execute("DELETE FROM scouting_templates WHERE id = %s AND user_id = %s", (template_id, user_id))
     conn.commit()
     conn.close()
     return {"deleted": True}
@@ -6822,10 +6827,12 @@ class TrackPredictionRequest(BaseModel):
 
 
 @app.post("/predictions/track")
-def track_prediction(body: TrackPredictionRequest, authorized: bool = Depends(check_api_key)):
+def track_prediction(body: TrackPredictionRequest, user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     """Saves a prediction for later verification against the real
     result — the foundation of a genuine, verifiable track record
-    rather than only remembering the ones that turned out right."""
+    rather than only remembering the ones that turned out right.
+    Genuinely private per-user, by explicit choice — your own personal
+    prediction track record, not a shared, platform-wide log."""
     outcome = max(
         [("home", body.predicted_home_pct), ("draw", body.predicted_draw_pct), ("away", body.predicted_away_pct)],
         key=lambda x: x[1],
@@ -6834,10 +6841,10 @@ def track_prediction(body: TrackPredictionRequest, authorized: bool = Depends(ch
     conn = get_conn()
     with conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO tracked_predictions (match_id, predicted_home_pct, predicted_draw_pct, predicted_away_pct, predicted_outcome)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO tracked_predictions (match_id, predicted_home_pct, predicted_draw_pct, predicted_away_pct, predicted_outcome, user_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id
-        """, (body.match_id, body.predicted_home_pct, body.predicted_draw_pct, body.predicted_away_pct, outcome))
+        """, (body.match_id, body.predicted_home_pct, body.predicted_draw_pct, body.predicted_away_pct, outcome, user_id))
         new_id = cur.fetchone()["id"]
     conn.commit()
     conn.close()
@@ -6845,12 +6852,13 @@ def track_prediction(body: TrackPredictionRequest, authorized: bool = Depends(ch
 
 
 @app.get("/predictions/track-record")
-def prediction_track_record(authorized: bool = Depends(check_api_key)):
+def prediction_track_record(user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     """Every tracked prediction compared against real results — computed
     live at query time, not stored, so this is always accurate without
     needing a separate scheduled verification job. Only finished
     matches count toward accuracy; predictions for matches not yet
-    played are shown as pending."""
+    played are shown as pending. Genuinely private — only your own
+    predictions, not everyone's blended together."""
     conn = get_conn()
     with conn.cursor() as cur:
         cur.execute("""
@@ -6861,8 +6869,9 @@ def prediction_track_record(authorized: bool = Depends(check_api_key)):
             JOIN matches m ON m.id = tp.match_id
             JOIN clubs home_cl ON home_cl.id = m.home_club_id
             JOIN clubs away_cl ON away_cl.id = m.away_club_id
+            WHERE tp.user_id = %s
             ORDER BY tp.predicted_at DESC
-        """)
+        """, (user_id,))
         rows = cur.fetchall()
     conn.close()
 
@@ -7641,7 +7650,7 @@ def list_players(
 
 
 @app.get("/players/{player_id}")
-def player_dossier(player_id: int, authorized: bool = Depends(check_api_key)):
+def player_dossier(player_id: int, user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     conn = get_conn()
     with conn.cursor() as cur:
         cur.execute("""
@@ -7694,9 +7703,9 @@ def player_dossier(player_id: int, authorized: bool = Depends(check_api_key)):
         cur.execute("""
             SELECT id, technical, physical, mental, tactical, notes, created_at
             FROM player_scout_ratings
-            WHERE player_id = %s
+            WHERE player_id = %s AND user_id = %s
             ORDER BY created_at DESC
-        """, (player_id,))
+        """, (player_id, user_id))
         scout_ratings = cur.fetchall()
 
         # Positional versatility — real per-match position data, already
@@ -7949,10 +7958,12 @@ class ScoutRatingRequest(BaseModel):
 
 
 @app.post("/players/{player_id}/scout-rating")
-def save_scout_rating(player_id: int, body: ScoutRatingRequest, authorized: bool = Depends(check_api_key)):
+def save_scout_rating(player_id: int, body: ScoutRatingRequest, user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     """Structured 1-10 evaluation across four real scouting dimensions —
     replaces the old blunt watch_level flag as the qualitative signal the
-    scoring model actually uses, once one exists for a player."""
+    scoring model actually uses, once one exists for a player. Genuinely
+    per-user — your own subjective evaluation, not blended with anyone
+    else's on the same player."""
     for field, value in [("technical", body.technical), ("physical", body.physical),
                           ("mental", body.mental), ("tactical", body.tactical)]:
         if not (1 <= value <= 10):
@@ -7967,11 +7978,11 @@ def save_scout_rating(player_id: int, body: ScoutRatingRequest, authorized: bool
 
         cur.execute(
             """
-            INSERT INTO player_scout_ratings (player_id, technical, physical, mental, tactical, notes)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO player_scout_ratings (player_id, technical, physical, mental, tactical, notes, user_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id, technical, physical, mental, tactical, notes, created_at
             """,
-            (player_id, body.technical, body.physical, body.mental, body.tactical, body.notes),
+            (player_id, body.technical, body.physical, body.mental, body.tactical, body.notes, user_id),
         )
         result = cur.fetchone()
     conn.commit()
@@ -8101,11 +8112,19 @@ class AskRequest(BaseModel):
 
 
 @app.post("/ask")
-def ask_the_index(body: AskRequest, authorized: bool = Depends(check_api_key)):
+def ask_the_index(body: AskRequest, user_id: int = Depends(get_current_user), authorized: bool = Depends(check_api_key)):
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured on the server.")
     if not body.question or not body.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
+
+    # A dedicated, much tighter limit than the general 300/minute
+    # safety net — this is the only endpoint in the entire app that
+    # genuinely, directly costs real money per call (2 separate paid
+    # Anthropic API calls each). Generous enough for real, even heavy
+    # legitimate use in one session, but genuinely caps the real cost
+    # exposure from abuse or automation.
+    check_rate_limit("ask_the_index", str(user_id), max_attempts=15, window_seconds=3600)
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
