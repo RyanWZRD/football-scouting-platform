@@ -250,14 +250,17 @@ def health():
 class RegisterRequest(BaseModel):
     email: str
     password: str
+    invite_code: str
 
 
 @app.post("/auth/register")
 def auth_register(request: Request, body: RegisterRequest = Body(...), authorized: bool = Depends(check_api_key)):
-    """Creates a real user account. Still gated behind the existing
-    API key (check_api_key) — this is a personal/small-team tool, not
-    a public signup page, so the API key remains the outer gate before
-    anyone can even attempt to register."""
+    """Creates a real user account — now genuinely invite-only. Closes
+    the real gap where the shared API key alone let anyone create a
+    full account. A valid, unused invite code is now required, checked
+    and consumed atomically with account creation in the same
+    transaction — so a code can never be double-spent by two
+    near-simultaneous registrations."""
     check_rate_limit("register", get_client_ip(request), max_attempts=3, window_seconds=3600)
 
     email = body.email.strip().lower()
@@ -268,6 +271,15 @@ def auth_register(request: Request, body: RegisterRequest = Body(...), authorize
 
     conn = get_conn()
     with conn.cursor() as cur:
+        # SELECT ... FOR UPDATE locks this row until the transaction
+        # commits, so two people racing to use the same code can't
+        # both genuinely succeed.
+        cur.execute("SELECT id, used FROM invite_codes WHERE code = %s FOR UPDATE", (body.invite_code.strip(),))
+        invite_row = cur.fetchone()
+        if not invite_row or invite_row["used"]:
+            conn.close()
+            raise HTTPException(status_code=403, detail="Invalid or already-used invite code")
+
         cur.execute("SELECT id FROM users WHERE email = %s", (email,))
         if cur.fetchone():
             conn.close()
@@ -277,6 +289,10 @@ def auth_register(request: Request, body: RegisterRequest = Body(...), authorize
             (email, hash_password(body.password)),
         )
         user_id = cur.fetchone()["id"]
+        cur.execute(
+            "UPDATE invite_codes SET used = true, used_by_user_id = %s, used_at = now() WHERE id = %s",
+            (user_id, invite_row["id"]),
+        )
     conn.commit()
     conn.close()
 
