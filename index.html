@@ -4581,10 +4581,10 @@ function DataQualityModal({ onClose }) {
               </div>
             </div>
 
-            {Object.entries(data.gaps).map(([key, g]) => (
+            {Object.entries(data.gaps).filter(([key]) => key !== "unscored_among_eligible").map(([key, g]) => (
               <div key={key} className="mb-2.5">
                 <div className="flex justify-between text-sm mb-1">
-                  <span className="text-[#EDEDE3]">{labels[key]}</span>
+                  <span className="text-[#EDEDE3]" title={g.note}>{labels[key]}{g.note ? " ⓘ" : ""}</span>
                   <span className="font-plexmono" style={{ color: g.pct >= 10 ? "#E36B57" : g.pct >= 3 ? "#E3A857" : "#7FD99A" }}>
                     {g.count} ({g.pct}%)
                   </span>
@@ -4592,6 +4592,16 @@ function DataQualityModal({ onClose }) {
                 <div className="h-1.5 bg-[#152922]">
                   <div className="h-full" style={{ width: `${Math.min(100, g.pct)}%`, background: g.pct >= 10 ? "#E36B57" : g.pct >= 3 ? "#E3A857" : "#7FD99A" }} />
                 </div>
+                {key === "unscored" && data.gaps.unscored_among_eligible && (
+                  <div className="mt-1.5 pl-3 border-l-2 border-[#2C4A3B]">
+                    <div className="flex justify-between text-xs mb-0.5">
+                      <span className="text-[#9AAA9E]" title={data.gaps.unscored_among_eligible.note}>↳ Never Scored (of eligible) ⓘ</span>
+                      <span className="font-plexmono text-[#7FD99A]">
+                        {data.gaps.unscored_among_eligible.count} / {data.gaps.unscored_among_eligible.eligible_total} ({data.gaps.unscored_among_eligible.pct}%)
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
 
