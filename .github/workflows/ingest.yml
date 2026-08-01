@@ -64,8 +64,25 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
+          set -euo pipefail
+          # pipefail is the critical fix here: without it, `pg_dump | gzip`
+          # only reports gzip's own exit code — if pg_dump silently fails
+          # for any reason, gzip still happily compresses nothing and
+          # reports success, producing a ~20-byte "backup" that looks
+          # fine but contains genuinely zero real data. Confirmed this
+          # exact failure mode happened on the very first real run.
           mkdir -p backup_output
           pg_dump "$DATABASE_URL" | gzip > backup_output/backup_$(date +%Y-%m-%d).sql.gz
+          # A second, explicit safeguard: even with pipefail, actively
+          # reject anything suspiciously small rather than trust the
+          # exit code alone. A real dump of this database should
+          # genuinely be several MB at minimum.
+          size=$(stat -c%s backup_output/backup_$(date +%Y-%m-%d).sql.gz)
+          echo "Backup file size: $size bytes"
+          if [ "$size" -lt 100000 ]; then
+            echo "Backup is suspiciously small ($size bytes) — treating as a failed backup, not pushing it."
+            exit 1
+          fi
       - name: Push backup to the private repo
         env:
           BACKUP_REPO_TOKEN: ${{ secrets.BACKUP_REPO_TOKEN }}
