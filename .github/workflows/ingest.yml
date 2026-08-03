@@ -70,14 +70,23 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
           set -euo pipefail
-          # pipefail is the critical fix here: without it, `pg_dump | gzip`
-          # only reports gzip's own exit code — if pg_dump silently fails
-          # for any reason, gzip still happily compresses nothing and
-          # reports success, producing a ~20-byte "backup" that looks
-          # fine but contains genuinely zero real data. Confirmed this
-          # exact failure mode happened on the very first real run.
+          # Diagnostic — printed every run regardless of outcome, so
+          # any future failure shows real, concrete evidence of which
+          # binary actually ran, rather than requiring more guessing.
+          echo "Available pg_dump binaries:"
+          ls -la /usr/lib/postgresql/*/bin/pg_dump 2>/dev/null || echo "(none found in the usual location)"
+          echo "Plain 'pg_dump' on PATH resolves to: $(which pg_dump)"
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
+          # Use the full, explicit, versioned path rather than the
+          # plain "pg_dump" command — confirmed the runner's default
+          # PostgreSQL 16 install can coexist alongside a newly
+          # installed 17, and the plain command was still silently
+          # resolving to the old one via PATH regardless of what
+          # version we'd actually just installed.
           mkdir -p backup_output
-          pg_dump "$DATABASE_URL" | gzip > backup_output/backup_$(date +%Y-%m-%d).sql.gz
+          /usr/lib/postgresql/17/bin/pg_dump "$DATABASE_URL" | gzip > backup_output/backup_$(date +%Y-%m-%d).sql.gz
+
           # A second, explicit safeguard: even with pipefail, actively
           # reject anything suspiciously small rather than trust the
           # exit code alone. A real dump of this database should
