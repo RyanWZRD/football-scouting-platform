@@ -112,6 +112,10 @@ def run(season):
     with conn.cursor() as cur:
         for i, (pid, real_club, current_club) in enumerate(mismatches, 1):
             cur.execute("UPDATE players SET current_club_id = %s WHERE id = %s", (real_club, pid))
+            cur.execute(
+                "INSERT INTO club_assignment_corrections (player_id, old_club_id, new_club_id) VALUES (%s, %s, %s)",
+                (pid, current_club, real_club),
+            )
             if i % 200 == 0:
                 conn.commit()
                 print(f"  ...{i}/{len(mismatches)} corrected")
