@@ -82,10 +82,17 @@ def run(season):
         """, (str(season),))
         rows = cur.fetchall()
 
+        cur.execute("SELECT player_id FROM protected_club_assignments")
+        protected_ids = {r[0] for r in cur.fetchall()}
+
     mismatches = [(pid, real_club, current_club) for pid, real_club, current_club, _, _ in rows
-                  if real_club != current_club]
+                  if real_club != current_club and pid not in protected_ids]
+    skipped_protected = sum(1 for pid, real_club, current_club, _, _ in rows
+                             if real_club != current_club and pid in protected_ids)
 
     print(f"Checked {len(rows)} players with real match data this season.")
+    if skipped_protected:
+        print(f"Skipped {skipped_protected} on the protected list (known, confirmed recent transfers).")
     print(f"Found {len(mismatches)} whose stored club doesn't match real match evidence.")
 
     # Log this run so the dashboard can honestly show how many
