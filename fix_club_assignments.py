@@ -12,17 +12,26 @@ This script trusts match_stats data instead: for each player, whichever
 club they have the most minutes_played for THIS SEASON is treated as
 their real current club.
 
-SECOND BUG FIX, found directly via a real, reported case (Elliot
-Anderson to Man City): during the summer transfer window, before the
-new season has actually kicked off, a just-transferred player
-genuinely has ZERO real match minutes for their new club yet — their
-season's match evidence is still entirely with their old club. Without
-a guard, this script would systematically revert every single fresh
-transfer back to the old club every night, undoing what ingest.py had
-just correctly set moments earlier in the same run. Fixed by only
-applying a correction when the real match evidence is genuinely MORE
-RECENT than the player's current club assignment — i.e. never let
-older evidence (from before a transfer) override a fresher one.
+HONEST HISTORY on this specific piece of logic — confirmed directly,
+twice, with two real, opposite cases on 2026-08-04:
+A timestamp-based guard (only correct when match evidence is newer
+than the player's current updated_at) was added earlier to stop a
+different real case — Elliot Anderson being reverted to his old club
+using stale evidence, because his new club had zero minutes logged yet
+during the pre-season window. That guard has now been REMOVED, because
+it was confirmed to cause a worse, opposite failure: ingest.py resets
+EVERY player's updated_at to "today" on every single nightly run,
+regardless of whether the club it just set is even correct — so the
+guard was silently blocking genuinely correct fixes too (confirmed:
+Tijjani Reijnders, 1,640 real minutes for Manchester City, was stuck
+showing AC Milan indefinitely because of this exact guard).
+The Anderson-style problem is temporary and self-corrects naturally
+once a new season starts accumulating real evidence — no guard needed.
+The Reijnders-style problem, without this fix, could persist
+indefinitely if a source squad listing is never cleaned up. Between a
+temporary, self-correcting issue and a potentially permanent one, this
+script now always trusts real match evidence, unconditionally — the
+original, pre-guard behavior.
 
 Run AFTER fixtures_ingest.py (needs real match data to work from) and
 BEFORE scoring_model.py (so scores reflect the corrected club/league).
@@ -61,7 +70,7 @@ def run(season):
         # real, deterministic tie-breaker — most recent match date wins.
         cur.execute("""
             SELECT DISTINCT ON (pms.player_id)
-                pms.player_id, pms.club_id, p.current_club_id, p.updated_at,
+                pms.player_id, pms.club_id, p.current_club_id,
                 SUM(pms.minutes_played) OVER (PARTITION BY pms.player_id, pms.club_id) AS minutes,
                 MAX(m.match_date) OVER (PARTITION BY pms.player_id, pms.club_id) AS latest_match
             FROM player_match_stats pms
@@ -73,23 +82,11 @@ def run(season):
         """, (str(season),))
         rows = cur.fetchall()
 
-    # Only correct a player's club when the real match evidence is
-    # genuinely MORE RECENT than their current assignment — never let
-    # older evidence (from before a since-happened transfer) revert a
-    # fresher, correct assignment ingest.py just set.
-    def as_date(value):
-        # Normalizes safely whether the underlying column/value is a
-        # date or a datetime — avoids a genuine risk of comparing
-        # mismatched types directly.
-        return value.date() if hasattr(value, "date") else value
-
-    mismatches = [
-        (pid, real_club, current_club) for pid, real_club, current_club, updated_at, _, latest_match in rows
-        if real_club != current_club and (updated_at is None or latest_match is None or as_date(latest_match) >= as_date(updated_at))
-    ]
+    mismatches = [(pid, real_club, current_club) for pid, real_club, current_club, _, _ in rows
+                  if real_club != current_club]
 
     print(f"Checked {len(rows)} players with real match data this season.")
-    print(f"Found {len(mismatches)} whose stored club doesn't match GENUINELY MORE RECENT match evidence.")
+    print(f"Found {len(mismatches)} whose stored club doesn't match real match evidence.")
 
     # Log this run so the dashboard can honestly show how many
     # mismatches were found and silently auto-corrected, rather than
